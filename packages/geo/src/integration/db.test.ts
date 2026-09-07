@@ -14,7 +14,7 @@
 import { appendFileSync, copyFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 
@@ -30,6 +30,24 @@ const BOWTIE =
   'POLYGON((-75.574 6.357, -75.572 6.359, -75.572 6.357, -75.574 6.359, -75.574 6.357))';
 const COLLINEAR = 'POLYGON((-75.574 6.357, -75.573 6.358, -75.572 6.359, -75.574 6.357))';
 const COLLINEAR_LONG = 'POLYGON((-75.6 6.3, -75.55 6.35, -75.5 6.4, -75.6 6.3))';
+// Overlapping pair: interiors intersect in a real area (not mere touching).
+const OVERLAP_A = 'POLYGON((-75.580 6.350, -75.574 6.350, -75.574 6.356, -75.580 6.356, -75.580 6.350))';
+const OVERLAP_B = 'POLYGON((-75.577 6.353, -75.571 6.353, -75.571 6.359, -75.577 6.359, -75.577 6.353))';
+// Adjacent pair sharing exactly one edge: ST_Touches, no interior intersection.
+const TOUCHING_WEST = 'POLYGON((-75.590 6.340, -75.585 6.340, -75.585 6.345, -75.590 6.345, -75.590 6.340))';
+const TOUCHING_EAST = 'POLYGON((-75.585 6.340, -75.580 6.340, -75.580 6.345, -75.585 6.345, -75.585 6.340))';
+// Far outside both the test fixture envelope and the real Bello boundary.
+const OUTSIDE_BELLO = 'POLYGON((-76.10 6.90, -76.09 6.90, -76.09 6.91, -76.10 6.91, -76.10 6.90))';
+
+// Test fixture boundary: a generous envelope around Bello. The AMVA seed
+// describe replaces it with the real municipal boundary at the end.
+const FIXTURE_BOUNDARY_SQL = `
+  INSERT INTO reference_municipal_boundary (id, name, geom, source_url, retrieved_at, attribution)
+  VALUES (1, 'Bello (test fixture envelope)',
+          ST_Multi(ST_SetSRID(ST_MakeEnvelope(-75.70, 6.20, -75.40, 6.55), 4326)),
+          'integration-test-fixture', now(),
+          'test fixture; replaced by the AMVA seed describe')
+`;
 
 let container: StartedPostgreSqlContainer;
 let databaseUrl: string;
@@ -44,7 +62,19 @@ beforeAll(async () => {
   databaseUrl = container.getConnectionUri();
   // DoD: migrations run from an EMPTY database to current.
   await runMigrations(databaseUrl);
+  // Containment fails closed without a boundary reference: load the fixture
+  // envelope before any test inserts geometry.
+  await withClient((client) => client.query(FIXTURE_BOUNDARY_SQL));
 }, 360_000);
+
+beforeEach(async () => {
+  // Overlap enforcement considers ACTIVE territories only. Archive everything
+  // between tests so each one starts from a clean overlap slate (append-only
+  // tables cannot be truncated).
+  await withClient((client) =>
+    client.query(`UPDATE territories SET status = 'archived' WHERE status = 'active'`)
+  );
+});
 
 afterAll(async () => {
   await container?.stop();
@@ -465,5 +495,202 @@ describe('at most one active assignment per territory, under concurrency', () =>
     );
 
     expect(activeCount).toBe(1);
+  });
+});
+
+describe('containment in the municipal boundary (database-enforced)', () => {
+  it('rejects a revision outside the Bello boundary', async () => {
+    await withClient(async (client) => {
+      const territoryId = await createTerritory(client, 'containment-outside');
+      try {
+        await insertRevision(client, territoryId, 1, OUTSIDE_BELLO);
+        expect.unreachable('out-of-boundary revision was accepted');
+      } catch (error) {
+        const pgError = asPgError(error);
+        expect(pgError.code).toBe('P0001');
+        expect(pgError.message).toMatch(/is not contained by the Bello municipal boundary/);
+      }
+    });
+  });
+
+  it('accepts a revision inside the boundary', async () => {
+    await withClient(async (client) => {
+      const territoryId = await createTerritory(client, 'containment-inside');
+      const revisionId = await insertRevision(client, territoryId, 1, VALID_SQUARE);
+      expect(revisionId).toBeGreaterThan(0);
+    });
+  });
+
+  it('fails closed when the boundary reference is not loaded', async () => {
+    await withClient(async (client) => {
+      try {
+        await client.query('DELETE FROM reference_municipal_boundary');
+        const territoryId = await createTerritory(client, 'containment-fail-closed');
+        try {
+          await insertRevision(client, territoryId, 1, VALID_SQUARE);
+          expect.unreachable('revision was accepted without a boundary reference');
+        } catch (error) {
+          const pgError = asPgError(error);
+          expect(pgError.code).toBe('P0001');
+          expect(pgError.message).toMatch(/municipal boundary reference not loaded/);
+        }
+      } finally {
+        await client.query(FIXTURE_BOUNDARY_SQL);
+      }
+    });
+  });
+});
+
+describe('overlap between active territories (database-enforced)', () => {
+  it('rejects a revision overlapping another active territory', async () => {
+    await withClient(async (client) => {
+      const territoryA = await createTerritory(client, 'overlap-a');
+      await insertRevision(client, territoryA, 1, OVERLAP_A);
+
+      const territoryB = await createTerritory(client, 'overlap-b');
+      try {
+        await insertRevision(client, territoryB, 1, OVERLAP_B);
+        expect.unreachable('overlapping revision was accepted');
+      } catch (error) {
+        const pgError = asPgError(error);
+        expect(pgError.code).toBe('P0001');
+        expect(pgError.message).toMatch(/overlaps active territory/);
+      }
+    });
+  });
+
+  it('allows adjacent territories that only touch', async () => {
+    await withClient(async (client) => {
+      const west = await createTerritory(client, 'touching-west');
+      await insertRevision(client, west, 1, TOUCHING_WEST);
+      const east = await createTerritory(client, 'touching-east');
+      const eastRevision = await insertRevision(client, east, 1, TOUCHING_EAST);
+      expect(eastRevision).toBeGreaterThan(0);
+    });
+  });
+
+  it('allows an overlap only through an explicit authorized exception', async () => {
+    await withClient(async (client) => {
+      const territoryA = await createTerritory(client, 'exception-a');
+      await insertRevision(client, territoryA, 1, OVERLAP_A);
+      const territoryB = await createTerritory(client, 'exception-b');
+
+      // Without an exception: rejected.
+      await expect(insertRevision(client, territoryB, 1, OVERLAP_B)).rejects.toThrow(
+        /overlaps active territory/
+      );
+
+      // The exception pair must be canonically ordered (a < b).
+      try {
+        await client.query(
+          `INSERT INTO territory_overlap_exceptions (territory_a_id, territory_b_id, authorized_by, reason)
+           VALUES (GREATEST($1::bigint, $2::bigint), LEAST($1::bigint, $2::bigint), 'admin', 'wrong order on purpose')`,
+          [territoryA, territoryB]
+        );
+        expect.unreachable('unordered exception pair was accepted');
+      } catch (error) {
+        expect(asPgError(error).code).toBe('23514');
+        expect(asPgError(error).constraint).toBe('overlap_exception_pair_ordered');
+      }
+
+      // With an authorized exception: the same geometry is accepted.
+      await client.query(
+        `INSERT INTO territory_overlap_exceptions (territory_a_id, territory_b_id, authorized_by, reason)
+         VALUES (LEAST($1::bigint, $2::bigint), GREATEST($1::bigint, $2::bigint), 'coordinador-operaciones', 'shared access corridor approved for pilotage')`,
+        [territoryA, territoryB]
+      );
+      const revisionB = await insertRevision(client, territoryB, 1, OVERLAP_B);
+      expect(revisionB).toBeGreaterThan(0);
+    });
+  });
+
+  it('ignores archived territories, and reactivation re-runs the overlap check', async () => {
+    await withClient(async (client) => {
+      const archived = await createTerritory(client, 'reactivation-archived');
+      await insertRevision(client, archived, 1, VALID_SQUARE);
+      await client.query(`UPDATE territories SET status = 'archived' WHERE id = $1`, [archived]);
+
+      // Same geometry, no conflict while the first territory is archived.
+      const active = await createTerritory(client, 'reactivation-active');
+      await insertRevision(client, active, 1, VALID_SQUARE);
+
+      // Reactivating the archived territory would overlap the active one.
+      try {
+        await client.query(`UPDATE territories SET status = 'active' WHERE id = $1`, [archived]);
+        expect.unreachable('reactivation with an overlap was accepted');
+      } catch (error) {
+        const pgError = asPgError(error);
+        expect(pgError.code).toBe('P0001');
+        expect(pgError.message).toMatch(/overlaps active territory/);
+      }
+
+      const stillArchived = await client.query<{ status: string }>(
+        'SELECT status FROM territories WHERE id = $1',
+        [archived]
+      );
+      expect(stillArchived.rows[0]?.status).toBe('archived');
+    });
+  });
+
+  it('concurrent overlapping revisions leave exactly one survivor', async () => {
+    const first = new Client({ connectionString: databaseUrl });
+    const second = new Client({ connectionString: databaseUrl });
+    await first.connect();
+    await second.connect();
+
+    const createWithRevision = async (client: Client, name: string, holdMs: number) => {
+      await client.query('BEGIN');
+      const { rows } = await client.query<{ id: string }>(
+        'INSERT INTO territories (name) VALUES ($1) RETURNING id',
+        [name]
+      );
+      await client.query(
+        `INSERT INTO territory_revisions (territory_id, revision_number, geom, author)
+         VALUES ($1, 1, ST_SetSRID(ST_GeomFromText($2), 4326), 'integration-test')`,
+        [Number(rows[0]?.id), OVERLAP_A]
+      );
+      // Hold the transaction open: the advisory lock taken by the overlap
+      // trigger is held until COMMIT, forcing the loser to re-check against
+      // committed state.
+      if (holdMs > 0) {
+        await sleep(holdMs);
+      }
+      await client.query('COMMIT');
+    };
+
+    const results = await Promise.allSettled([
+      createWithRevision(first, 'overlap-race-1', 750),
+      createWithRevision(second, 'overlap-race-2', 0)
+    ]);
+
+    for (const client of [first, second]) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      await client.end();
+    }
+
+    const fulfilled = results.filter((result) => result.status === 'fulfilled');
+    const rejected = results.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    );
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    const loserError = asPgError(rejected[0]?.reason);
+    expect(loserError.code).toBe('P0001');
+    expect(loserError.message).toMatch(/overlaps active territory/);
+
+    const survivors = await withClient(async (client) => {
+      const { rows } = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM territories
+         WHERE name IN ('overlap-race-1', 'overlap-race-2') AND status = 'active'`
+      );
+      return rows[0]?.n ?? -1;
+    });
+
+    // Verbatim evidence line for the handoff.
+    console.log(
+      `[overlap-concurrency] winner=1 loserSqlState=${loserError.code} activeSurvivors=${survivors}`
+    );
+
+    expect(survivors).toBe(1);
   });
 });
