@@ -1,0 +1,27 @@
+{
+  "name": "territorios",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Territory Management MVP monorepo",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @territorios/geo build && pnpm --parallel --filter @territorios/api --filter @territorios/admin --filter @territorios/public dev",
+    "build": "pnpm -r build",
+    "typecheck": "tsc -b tsconfig.json",
+    "lint": "eslint .",
+    "test": "pnpm -r test",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:psql": "docker compose exec -T postgis psql -U territorios -d territorios"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "eslint": "^10.10.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.69.0"
+  }
+}

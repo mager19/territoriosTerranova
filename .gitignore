@@ -1,7 +1,9 @@
 node_modules/
 dist/
+coverage/
 playwright-report/
 test-results/
 .env
+health.json
 .DS_Store
 .atl/.skill-registry.cache.json
