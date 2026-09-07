@@ -4,6 +4,7 @@
   "references": [
     { "path": "packages/geo" },
     { "path": "apps/api" },
-    { "path": "apps/admin" }
+    { "path": "apps/admin" },
+    { "path": "apps/public" }
   ]
 }
