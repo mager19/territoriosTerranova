@@ -1,0 +1,36 @@
+#!/bin/sh
+# Refuse commits made directly on the integration branch.
+#
+# Work units belong on their own branch. `main` advances only through a
+# reviewed merge performed by a human.
+#
+# This hook exists because A1 committed seven times onto `main` before its
+# work-unit branch was created. The opencode.json permission rules denied
+# switching TO main, but the agent was already standing on it — the wall had a
+# hole. This closes it.
+#
+# Install (once per clone):
+#   git config core.hooksPath .githooks
+
+branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+case "$branch" in
+main | master)
+	cat >&2 <<EOF
+
+  BLOCKED: commit refused on branch '$branch'.
+
+  Work units never land directly on the integration branch. Create the
+  work-unit branch first, then commit there:
+
+      git switch -c wu/<agent>-<slice>
+      git commit ...
+
+  A human merges to '$branch' after A0's audit and external review.
+
+EOF
+	exit 1
+	;;
+esac
+
+exit 0

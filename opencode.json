@@ -17,6 +17,8 @@
       "git log*": "allow",
       "git add *": "allow",
       "git commit *": "allow",
+      "git commit --no-verify*": "deny",
+      "git commit -n *": "deny",
       "git switch -c *": "allow",
       "git checkout -b *": "allow",
       "git push *": "deny",
