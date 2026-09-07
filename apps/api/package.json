@@ -1,0 +1,24 @@
+{
+  "name": "@territorios/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fastify + TypeScript API service",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "build": "tsc -b tsconfig.json",
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "fastify": "^5.12.3",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}
