@@ -5,5 +5,8 @@ playwright-report/
 test-results/
 .env
 health.json
+dev.log
+admin.html
+public.html
 .DS_Store
 .atl/.skill-registry.cache.json

@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    name: typecheck / lint / test / dev / build / health
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # DoD: `pnpm install` completes with no error
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # DoD: `docker compose up -d` starts PostGIS
+      - name: Start PostGIS
+        run: docker compose up -d --wait
+
+      # DoD: psql SELECT postgis_version() returns a version
+      - name: Verify PostGIS
+        run: docker compose exec -T postgis psql -U territorios -d territorios -c 'SELECT postgis_version();'
+
+      # DoD: `pnpm typecheck` exits 0 and covers every workspace
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      # DoD: `pnpm test` exits 0 with real assertions in every workspace
+      - name: Test
+        run: pnpm test
+
+      # DoD: `pnpm dev` starts the API and both web apps;
+      #      `curl -s localhost:<api-port>/health` returns 200
+      - name: Smoke-test pnpm dev
+        run: |
+          pnpm dev > dev.log 2>&1 &
+          dev_pid=$!
+          up=""
+          for attempt in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:3000/health > health.json \
+              && curl -sf http://127.0.0.1:5173/ > admin.html \
+              && curl -sf http://127.0.0.1:5174/ > public.html; then
+              up=1
+              break
+            fi
+            sleep 1
+          done
+          kill "$dev_pid" 2>/dev/null || true
+          test -n "$up" || { echo "dev servers never came up"; cat dev.log; exit 1; }
+          echo "health: $(cat health.json)"
+          grep -q '"status":"ok"' health.json
+          grep -q '"database":{"up":true' health.json
+          grep -q '<div id="root">' admin.html
+          grep -q '<div id="root">' public.html
+
+      # DoD: `pnpm build` produces artifacts for all three apps
+      - name: Build
+        run: pnpm build
+
+      - name: Verify build artifacts
+        run: |
+          test -f apps/api/dist/main.js
+          test -f apps/admin/dist/index.html
+          test -f apps/public/dist/index.html
+
+      # DoD: /health confirms database connectivity — against the built server
+      - name: Verify /health against the live database
+        run: |
+          node apps/api/dist/main.js &
+          api_pid=$!
+          ok=""
+          for attempt in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:3000/health > health.json; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          kill "$api_pid" 2>/dev/null || true
+          test -n "$ok" || { echo "API never answered 200 on /health"; exit 1; }
+          echo "health: $(cat health.json)"
+          grep -q '"status":"ok"' health.json
+          grep -q '"database":{"up":true' health.json
