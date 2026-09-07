@@ -1,5 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "files": [],
-  "references": [{ "path": "packages/geo" }, { "path": "apps/api" }]
+  "references": [
+    { "path": "packages/geo" },
+    { "path": "apps/api" },
+    { "path": "apps/admin" }
+  ]
 }
