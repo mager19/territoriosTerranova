@@ -27,6 +27,7 @@ Keep the roster small and make every definition of done machine-checkable.
 
 | # | Id | Mission | Reasoning load |
 | --- | --- | --- | --- |
+| A0 | `gate` | Read-only mechanical audit of a work-unit branch | Standard |
 | A1 | `bootstrap` | Toolchain, monorepo, CI-able scripts | Standard |
 | A2 | `data` | PostGIS schema, migrations, AMVA barrio seed | High |
 | A3 | `domain` | Territory revisions, assignment, progress, audit, admin API | High |
@@ -37,6 +38,51 @@ Keep the roster small and make every definition of done machine-checkable.
 
 "Reasoning load" is a hint for model-tier selection in your runner. High-load
 agents make invariant decisions that are expensive to get wrong.
+
+## Branch workflow — nothing reaches `main` unreviewed
+
+Every work unit gets its own branch. Agents commit there and **never** merge,
+rebase, push, or switch to `main`. Those commands are denied in `opencode.json`,
+so this is a runtime wall, not an instruction a model can forget.
+
+```
+main                    accepted work only
+ └── wu/a1-bootstrap    one work unit, one branch
+     wu/a2-data
+     wu/a3-domain-s1    sliced briefs get one branch per slice
+```
+
+The cycle for every work unit:
+
+1. Human creates the branch: `git switch -c wu/<agent>-<slice>`
+2. Implementer agent works and commits **only on that branch**
+3. **A0 gate** audits the branch mechanically and emits ACCEPT or REJECT
+4. Human reviews A0's verdict, plus the judgment calls A0 flagged
+5. External review (a different model family) reads the diff
+6. **Human merges to `main`** — this step belongs to no agent
+
+Only after a merge does the next dependent agent branch from `main`. That is what
+keeps `main` a trustworthy baseline for A3 to build on after A2, and so on.
+
+### Why no agent orchestrates the others
+
+Every agent here is `mode: primary`, which in OpenCode means it is human-selectable
+and **cannot be spawned by another agent**. This is deliberate.
+
+An agent that both delegates work and judges the result becomes the judge of its
+own delegation. Combined with the failure mode these models actually have —
+reporting success instead of reporting blocked — an auto-orchestrator gives you a
+model reporting success about another model's reported success, and you see only
+the top layer. Failures also stop being cheap: A2 → A3 → A5 would all run on a
+bad foundation before anyone looked.
+
+The archived first attempt **had** automated orchestration: SDD phases, verify
+reports, review budgets. It produced a report reading `verdict: fail,
+blockers: 14, requirements: 1/7`, and the response was to normalize the test
+scripts until they passed. Automation did not save that attempt; it participated.
+
+A0 automates the mechanical half of the gate so human attention goes to judgment.
+It cannot edit, cannot launch, cannot merge.
 
 ## Dependency graph
 

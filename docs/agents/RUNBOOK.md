@@ -116,6 +116,50 @@ report is a good outcome. A fabricated success is the worst outcome available.
 Finish with the handoff block from docs/agents/README.md, filled in completely.
 ```
 
+## The review chain for every work unit
+
+Four layers, cheapest first. Each catches what the previous one cannot.
+
+| Layer | Who | Catches | Cost |
+| --- | --- | --- | --- |
+| 1 | **A0 gate** (read-only agent) | Fake tests, ownership violations, missing commits, unreproducible evidence | Cheap, mechanical |
+| 2 | **You** | Judgment calls A0 flagged; whether the work is actually what you wanted | Minutes |
+| 3 | **External review** (different model family) | Design errors, missed invariants, security gaps | One diff read |
+| 4 | **A7 verifier** | Cross-boundary defects, at milestone boundaries only | Expensive |
+
+Run A0 on every handoff. Run A7 only at M1, M2, M3.
+
+### Running A0
+
+```bash
+git switch -c wu/a1-bootstrap        # you create the branch
+# ... run a1-bootstrap, it commits here ...
+
+opencode                             # Tab to a0-gate
+```
+
+Kickoff prompt for A0:
+
+```
+Audit branch wu/a1-bootstrap against docs/agents/A1-bootstrap.md.
+
+Here is the handoff block the agent produced:
+<paste it>
+
+Run all eight checks from your brief. Re-run every command the handoff offers
+as evidence and compare the output. Quote everything verbatim.
+
+You may not edit, merge, push, or launch anything. Emit your verdict block.
+```
+
+Then hand the branch diff to an external reviewer:
+
+```bash
+git diff main...wu/a1-bootstrap
+```
+
+**You merge. No agent merges.** `git merge` is denied in `opencode.json`.
+
 ## Gate checklist — your job between agents
 
 Do not accept a handoff until all of these hold. This is where the previous
