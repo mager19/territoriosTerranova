@@ -1,0 +1,35 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek/deepseek-chat",
+  "small_model": "deepseek/deepseek-chat",
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "ls *": "allow",
+      "cat *": "allow",
+      "head *": "allow",
+      "tail *": "allow",
+      "grep *": "allow",
+      "rg *": "allow",
+      "find *": "allow",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git add *": "allow",
+      "git commit *": "allow",
+      "git push *": "deny",
+      "git reset --hard*": "deny",
+      "git clean *": "deny",
+      "rm -rf *": "deny",
+      "pnpm install": "allow",
+      "pnpm test*": "allow",
+      "pnpm typecheck*": "allow",
+      "pnpm build*": "allow",
+      "pnpm lint*": "allow",
+      "pnpm db:*": "ask",
+      "docker compose *": "ask",
+      "curl *": "ask"
+    },
+    "webfetch": "allow"
+  }
+}
