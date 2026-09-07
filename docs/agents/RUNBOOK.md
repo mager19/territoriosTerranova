@@ -55,11 +55,23 @@ OpenCode reads `AGENTS.md` from the repository root automatically as project
 instructions, so the architecture guardrails apply to every agent without you
 pasting them.
 
-Switch agents in the TUI with **Tab**, or start one directly:
+Switch agents inside the TUI with **Tab** / **Shift+Tab** (cycles through primary
+agents), or press **`<leader>a`** to open the agent list dialog and pick one.
+
+For a non-interactive single run:
 
 ```bash
-opencode --agent a1-bootstrap
+opencode run --agent a1-bootstrap "<kickoff prompt>"
 ```
+
+`--agent` only accepts a **primary** agent. All seven agents here are
+`mode: primary` on purpose: a primary agent cannot be spawned by another agent.
+That is the mechanism that stops any single model from trying to orchestrate the
+whole project by itself. **You** are the orchestrator — you select each agent,
+one at a time, and gate its output before selecting the next.
+
+OpenCode also ships `build` (default), `plan` (read-only), and a `general`
+subagent invoked with `@general`. Do not use them for this project's work units.
 
 ## Launch order
 
