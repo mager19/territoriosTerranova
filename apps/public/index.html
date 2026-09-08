@@ -6,6 +6,50 @@
     <meta name="robots" content="noindex, nofollow" />
     <meta name="referrer" content="no-referrer" />
     <title>Territory Management</title>
+    <style>
+      /* System font stack only — no external font loading (A6 brief DoD). */
+      :root {
+        color-scheme: light;
+      }
+
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: #ffffff;
+        color: #111111;
+      }
+
+      /* High-contrast, large text for outdoor/sunlight legibility on a
+         phone — A6 brief DoD "Usable on a phone, outdoors, one-handed.
+         Legible contrast in sunlight." */
+      h1 {
+        font-size: 1.5rem;
+        line-height: 1.3;
+        margin: 1rem 1rem 0.25rem;
+      }
+
+      p.status {
+        font-size: 1.125rem;
+        font-weight: 600;
+        margin: 0 1rem 1rem;
+      }
+
+      p.attribution {
+        font-size: 0.75rem;
+        color: #444444;
+        margin: 0.5rem 1rem;
+      }
+
+      #map {
+        width: 100%;
+        height: 65vh;
+        min-height: 320px;
+      }
+
+      #map[hidden] {
+        display: none;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
