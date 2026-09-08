@@ -6,7 +6,7 @@
  * string.
  */
 
-import type { Polygon } from '@territorios/geo';
+import type { LineString, Point, Polygon } from '@territorios/geo';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3000';
 
@@ -51,6 +51,35 @@ export interface AuditEvent {
   readonly reason: string;
   readonly payload: Record<string, unknown>;
   readonly createdAt: string;
+}
+
+export type AssignmentStatus = 'active' | 'completed' | 'returned';
+
+export interface Assignment {
+  readonly id: number;
+  readonly territoryId: number;
+  readonly territoryRevisionId: number;
+  readonly revisionNumber: number;
+  readonly assignedTo: string;
+  readonly assignedBy: string;
+  readonly status: AssignmentStatus;
+  readonly assignedAt: string;
+  readonly completedAt: string | null;
+  readonly returnedAt: string | null;
+  readonly reopenReason: string | null;
+}
+
+export interface ProgressEntry {
+  readonly id: number;
+  readonly assignmentId: number;
+  readonly recordedBy: string;
+  readonly recordedAt: string;
+  readonly note: string | null;
+  readonly pausePoint: Point | null;
+  readonly route: LineString | null;
+  readonly remainingArea: Polygon | null;
+  /** Explicit, never-inferred: 'unknown' means not recorded, never "fully covered" (AGENTS.md). */
+  readonly remainingAreaStatus: 'recorded' | 'unknown';
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -114,4 +143,37 @@ export function submitRevision(
 
 export function getTerritoryAudit(territoryId: number): Promise<{ territoryId: number; events: readonly AuditEvent[] }> {
   return request(`/admin/territories/${territoryId}/audit`);
+}
+
+export function listAssignments(territoryId: number): Promise<{ assignments: readonly Assignment[] }> {
+  return request(`/admin/territories/${territoryId}/assignments`);
+}
+
+export function assignTerritory(
+  territoryId: number,
+  input: { assignedTo: string; assignedBy: string }
+): Promise<Assignment> {
+  return request(`/admin/territories/${territoryId}/assignments`, {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}
+
+export function returnAssignment(assignmentId: number, actor: string): Promise<Assignment> {
+  return request(`/admin/assignments/${assignmentId}/return`, { method: 'POST', body: JSON.stringify({ actor }) });
+}
+
+export function completeAssignment(assignmentId: number, actor: string): Promise<Assignment> {
+  return request(`/admin/assignments/${assignmentId}/complete`, { method: 'POST', body: JSON.stringify({ actor }) });
+}
+
+export function reopenAssignment(assignmentId: number, actor: string, reason: string): Promise<Assignment> {
+  return request(`/admin/assignments/${assignmentId}/reopen`, {
+    method: 'POST',
+    body: JSON.stringify({ actor, reason })
+  });
+}
+
+export function listProgress(assignmentId: number): Promise<{ entries: readonly ProgressEntry[] }> {
+  return request(`/admin/assignments/${assignmentId}/progress`);
 }

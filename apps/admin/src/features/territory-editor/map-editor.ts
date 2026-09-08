@@ -86,6 +86,26 @@ export function installEditorLayers(map: MapLibreMap): void {
     paint: { 'line-color': '#143f35', 'line-width': 2 }
   });
 
+  // Remaining-area, from the latest progress entry — visually distinct from
+  // both saved (teal) and draft (orange): a hatched magenta outline, since
+  // it represents an ADMINISTRATOR-VIEWED estimate of what is left, never a
+  // territory boundary or a drawing in progress. Absent (no progress entry
+  // recorded a remaining area) means this layer simply stays empty — the UI
+  // must say "unknown" in text elsewhere, never render a guessed shape.
+  map.addSource('remaining-area', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer({
+    id: 'remaining-area-fill',
+    type: 'fill',
+    source: 'remaining-area',
+    paint: { 'fill-color': '#b0339a', 'fill-opacity': 0.18 }
+  });
+  map.addLayer({
+    id: 'remaining-area-line',
+    type: 'line',
+    source: 'remaining-area',
+    paint: { 'line-color': '#7a1f6b', 'line-width': 2, 'line-dasharray': [1, 1] }
+  });
+
   map.addSource('draft-territory', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
   map.addLayer({
     id: 'draft-territory-fill',
@@ -140,6 +160,22 @@ export function renderDraft(map: MapLibreMap, draft: DraftState): void {
 /** Renders the persisted (server-confirmed) territory boundary, or clears it when there is none yet. */
 export function renderSavedTerritory(map: MapLibreMap, geometry: Polygon | null): void {
   const source = asGeoJsonSource(map.getSource('saved-territory'));
+  if (!source) return;
+  source.setData(
+    geometry === null
+      ? { type: 'FeatureCollection', features: [] }
+      : { type: 'FeatureCollection', features: [{ type: 'Feature', properties: null, geometry }] }
+  );
+}
+
+/**
+ * Renders the remaining-area geometry from the latest progress entry, or
+ * clears the layer when there is none — an empty layer here is the visual
+ * counterpart of the "unknown" status text; it never shows a guessed shape
+ * (AGENTS.md: coverage is never inferred from a territory polygon).
+ */
+export function renderRemainingArea(map: MapLibreMap, geometry: Polygon | null): void {
+  const source = asGeoJsonSource(map.getSource('remaining-area'));
   if (!source) return;
   source.setData(
     geometry === null

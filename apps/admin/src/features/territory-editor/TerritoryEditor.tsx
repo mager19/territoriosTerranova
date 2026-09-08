@@ -20,14 +20,18 @@ import {
   fitToPolygon,
   installEditorLayers,
   renderDraft,
+  renderRemainingArea,
   renderSavedTerritory,
   screenPointToCoordinate
 } from './map-editor.js';
+import type { Polygon } from '@territorios/geo';
 
 export interface TerritoryEditorProps {
   /** The territory to draw a new revision for, or null to draw a brand-new territory. */
   readonly selectedTerritory: TerritoryWithRevisions | null;
   readonly onSaved: (territory: TerritoryWithRevisions) => void;
+  /** The latest recorded progress entry's remaining-area geometry, or null when unknown (slice 2: TerritoryDetail owns fetching this). */
+  readonly remainingAreaGeometry?: Polygon | null;
 }
 
 /**
@@ -40,7 +44,11 @@ export interface TerritoryEditorProps {
  * component, TerritoryList) is the accessible, non-map way to select and
  * review territories the A5 brief's DoD asks for.
  */
-export function TerritoryEditor({ selectedTerritory, onSaved }: TerritoryEditorProps): JSX.Element {
+export function TerritoryEditor({
+  selectedTerritory,
+  onSaved,
+  remainingAreaGeometry = null
+}: TerritoryEditorProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -104,6 +112,15 @@ export function TerritoryEditor({ selectedTerritory, onSaved }: TerritoryEditorP
     if (!map || !mapReady) return;
     renderDraft(map, draft);
   }, [draft, mapReady]);
+
+  // The latest progress entry's remaining area — TerritoryDetail (slice 2)
+  // owns fetching it. Absent means unknown; the layer is simply empty then,
+  // never a guessed shape.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    renderRemainingArea(map, remainingAreaGeometry);
+  }, [remainingAreaGeometry, mapReady]);
 
   // Show the selected territory's current revision as the "saved" layer,
   // distinct from the in-progress draft; fit the view to it.
