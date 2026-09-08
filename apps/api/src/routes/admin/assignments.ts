@@ -8,7 +8,13 @@
 
 import type { FastifyInstance } from 'fastify';
 
-import { assignTerritory, completeAssignment, reopenAssignment, returnAssignment } from '../../domain/assignments.js';
+import {
+  assignTerritory,
+  completeAssignment,
+  listAssignmentsForTerritory,
+  reopenAssignment,
+  returnAssignment
+} from '../../domain/assignments.js';
 import { isRecord, trySendDomainError } from './error-response.js';
 import type { TransactionalPool } from '../../db/transaction.js';
 
@@ -37,6 +43,18 @@ export function registerAdminAssignmentRoutes(app: FastifyInstance, deps: AdminA
         assignedBy: typeof body.assignedBy === 'string' ? body.assignedBy : ''
       });
       return reply.status(201).send(assignment);
+    } catch (error) {
+      if (trySendDomainError(reply, error)) return;
+      throw error;
+    }
+  });
+
+  app.get<{ Params: { id: string } }>('/admin/territories/:id/assignments', async (request, reply) => {
+    const territoryId = parsePositiveId(request.params.id, reply);
+    if (territoryId === undefined) return;
+    try {
+      const assignments = await listAssignmentsForTerritory(deps.pool, territoryId);
+      return reply.status(200).send({ assignments });
     } catch (error) {
       if (trySendDomainError(reply, error)) return;
       throw error;

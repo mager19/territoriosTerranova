@@ -260,3 +260,31 @@ export async function reopenAssignment(
     return fetchAssignment(client, assignmentId);
   });
 }
+
+/**
+ * All assignments for a territory, oldest first — the read side slice 2
+ * was missing: without this, a UI has no way to know whether a territory
+ * currently has an active assignment (so it should offer return/complete)
+ * or none (so it should offer assign), short of re-deriving that from the
+ * audit log client-side. `.at(-1)` on the result is "the current one".
+ */
+export async function listAssignmentsForTerritory(
+  pool: TransactionalPool,
+  territoryId: number
+): Promise<readonly Assignment[]> {
+  return withTransaction(pool, async (client) => {
+    const { rows: territoryRows } = await client.query<{ id: string }>(
+      `SELECT id FROM territories WHERE id = $1`,
+      [territoryId]
+    );
+    if (!territoryRows[0]) {
+      throw new TerritoryNotFoundError(territoryId);
+    }
+
+    const { rows } = await client.query<AssignmentRow>(
+      `SELECT ${ASSIGNMENT_SELECT_COLUMNS} FROM ${ASSIGNMENT_FROM} WHERE a.territory_id = $1 ORDER BY a.assigned_at ASC`,
+      [territoryId]
+    );
+    return rows.map(toAssignment);
+  });
+}
