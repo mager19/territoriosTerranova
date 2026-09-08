@@ -1,0 +1,174 @@
+/**
+ * MapLibre rendering glue — thin on purpose (A5 brief: "the map is a
+ * rendering surface, not the model"). All drawing state lives in draft.ts;
+ * this module only turns MapLibre events into calls into that module and
+ * renders its output as GeoJSON layers.
+ *
+ * Basemap config verified against the live service and reused verbatim
+ * from docs/map-references.md. OSM's public tile server is rate-limited
+ * and NOT approved for production traffic — fine for development only
+ * (still an open production decision, docs/agents/README.md "Still open").
+ *
+ * GeoJSON types come from @territorios/geo — the project's one system of
+ * record for this shape (AGENTS.md) — not a separate @types/geojson
+ * dependency, so there is exactly one place these types can drift from
+ * RFC 7946.
+ */
+
+import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
+import type { Feature, FeatureCollection, Geometry, Polygon, Position } from '@territorios/geo';
+
+import type { Coordinate, DraftState } from './draft.js';
+
+export const BELLO_CENTER: [number, number] = [-75.5636, 6.3373];
+export const BELLO_ZOOM = 13;
+export const OSM_ATTRIBUTION = '© OpenStreetMap contributors';
+
+export function createBelloMapStyle(): StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      'osm-raster': {
+        type: 'raster',
+        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: OSM_ATTRIBUTION
+      }
+    },
+    layers: [{ id: 'osm-raster-layer', type: 'raster', source: 'osm-raster' }]
+  };
+}
+
+function emptyFeatureCollection(): FeatureCollection {
+  return { type: 'FeatureCollection', features: [] };
+}
+
+/** A GeoJSON source, structurally — maplibre-gl's own source union requires
+ * an instanceof check to narrow to GeoJSONSource; this is deliberately
+ * looser (any source that happens to have setData). */
+interface GeoJsonLikeSource {
+  setData(data: FeatureCollection): void;
+}
+
+function asGeoJsonSource(source: ReturnType<MapLibreMap['getSource']>): GeoJsonLikeSource | undefined {
+  if (source && 'setData' in source && typeof (source as { setData?: unknown }).setData === 'function') {
+    return source as unknown as GeoJsonLikeSource;
+  }
+  return undefined;
+}
+
+/** Screen pixel -> WGS84 [lon, lat] via MapLibre's real projection — never linear interpolation over a hardcoded extent (the archived attempt's bug). */
+export function screenPointToCoordinate(map: MapLibreMap, point: { x: number; y: number }): Coordinate {
+  const { lng, lat } = map.unproject([point.x, point.y]);
+  return [lng, lat];
+}
+
+/**
+ * Installs two GeoJSON sources/layer pairs, visually distinct on purpose:
+ * "saved" (the persisted territory, from the server) in a muted, filled
+ * style, and "draft" (the in-progress drawing) in an active accent color
+ * with a dashed outline, so an administrator never confuses what they are
+ * currently drawing with what is already saved.
+ */
+export function installEditorLayers(map: MapLibreMap): void {
+  map.addSource('saved-territory', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer({
+    id: 'saved-territory-fill',
+    type: 'fill',
+    source: 'saved-territory',
+    paint: { 'fill-color': '#2f6f5e', 'fill-opacity': 0.22 }
+  });
+  map.addLayer({
+    id: 'saved-territory-line',
+    type: 'line',
+    source: 'saved-territory',
+    paint: { 'line-color': '#143f35', 'line-width': 2 }
+  });
+
+  map.addSource('draft-territory', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer({
+    id: 'draft-territory-fill',
+    type: 'fill',
+    source: 'draft-territory',
+    paint: { 'fill-color': '#e08a2e', 'fill-opacity': 0.3 }
+  });
+  map.addLayer({
+    id: 'draft-territory-line',
+    type: 'line',
+    source: 'draft-territory',
+    paint: { 'line-color': '#a85a12', 'line-width': 3, 'line-dasharray': [2, 2] }
+  });
+  map.addLayer({
+    id: 'draft-territory-vertices',
+    type: 'circle',
+    source: 'draft-territory',
+    filter: ['==', ['geometry-type'], 'Point'],
+    // White halo + larger radius: a thin 5px dot in the project's teal/
+    // orange palette was hard to pick out against busy OSM tiles at a
+    // glance — this stays visible over any basemap color underneath it.
+    paint: {
+      'circle-radius': 7,
+      'circle-color': '#e08a2e',
+      'circle-stroke-width': 2,
+      'circle-stroke-color': '#ffffff'
+    }
+  });
+}
+
+function pointFeature(coordinate: Coordinate): Feature {
+  return { type: 'Feature', properties: null, geometry: { type: 'Point', coordinates: coordinate } };
+}
+
+/** Renders the current draft: vertex points always; a dashed line while open; a filled+outlined polygon once closed. */
+export function renderDraft(map: MapLibreMap, draft: DraftState): void {
+  const source = asGeoJsonSource(map.getSource('draft-territory'));
+  if (!source) return;
+
+  const features: Feature[] = draft.vertices.map(pointFeature);
+
+  if (draft.vertices.length >= 2) {
+    const geometry: Geometry = draft.isClosed
+      ? { type: 'Polygon', coordinates: [[...draft.vertices, draft.vertices[0]]] }
+      : { type: 'LineString', coordinates: draft.vertices };
+    features.push({ type: 'Feature', properties: null, geometry });
+  }
+
+  source.setData({ type: 'FeatureCollection', features });
+}
+
+/** Renders the persisted (server-confirmed) territory boundary, or clears it when there is none yet. */
+export function renderSavedTerritory(map: MapLibreMap, geometry: Polygon | null): void {
+  const source = asGeoJsonSource(map.getSource('saved-territory'));
+  if (!source) return;
+  source.setData(
+    geometry === null
+      ? { type: 'FeatureCollection', features: [] }
+      : { type: 'FeatureCollection', features: [{ type: 'Feature', properties: null, geometry }] }
+  );
+}
+
+/** Centers and fits the map to a polygon's bounding box, WGS84 in, WGS84 bounds out. */
+export function fitToPolygon(map: MapLibreMap, geometry: Polygon): void {
+  const positions: readonly Position[] = geometry.coordinates.flat();
+  const first = positions[0];
+  if (!first) return;
+
+  let west = first[0];
+  let east = first[0];
+  let south = first[1];
+  let north = first[1];
+  for (const [lon, lat] of positions) {
+    west = Math.min(west, lon);
+    east = Math.max(east, lon);
+    south = Math.min(south, lat);
+    north = Math.max(north, lat);
+  }
+  map.fitBounds(
+    [
+      [west, south],
+      [east, north]
+    ],
+    { padding: 48, animate: false }
+  );
+}
