@@ -7,7 +7,8 @@ import { queryPostgisVersion } from './health.js';
 const config = readConfig();
 const pool = new Pool({ connectionString: config.databaseUrl, max: 5 });
 const app = buildApp({
-  queryPostgisVersion: () => queryPostgisVersion(pool)
+  queryPostgisVersion: () => queryPostgisVersion(pool),
+  pool
 });
 
 const shutdown = async (signal: string): Promise<void> => {
