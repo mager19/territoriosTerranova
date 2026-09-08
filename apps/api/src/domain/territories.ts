@@ -12,7 +12,7 @@
 import type { Polygon } from '@territorios/geo';
 import type { PoolClient } from 'pg';
 
-import { recordAuditEvent } from './audit.js';
+import { getTerritoryAuditHistory as queryTerritoryAuditHistory, recordAuditEvent, type AuditEvent } from './audit.js';
 import { TerritoryNotFoundError, ValidationError } from './errors.js';
 import { validateTerritoryGeometry } from './geometry.js';
 import { rethrowAsTerritoryGeometryError } from '../db/pg-error-mapper.js';
@@ -255,5 +255,26 @@ export async function submitRevision(
     });
 
     return toRevision(revision);
+  });
+}
+
+/**
+ * Full audit history for a territory (slice 3): its own events plus every
+ * event recorded against its assignments. 404s via TerritoryNotFoundError
+ * first — audit.ts's query alone can't distinguish "no history" from "no
+ * such territory", since an empty result is valid for a brand-new territory
+ * (well, not quite: creation itself always writes an event — but a
+ * nonexistent territory must still 404, not silently return []).
+ */
+export async function getTerritoryAuditHistory(
+  pool: TransactionalPool,
+  territoryId: number
+): Promise<readonly AuditEvent[]> {
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<{ id: string }>(`SELECT id FROM territories WHERE id = $1`, [territoryId]);
+    if (!rows[0]) {
+      throw new TerritoryNotFoundError(territoryId);
+    }
+    return queryTerritoryAuditHistory(client, territoryId);
   });
 }

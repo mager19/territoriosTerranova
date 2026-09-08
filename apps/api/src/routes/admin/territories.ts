@@ -9,6 +9,7 @@ import type { FastifyInstance } from 'fastify';
 
 import {
   createTerritory,
+  getTerritoryAuditHistory,
   getTerritoryWithRevisions,
   listTerritories,
   submitRevision
@@ -49,6 +50,20 @@ export function registerAdminTerritoryRoutes(app: FastifyInstance, deps: AdminTe
     try {
       const territory = await getTerritoryWithRevisions(deps.pool, territoryId);
       return reply.status(200).send(territory);
+    } catch (error) {
+      if (trySendDomainError(reply, error)) return;
+      throw error;
+    }
+  });
+
+  app.get<{ Params: { id: string } }>('/admin/territories/:id/audit', async (request, reply) => {
+    const territoryId = Number(request.params.id);
+    if (!Number.isInteger(territoryId) || territoryId < 1) {
+      return reply.status(400).send({ error: 'invalid_request', message: 'territory id must be a positive integer' });
+    }
+    try {
+      const events = await getTerritoryAuditHistory(deps.pool, territoryId);
+      return reply.status(200).send({ territoryId, events });
     } catch (error) {
       if (trySendDomainError(reply, error)) return;
       throw error;

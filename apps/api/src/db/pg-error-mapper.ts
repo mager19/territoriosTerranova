@@ -122,3 +122,36 @@ export function rethrowAsAssignmentError(error: unknown): never {
   }
   throw error;
 }
+
+const PROGRESS_GEOMETRY_CONSTRAINTS: Record<string, string> = {
+  progress_entries_pause_point_valid: 'pause point',
+  progress_entries_route_valid: 'route',
+  progress_entries_remaining_area_valid: 'remaining-area geometry'
+};
+
+/**
+ * Maps a raw `pg` DatabaseError from a progress-entry insert into
+ * InvalidGeometryError. Scope note: unlike territory geometry (slice 1's
+ * four distinct causes), these three optional fields share ONE domain error
+ * type — the brief's "distinct error per cause" requirement was scoped to
+ * territory revisions specifically — but the MESSAGE still names exactly
+ * which field failed, via the constraint name.
+ */
+export function mapProgressEntryError(error: unknown): DomainError | undefined {
+  if (!(error instanceof DatabaseError)) {
+    return undefined;
+  }
+  if (error.code === '23514' && error.constraint && error.constraint in PROGRESS_GEOMETRY_CONSTRAINTS) {
+    const field = PROGRESS_GEOMETRY_CONSTRAINTS[error.constraint];
+    return new InvalidGeometryError(`${field} is not a valid geometry (${error.constraint})`);
+  }
+  return undefined;
+}
+
+export function rethrowAsProgressEntryError(error: unknown): never {
+  const mapped = mapProgressEntryError(error);
+  if (mapped) {
+    throw mapped;
+  }
+  throw error;
+}

@@ -3,8 +3,10 @@ import { DatabaseError } from 'pg';
 
 import {
   mapAssignmentError,
+  mapProgressEntryError,
   mapTerritoryGeometryError,
   rethrowAsAssignmentError,
+  rethrowAsProgressEntryError,
   rethrowAsTerritoryGeometryError
 } from './pg-error-mapper.js';
 import {
@@ -127,5 +129,38 @@ describe('rethrowAsAssignmentError', () => {
   it('rethrows the original error unchanged when unrecognized', () => {
     const original = new Error('unrelated failure');
     expect(() => rethrowAsAssignmentError(original)).toThrow(original);
+  });
+});
+
+describe('mapProgressEntryError', () => {
+  it.each([
+    ['progress_entries_pause_point_valid', /pause point/],
+    ['progress_entries_route_valid', /route/],
+    ['progress_entries_remaining_area_valid', /remaining-area/]
+  ])('maps %s to InvalidGeometryError naming the field in the message', (constraint, expectedPattern) => {
+    const mapped = mapProgressEntryError(checkViolation(constraint));
+    expect(mapped).toBeInstanceOf(InvalidGeometryError);
+    expect(mapped?.message).toMatch(expectedPattern);
+  });
+
+  it('returns undefined for an unrecognized constraint', () => {
+    expect(mapProgressEntryError(checkViolation('some_other_constraint'))).toBeUndefined();
+  });
+
+  it('returns undefined for a non-DatabaseError', () => {
+    expect(mapProgressEntryError(new Error('plain error'))).toBeUndefined();
+  });
+});
+
+describe('rethrowAsProgressEntryError', () => {
+  it('throws the mapped domain error when recognized', () => {
+    expect(() => rethrowAsProgressEntryError(checkViolation('progress_entries_route_valid'))).toThrow(
+      InvalidGeometryError
+    );
+  });
+
+  it('rethrows the original error unchanged when unrecognized', () => {
+    const original = new Error('unrelated failure');
+    expect(() => rethrowAsProgressEntryError(original)).toThrow(original);
   });
 });
