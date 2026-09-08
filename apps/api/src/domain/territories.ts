@@ -1,0 +1,259 @@
+/**
+ * Territory and revision domain operations — slice 1 of the A3 brief.
+ *
+ * Every geometry change writes a NEW row in territory_revisions; nothing is
+ * ever updated in place (A2's migration enforces this with a trigger; this
+ * layer never attempts an UPDATE against that table, on purpose). Current
+ * state (the active geometry) is always DERIVED as the highest
+ * revision_number for a territory — there is no denormalized "current geom"
+ * column that could drift from history.
+ */
+
+import type { Polygon } from '@territorios/geo';
+import type { PoolClient } from 'pg';
+
+import { recordAuditEvent } from './audit.js';
+import { TerritoryNotFoundError, ValidationError } from './errors.js';
+import { validateTerritoryGeometry } from './geometry.js';
+import { rethrowAsTerritoryGeometryError } from '../db/pg-error-mapper.js';
+import { withTransaction, type TransactionalPool } from '../db/transaction.js';
+
+export type TerritoryStatus = 'active' | 'archived';
+
+export interface Territory {
+  readonly id: number;
+  readonly name: string;
+  readonly status: TerritoryStatus;
+  readonly createdAt: string;
+  readonly currentRevisionNumber: number;
+}
+
+export interface TerritoryRevision {
+  readonly id: number;
+  readonly territoryId: number;
+  readonly revisionNumber: number;
+  readonly geometry: Polygon;
+  readonly author: string;
+  readonly createdAt: string;
+}
+
+export interface TerritoryWithRevisions {
+  readonly id: number;
+  readonly name: string;
+  readonly status: TerritoryStatus;
+  readonly createdAt: string;
+  readonly revisions: readonly TerritoryRevision[];
+}
+
+interface TerritoryRow {
+  readonly id: string;
+  readonly name: string;
+  readonly status: TerritoryStatus;
+  readonly created_at: string;
+  readonly current_revision_number: string | null;
+}
+
+interface RevisionRow {
+  readonly id: string;
+  readonly territory_id: string;
+  readonly revision_number: number;
+  readonly geometry: Polygon;
+  readonly author: string;
+  readonly created_at: string;
+}
+
+function toTerritory(row: TerritoryRow): Territory {
+  return {
+    id: Number(row.id),
+    name: row.name,
+    status: row.status,
+    createdAt: row.created_at,
+    currentRevisionNumber: row.current_revision_number === null ? 0 : Number(row.current_revision_number)
+  };
+}
+
+function toRevision(row: RevisionRow): TerritoryRevision {
+  return {
+    id: Number(row.id),
+    territoryId: Number(row.territory_id),
+    revisionNumber: row.revision_number,
+    geometry: row.geometry,
+    author: row.author,
+    createdAt: row.created_at
+  };
+}
+
+async function insertRevision(
+  client: PoolClient,
+  territoryId: number,
+  revisionNumber: number,
+  geometry: Polygon,
+  author: string
+): Promise<RevisionRow> {
+  try {
+    const { rows } = await client.query<RevisionRow>(
+      `INSERT INTO territory_revisions (territory_id, revision_number, geom, author)
+       VALUES ($1, $2, ST_SetSRID(ST_GeomFromGeoJSON($3), 4326), $4)
+       RETURNING id, territory_id, revision_number,
+                 ST_AsGeoJSON(geom)::json AS geometry, author, created_at`,
+      [territoryId, revisionNumber, JSON.stringify(geometry), author]
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new Error('territory_revisions insert returned no row');
+    }
+    return row;
+  } catch (error) {
+    rethrowAsTerritoryGeometryError(error);
+  }
+}
+
+export interface CreateTerritoryInput {
+  readonly name: string;
+  readonly geometry: unknown;
+  readonly author: string;
+}
+
+export async function createTerritory(
+  pool: TransactionalPool,
+  input: CreateTerritoryInput
+): Promise<TerritoryWithRevisions> {
+  const geometry = validateTerritoryGeometry(input.geometry);
+  const name = input.name.trim();
+  const author = input.author.trim();
+  if (name === '') {
+    throw new ValidationError('name must not be blank');
+  }
+  if (author === '') {
+    throw new ValidationError('author must not be blank');
+  }
+
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<{ id: string; status: TerritoryStatus; created_at: string }>(
+      `INSERT INTO territories (name) VALUES ($1) RETURNING id, status, created_at`,
+      [name]
+    );
+    const territoryRow = rows[0];
+    if (!territoryRow) {
+      throw new Error('territories insert returned no row');
+    }
+    const territoryId = Number(territoryRow.id);
+
+    const revision = await insertRevision(client, territoryId, 1, geometry, author);
+
+    await recordAuditEvent(client, {
+      entityType: 'territory',
+      entityId: territoryId,
+      action: 'created',
+      actor: author,
+      reason: 'territory created',
+      payload: { revisionId: Number(revision.id), revisionNumber: revision.revision_number }
+    });
+
+    return {
+      id: territoryId,
+      name,
+      status: territoryRow.status,
+      createdAt: territoryRow.created_at,
+      revisions: [toRevision(revision)]
+    };
+  });
+}
+
+export async function listTerritories(pool: TransactionalPool): Promise<readonly Territory[]> {
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<TerritoryRow>(
+      `SELECT t.id, t.name, t.status, t.created_at,
+              (SELECT max(r.revision_number) FROM territory_revisions r WHERE r.territory_id = t.id)
+                AS current_revision_number
+       FROM territories t
+       ORDER BY t.id`
+    );
+    return rows.map(toTerritory);
+  });
+}
+
+export async function getTerritoryWithRevisions(
+  pool: TransactionalPool,
+  territoryId: number
+): Promise<TerritoryWithRevisions> {
+  return withTransaction(pool, async (client) => {
+    const { rows: territoryRows } = await client.query<{
+      id: string;
+      name: string;
+      status: TerritoryStatus;
+      created_at: string;
+    }>(`SELECT id, name, status, created_at FROM territories WHERE id = $1`, [territoryId]);
+    const territoryRow = territoryRows[0];
+    if (!territoryRow) {
+      throw new TerritoryNotFoundError(territoryId);
+    }
+
+    const { rows: revisionRows } = await client.query<RevisionRow>(
+      `SELECT id, territory_id, revision_number, ST_AsGeoJSON(geom)::json AS geometry, author, created_at
+       FROM territory_revisions
+       WHERE territory_id = $1
+       ORDER BY revision_number ASC`,
+      [territoryId]
+    );
+
+    return {
+      id: Number(territoryRow.id),
+      name: territoryRow.name,
+      status: territoryRow.status,
+      createdAt: territoryRow.created_at,
+      revisions: revisionRows.map(toRevision)
+    };
+  });
+}
+
+export interface SubmitRevisionInput {
+  readonly geometry: unknown;
+  readonly author: string;
+}
+
+export async function submitRevision(
+  pool: TransactionalPool,
+  territoryId: number,
+  input: SubmitRevisionInput
+): Promise<TerritoryRevision> {
+  const geometry = validateTerritoryGeometry(input.geometry);
+  const author = input.author.trim();
+  if (author === '') {
+    throw new ValidationError('author must not be blank');
+  }
+
+  return withTransaction(pool, async (client) => {
+    // Row lock serializes concurrent revision submissions for the SAME
+    // territory so two submitters never compute the same "next" revision
+    // number — the DB's UNIQUE(territory_id, revision_number) constraint
+    // would otherwise turn a race into a confusing, unmapped 23505 for a
+    // perfectly valid geometry.
+    const { rows: lockRows } = await client.query<{ id: string }>(
+      `SELECT id FROM territories WHERE id = $1 FOR UPDATE`,
+      [territoryId]
+    );
+    if (!lockRows[0]) {
+      throw new TerritoryNotFoundError(territoryId);
+    }
+
+    const { rows: maxRows } = await client.query<{ next: number }>(
+      `SELECT COALESCE(max(revision_number), 0) + 1 AS next FROM territory_revisions WHERE territory_id = $1`,
+      [territoryId]
+    );
+    const nextRevisionNumber = maxRows[0]?.next ?? 1;
+
+    const revision = await insertRevision(client, territoryId, nextRevisionNumber, geometry, author);
+
+    await recordAuditEvent(client, {
+      entityType: 'territory',
+      entityId: territoryId,
+      action: 'revision_submitted',
+      actor: author,
+      reason: 'new geometry revision submitted',
+      payload: { revisionId: Number(revision.id), revisionNumber: revision.revision_number }
+    });
+
+    return toRevision(revision);
+  });
+}
