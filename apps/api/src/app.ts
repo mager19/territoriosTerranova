@@ -1,3 +1,4 @@
+import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { registerAdminAssignmentRoutes } from './routes/admin/assignments.js';
@@ -29,6 +30,16 @@ export function buildApp(
   options: BuildAppOptions = {}
 ): FastifyInstance {
   const app = Fastify({ logger: options.logger ?? true });
+
+  // Admin/public are separate Vite dev servers (apps/admin :5173,
+  // apps/public :5174), cross-origin from the API (:3000). Restricted to
+  // exactly those two known local dev origins — never '*'. This is
+  // deliberately dev-scoped: a real deployment topology (reverse proxy,
+  // same-origin, or a production allowlist) is a "still open" production
+  // decision (docs/agents/README.md), not decided here.
+  void app.register(cors, {
+    origin: ['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:5174', 'http://localhost:5174']
+  });
 
   // The health endpoint reflects real database state. It is never a
   // hardcoded {ok:true}: a failing probe answers 503.
