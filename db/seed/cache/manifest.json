@@ -1,0 +1,17 @@
+{
+  "fetchedAt": "2026-09-07T21:11:28.448Z",
+  "attribution": "© 2017 Área Metropolitana del Valle de Aburrá — POT Bello (MapServer). Drafting reference only: not a legal or cadastral boundary.",
+  "maxAllowableOffsetDegrees": "0.00002",
+  "layers": {
+    "barrios": {
+      "url": "https://sim.metropol.gov.co/arcgis/rest/services/Planes_Ordenamiento_Territorial/POT_Bello/MapServer/9/query?where=1%3D1&outFields=Nombre,CodigoPOT,codigoDANE,CodigoCatastro,CodCOMUNA,Extension,Poblacion,EstratoPredom&returnGeometry=true&outSR=4326&maxAllowableOffset=0.00002&f=geojson",
+      "file": "barrios-layer9.geojson",
+      "count": 139
+    },
+    "municipalBoundary": {
+      "url": "https://sim.metropol.gov.co/arcgis/rest/services/Planes_Ordenamiento_Territorial/POT_Bello/MapServer/8/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&maxAllowableOffset=0.00002&f=geojson",
+      "file": "municipal-boundary-layer8.geojson",
+      "count": 1
+    }
+  }
+}

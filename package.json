@@ -15,7 +15,10 @@
     "test": "pnpm -r test",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
-    "db:psql": "docker compose exec -T postgis psql -U territorios -d territorios"
+    "db:psql": "docker compose exec -T postgis psql -U territorios -d territorios",
+    "db:migrate": "pnpm --filter @territorios/geo db:migrate",
+    "db:seed": "pnpm --filter @territorios/geo db:seed",
+    "db:fetch-amva": "pnpm --filter @territorios/geo db:fetch-amva"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

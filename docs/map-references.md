@@ -53,6 +53,28 @@ Verified sample vertex: `[-75.57307274994052, 6.358147322663799]` (Bello, correc
 
 Same feature count, 12.7x smaller. Always send `maxAllowableOffset` for web delivery.
 
+## Data quality — verified anomalies in the 139-barrio seed
+
+Two real, diagnosed anomalies exist in the live AMVA layer-9 export as of the
+2026-09-08 cache. Both are handled explicitly in `packages/geo/src/db/seed.ts`
+(never silently) and covered by integration tests:
+
+| Barrio | Anomaly | Handling |
+| --- | --- | --- |
+| Index 81 (no `Nombre`) | Every non-geometry attribute is blank (`" "`). Geometry is valid. Unique among the 139 — no other barrio is missing every attribute. | Loaded under the placeholder name `Sector sin nombre (AMVA no registra atributos para este polígono)`, deliberately unlike any real AMVA name. A barrio missing *only* its name while keeping other attributes still fails loudly — the placeholder is scoped to this exact, verified shape of gap. |
+| `Urb. Búcaros III` | Its MultiPolygon carries two parts: a real 10-vertex boundary, plus an unrelated zero-area artifact (4 near-duplicate points ~1 m apart — a digitizing slip). `ST_IsValidReason` confirms "Too few points in geometry component" on the artifact only. | The seed drops zero-area MultiPolygon components before insertion (`sanitizedMultiPolygonExpr` in `seed.ts`), keeping the real boundary untouched. This is bulk third-party import sanitization, not "repairing administrator-drawn geometry" — A3's domain code must still reject invalid territory geometry outright. |
+
+### Barrios with active congregation territories
+
+Recorded per orchestrator/user decision (2026-09-08) — not used to scope the
+seed (all 139 barrios load, as a general drafting-reference layer), but kept
+here so it is not lost before A3/A5 need it:
+
+- `B. Guasimalito`
+- `B. Navarra`
+- `B. Altos de Niquía`, `B. Ciudad Niquía`, `B. Niquía Bifamiliar` (all three
+  AMVA sub-barrios covering the "Niquía" area are relevant)
+
 ## Data freshness caveat
 
 The layers are POT 2009 vintage under a 2017 copyright. Treat geometry as a
