@@ -3,7 +3,9 @@ import Fastify, { type FastifyInstance } from 'fastify';
 
 import { registerAdminAssignmentRoutes } from './routes/admin/assignments.js';
 import { registerAdminProgressRoutes } from './routes/admin/progress.js';
+import { registerAdminShareTokenRoutes } from './routes/admin/share-tokens.js';
 import { registerAdminTerritoryRoutes } from './routes/admin/territories.js';
+import { registerPublicTerritoryRoutes } from './routes/public/territories.js';
 import type { TransactionalPool } from './db/transaction.js';
 
 export interface AppDependencies {
@@ -15,8 +17,8 @@ export interface AppDependencies {
   readonly queryPostgisVersion: () => Promise<string>;
   /**
    * Optional so app.test.ts's health-only builds keep working unchanged.
-   * main.ts always provides it; admin territory routes register only when
-   * present (A3, apps/api/src/domain + routes/admin + db).
+   * main.ts always provides it; admin/public routes register only when
+   * present (A3 admin routes, A4 the public one).
    */
   readonly pool?: TransactionalPool;
 }
@@ -25,10 +27,19 @@ export interface BuildAppOptions {
   readonly logger?: boolean;
 }
 
-export function buildApp(
+/**
+ * Async because the public route registers @fastify/rate-limit and then
+ * synchronously reads the `app.rateLimit` decorator it creates
+ * (routes/public/territories.ts) — that decorator only exists once the
+ * plugin's own registration has actually resolved. Fastify's own docs
+ * pattern this as `await fastify.register(...)` before using the
+ * decorator; calling that without awaiting here would race app.listen()/
+ * app.inject() in the caller. Every caller must `await buildApp(...)`.
+ */
+export async function buildApp(
   deps: AppDependencies,
   options: BuildAppOptions = {}
-): FastifyInstance {
+): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? true });
 
   // Admin/public are separate Vite dev servers (apps/admin :5173,
@@ -63,6 +74,8 @@ export function buildApp(
     registerAdminTerritoryRoutes(app, { pool: deps.pool });
     registerAdminAssignmentRoutes(app, { pool: deps.pool });
     registerAdminProgressRoutes(app, { pool: deps.pool });
+    registerAdminShareTokenRoutes(app, { pool: deps.pool });
+    await registerPublicTerritoryRoutes(app, { pool: deps.pool });
   }
 
   return app;

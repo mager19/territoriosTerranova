@@ -148,7 +148,7 @@ beforeAll(async () => {
   await withClient((client) => client.query(FIXTURE_BOUNDARY_SQL));
 
   pool = new Pool({ connectionString: databaseUrl, max: 5 });
-  app = buildApp({ queryPostgisVersion: async () => '3.4.3', pool }, { logger: false });
+  app = await buildApp({ queryPostgisVersion: async () => '3.4.3', pool }, { logger: false });
 }, 360_000);
 
 afterEach(async () => {

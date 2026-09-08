@@ -12,7 +12,7 @@ afterEach(async () => {
 
 describe('GET /health', () => {
   it('returns 200 with the PostGIS version when the database probe succeeds', async () => {
-    app = buildApp({ queryPostgisVersion: async () => '3.4.3' }, { logger: false });
+    app = await buildApp({ queryPostgisVersion: async () => '3.4.3' }, { logger: false });
 
     const response = await app.inject({ method: 'GET', url: '/health' });
 
@@ -24,7 +24,7 @@ describe('GET /health', () => {
   });
 
   it('returns 503 and reports the database down when the probe fails', async () => {
-    app = buildApp(
+    app = await buildApp(
       {
         queryPostgisVersion: async () => {
           throw new Error('connect ECONNREFUSED 127.0.0.1:5432');
@@ -43,7 +43,7 @@ describe('GET /health', () => {
   });
 
   it('does not leak the driver error message in the 503 body', async () => {
-    app = buildApp(
+    app = await buildApp(
       {
         queryPostgisVersion: async () => {
           throw new Error('password authentication failed for user "secret"');
