@@ -208,6 +208,26 @@ These block production, not development. Do not let an agent invent an answer.
 - Reopen authority and audit-review process
 - Written AMVA/Bello reuse and freshness approval
 
+## Deferred product scope — future work
+
+Confirmed gaps against the original product vision, found while comparing the
+merged A1–A5 build against it on 2026-09-08. Not blocking A6/A7; parked here
+for later planning.
+
+- **Territory composition from real manzanas.** Today a territory is a
+  freehand polygon drawn inside a barrio boundary, not a set of actual
+  cadastral manzana (city block) polygons. AMVA's `Manzanas` layer (id 15)
+  exists but was deliberately never seeded — it carries only `OBJECTID`,
+  `AREA`, `PERIMETER`, no name or code (`docs/map-references.md`). Composing
+  territories from real manzanas needs a data source that actually identifies
+  them; none is verified yet.
+- **Scheduled/planned work date on assignments.** `assignments.assigned_at` is
+  when the assignment record was created, not a "this territory is worked on
+  [date]" plan. There is no planned-date field at all today.
+- **Statistics per territory over time.** No aggregation endpoint or view
+  exists. The raw timestamped data is there (`progress_entries`,
+  `audit_events`), so this is additive, not a schema change.
+
 ## Required reading for every agent
 
 - `PRD.md` — product intent, scope, non-goals
