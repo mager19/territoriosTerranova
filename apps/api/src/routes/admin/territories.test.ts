@@ -43,7 +43,7 @@ afterEach(async () => {
   app = undefined;
 });
 
-function buildTestApp(): FastifyInstance {
+function buildTestApp(): Promise<FastifyInstance> {
   return buildApp(
     { queryPostgisVersion: async () => '3.4.3', pool: poisonPool },
     { logger: false }
@@ -52,7 +52,7 @@ function buildTestApp(): FastifyInstance {
 
 describe('POST /admin/territories — validation branches', () => {
   it('rejects a blank name without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/territories',
@@ -63,7 +63,7 @@ describe('POST /admin/territories — validation branches', () => {
   });
 
   it('rejects a blank author without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/territories',
@@ -74,7 +74,7 @@ describe('POST /admin/territories — validation branches', () => {
   });
 
   it('rejects a non-Polygon geometry without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/territories',
@@ -85,7 +85,7 @@ describe('POST /admin/territories — validation branches', () => {
   });
 
   it('rejects a missing geometry field without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/territories',
@@ -98,7 +98,7 @@ describe('POST /admin/territories — validation branches', () => {
 
 describe('POST /admin/territories/:id/revisions — validation branches', () => {
   it('rejects a non-integer territory id without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/territories/not-a-number/revisions',
@@ -109,7 +109,7 @@ describe('POST /admin/territories/:id/revisions — validation branches', () => 
   });
 
   it('rejects an invalid geometry without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/territories/1/revisions',
@@ -122,14 +122,14 @@ describe('POST /admin/territories/:id/revisions — validation branches', () => 
 
 describe('GET /admin/territories/:id — validation branches', () => {
   it('rejects a non-integer territory id without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({ method: 'GET', url: '/admin/territories/not-a-number' });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: 'invalid_request' });
   });
 
   it('rejects a zero or negative territory id without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({ method: 'GET', url: '/admin/territories/0' });
     expect(response.statusCode).toBe(400);
   });
@@ -137,7 +137,7 @@ describe('GET /admin/territories/:id — validation branches', () => {
 
 describe('admin routes are absent when no pool is supplied', () => {
   it('does not register admin territory routes for a health-only app (A1 compatibility)', async () => {
-    app = buildApp({ queryPostgisVersion: async () => '3.4.3' }, { logger: false });
+    app = await buildApp({ queryPostgisVersion: async () => '3.4.3' }, { logger: false });
     const response = await app.inject({ method: 'GET', url: '/admin/territories' });
     expect(response.statusCode).toBe(404);
   });

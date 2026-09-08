@@ -24,13 +24,13 @@ afterEach(async () => {
   app = undefined;
 });
 
-function buildTestApp(): FastifyInstance {
+function buildTestApp(): Promise<FastifyInstance> {
   return buildApp({ queryPostgisVersion: async () => '3.4.3', pool: poisonPool }, { logger: false });
 }
 
 describe('POST /admin/territories/:id/assignments — validation branches', () => {
   it('rejects a non-integer territory id without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/territories/not-a-number/assignments',
@@ -42,7 +42,7 @@ describe('POST /admin/territories/:id/assignments — validation branches', () =
 
 describe('POST /admin/assignments/:id/return — validation branches', () => {
   it('rejects a blank actor without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/assignments/1/return',
@@ -53,7 +53,7 @@ describe('POST /admin/assignments/:id/return — validation branches', () => {
   });
 
   it('rejects a non-integer assignment id without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/assignments/not-a-number/return',
@@ -65,7 +65,7 @@ describe('POST /admin/assignments/:id/return — validation branches', () => {
 
 describe('POST /admin/assignments/:id/complete — validation branches', () => {
   it('rejects a blank actor without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/assignments/1/complete',
@@ -78,7 +78,7 @@ describe('POST /admin/assignments/:id/complete — validation branches', () => {
 
 describe('POST /admin/assignments/:id/reopen — validation branches', () => {
   it('rejects a blank reason without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/assignments/1/reopen',
@@ -89,7 +89,7 @@ describe('POST /admin/assignments/:id/reopen — validation branches', () => {
   });
 
   it('rejects a blank actor without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/assignments/1/reopen',
@@ -99,7 +99,7 @@ describe('POST /admin/assignments/:id/reopen — validation branches', () => {
   });
 
   it('rejects a missing reason without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/assignments/1/reopen',

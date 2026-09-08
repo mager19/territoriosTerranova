@@ -24,13 +24,13 @@ afterEach(async () => {
   app = undefined;
 });
 
-function buildTestApp(): FastifyInstance {
+function buildTestApp(): Promise<FastifyInstance> {
   return buildApp({ queryPostgisVersion: async () => '3.4.3', pool: poisonPool }, { logger: false });
 }
 
 describe('POST /admin/assignments/:id/progress — validation branches', () => {
   it('rejects a blank recordedBy without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/assignments/1/progress',
@@ -41,7 +41,7 @@ describe('POST /admin/assignments/:id/progress — validation branches', () => {
   });
 
   it('rejects a non-integer assignment id without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/assignments/not-a-number/progress',
@@ -51,7 +51,7 @@ describe('POST /admin/assignments/:id/progress — validation branches', () => {
   });
 
   it('rejects an invalid pause point without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/assignments/1/progress',
@@ -62,7 +62,7 @@ describe('POST /admin/assignments/:id/progress — validation branches', () => {
   });
 
   it('rejects an invalid route without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/assignments/1/progress',
@@ -73,7 +73,7 @@ describe('POST /admin/assignments/:id/progress — validation branches', () => {
   });
 
   it('rejects an invalid remaining-area geometry without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
       url: '/admin/assignments/1/progress',
@@ -86,7 +86,7 @@ describe('POST /admin/assignments/:id/progress — validation branches', () => {
 
 describe('GET /admin/assignments/:id/progress — validation branches', () => {
   it('rejects a non-integer assignment id without touching the database', async () => {
-    app = buildTestApp();
+    app = await buildTestApp();
     const response = await app.inject({ method: 'GET', url: '/admin/assignments/not-a-number/progress' });
     expect(response.statusCode).toBe(400);
   });
