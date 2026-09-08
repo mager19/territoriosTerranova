@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 
+import { registerAdminAssignmentRoutes } from './routes/admin/assignments.js';
 import { registerAdminTerritoryRoutes } from './routes/admin/territories.js';
 import type { TransactionalPool } from './db/transaction.js';
 
@@ -48,6 +49,7 @@ export function buildApp(
 
   if (deps.pool) {
     registerAdminTerritoryRoutes(app, { pool: deps.pool });
+    registerAdminAssignmentRoutes(app, { pool: deps.pool });
   }
 
   return app;

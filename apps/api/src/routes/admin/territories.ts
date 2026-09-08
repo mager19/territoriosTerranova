@@ -7,45 +7,17 @@
 
 import type { FastifyInstance } from 'fastify';
 
-import { isDomainError, type DomainError } from '../../domain/errors.js';
 import {
   createTerritory,
   getTerritoryWithRevisions,
   listTerritories,
   submitRevision
 } from '../../domain/territories.js';
+import { isRecord, trySendDomainError } from './error-response.js';
 import type { TransactionalPool } from '../../db/transaction.js';
 
 export interface AdminTerritoryRouteDeps {
   readonly pool: TransactionalPool;
-}
-
-/**
- * Every domain error carries a distinct `code` (AGENTS.md: never a generic
- * 400). Status choice: 400 for a problem with the request's own input
- * (invalid/zero-area geometry, out of bounds, blank fields), 404 for a
- * missing territory, 409 for a real conflict with another territory's
- * state (unauthorized overlap), 503 for an operational precondition this
- * request cannot fix (the boundary reference itself is missing).
- */
-function statusForDomainError(error: DomainError): number {
-  switch (error.code) {
-    case 'invalid_geometry':
-    case 'zero_area_geometry':
-    case 'out_of_bounds':
-    case 'invalid_request':
-      return 400;
-    case 'territory_not_found':
-      return 404;
-    case 'unauthorized_overlap':
-      return 409;
-    case 'boundary_reference_missing':
-      return 503;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 export function registerAdminTerritoryRoutes(app: FastifyInstance, deps: AdminTerritoryRouteDeps): void {
@@ -59,9 +31,7 @@ export function registerAdminTerritoryRoutes(app: FastifyInstance, deps: AdminTe
       });
       return reply.status(201).send(territory);
     } catch (error) {
-      if (isDomainError(error)) {
-        return reply.status(statusForDomainError(error)).send({ error: error.code, message: error.message });
-      }
+      if (trySendDomainError(reply, error)) return;
       throw error;
     }
   });
@@ -80,9 +50,7 @@ export function registerAdminTerritoryRoutes(app: FastifyInstance, deps: AdminTe
       const territory = await getTerritoryWithRevisions(deps.pool, territoryId);
       return reply.status(200).send(territory);
     } catch (error) {
-      if (isDomainError(error)) {
-        return reply.status(statusForDomainError(error)).send({ error: error.code, message: error.message });
-      }
+      if (trySendDomainError(reply, error)) return;
       throw error;
     }
   });
@@ -100,9 +68,7 @@ export function registerAdminTerritoryRoutes(app: FastifyInstance, deps: AdminTe
       });
       return reply.status(201).send(revision);
     } catch (error) {
-      if (isDomainError(error)) {
-        return reply.status(statusForDomainError(error)).send({ error: error.code, message: error.message });
-      }
+      if (trySendDomainError(reply, error)) return;
       throw error;
     }
   });

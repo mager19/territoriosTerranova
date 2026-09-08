@@ -5,7 +5,11 @@
  */
 
 export interface Queryable {
-  query: <T extends Record<string, unknown> = Record<string, unknown>>(
+  // No constraint on T beyond `object` — matching pg's own lax QueryResultRow
+  // typing lets this accept concrete row interfaces like AssignmentRow
+  // (which, having no index signature, is NOT assignable to
+  // Record<string, unknown> under TS's structural rules).
+  query: <T extends object = Record<string, unknown>>(
     text: string,
     values?: readonly unknown[]
   ) => Promise<{ rows: T[] }>;
