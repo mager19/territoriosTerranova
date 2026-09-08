@@ -17,7 +17,9 @@
     "dev": "tsc -b tsconfig.json --watch",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "db:migrate": "tsx src/db/cli.ts migrate"
+    "db:migrate": "tsx src/db/cli.ts migrate",
+    "db:seed": "tsx src/db/cli.ts seed",
+    "db:fetch-amva": "tsx src/db/cli.ts fetch-amva"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "^12.1.0",

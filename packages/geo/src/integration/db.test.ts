@@ -19,6 +19,7 @@ import { Client } from 'pg';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 
 import { DEFAULT_MIGRATIONS_DIR, listMigrationFiles, runMigrations } from '../db/migrate.js';
+import { runSeed } from '../db/seed.js';
 
 const IMAGE = 'postgis/postgis:16-3.4';
 
@@ -692,5 +693,117 @@ describe('overlap between active territories (database-enforced)', () => {
     );
 
     expect(survivors).toBe(1);
+  });
+});
+
+describe('AMVA reference seed (offline, from the committed cache)', () => {
+  const referenceCounts = async (client: Client) => {
+    const barrios = await client.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM reference_barrios'
+    );
+    const boundary = await client.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM reference_municipal_boundary'
+    );
+    return { barrios: barrios.rows[0]?.n ?? -1, boundary: boundary.rows[0]?.n ?? -1 };
+  };
+
+  it('loads 139 barrios plus the municipal boundary with source metadata', async () => {
+    const result = await runSeed(databaseUrl);
+    expect(result).toEqual({ barrios: 139, boundary: 1 });
+
+    await withClient(async (client) => {
+      expect(await referenceCounts(client)).toEqual({ barrios: 139, boundary: 1 });
+
+      const metadata = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM reference_municipal_boundary
+         WHERE attribution LIKE '%Área Metropolitana del Valle de Aburrá%'
+           AND source_url LIKE 'https://sim.metropol.gov.co/%'
+           AND retrieved_at IS NOT NULL`
+      );
+      expect(metadata.rows[0]?.n).toBe(1);
+
+      const barriosMetadata = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM reference_barrios
+         WHERE attribution LIKE '%Área Metropolitana del Valle de Aburrá%'
+           AND source_url LIKE 'https://sim.metropol.gov.co/%'
+           AND retrieved_at IS NOT NULL`
+      );
+      expect(barriosMetadata.rows[0]?.n).toBe(139);
+
+      // Every seeded geometry is a valid 4326 MultiPolygon (ST_Multi normalized).
+      const badGeometry = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM reference_barrios
+         WHERE NOT ST_IsValid(geom) OR ST_SRID(geom) <> 4326 OR GeometryType(geom) <> 'MULTIPOLYGON'`
+      );
+      expect(badGeometry.rows[0]?.n).toBe(0);
+    });
+  });
+
+  it('is idempotent: a second run yields the same row counts', async () => {
+    const before = await withClient(referenceCounts);
+    const result = await runSeed(databaseUrl);
+    const after = await withClient(referenceCounts);
+
+    expect(result).toEqual({ barrios: 139, boundary: 1 });
+    expect(before).toEqual({ barrios: 139, boundary: 1 });
+    expect(after).toEqual(before);
+  });
+
+  it('loads the one AMVA barrio with no source attributes under a visible placeholder, not silently', async () => {
+    await runSeed(databaseUrl);
+
+    await withClient(async (client) => {
+      // Exactly one of 139 real AMVA records (verified against the live cache)
+      // carries no attributes at all. It must still be present — dropping a
+      // real, valid polygon loses reference data — but under a name that can
+      // never be mistaken for a genuine AMVA barrio name.
+      const placeholder = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM reference_barrios
+         WHERE nombre = 'Sector sin nombre (AMVA no registra atributos para este polígono)'`
+      );
+      expect(placeholder.rows[0]?.n).toBe(1);
+
+      // No other barrio was swept into the placeholder — this is a single,
+      // diagnosed anomaly, not a generic fallback for messy data.
+      const total = await client.query<{ n: number }>('SELECT count(*)::int AS n FROM reference_barrios');
+      expect(total.rows[0]?.n).toBe(139);
+    });
+  });
+
+  it('drops only the zero-area artifact from "Urb. Búcaros III", keeping its real boundary intact', async () => {
+    await runSeed(databaseUrl);
+
+    await withClient(async (client) => {
+      const { rows } = await client.query<{ n: number; area: number; valid: boolean }>(
+        `SELECT ST_NumGeometries(geom)::int AS n, ST_Area(geom) AS area, ST_IsValid(geom) AS valid
+         FROM reference_barrios WHERE nombre = 'Urb. Búcaros III'`
+      );
+      expect(rows).toHaveLength(1);
+      // The source MultiPolygon has 2 parts; only the real one (positive
+      // area) survives sanitization — the zero-area artifact is gone.
+      expect(rows[0]?.n).toBe(1);
+      expect(rows[0]?.valid).toBe(true);
+      expect(rows[0]?.area).toBeGreaterThan(0);
+    });
+  });
+
+  it('containment now enforces the REAL seeded Bello boundary', async () => {
+    await withClient(async (client) => {
+      const outside = await createTerritory(client, 'seed-containment-outside');
+      await expect(insertRevision(client, outside, 1, OUTSIDE_BELLO)).rejects.toThrow(
+        /not contained by the Bello municipal boundary/
+      );
+
+      // Inside point derived from the real boundary itself: guaranteed interior.
+      const inside = await createTerritory(client, 'seed-containment-inside');
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO territory_revisions (territory_id, revision_number, geom, author)
+         SELECT $1, 1, ST_Buffer(ST_PointOnSurface(geom), 0.0002), 'integration-test'
+         FROM reference_municipal_boundary WHERE id = 1
+         RETURNING id`,
+        [inside]
+      );
+      expect(Number(rows[0]?.id)).toBeGreaterThan(0);
+    });
   });
 });
