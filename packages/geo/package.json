@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./db/migrate": {
+      "types": "./dist/db/migrate.d.ts",
+      "default": "./dist/db/migrate.js"
     }
   },
   "scripts": {
