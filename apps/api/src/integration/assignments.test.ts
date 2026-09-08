@@ -173,6 +173,36 @@ describe('POST /admin/territories/:id/assignments', () => {
   });
 });
 
+describe('GET /admin/territories/:id/assignments', () => {
+  it('lists all assignments for a territory, oldest first — the last one is the current one', async () => {
+    const territoryId = await createTerritory('T-list-assignments');
+    const { body: first } = await assign(territoryId, 'worker-1');
+    await app.inject({ method: 'POST', url: `/admin/assignments/${first.id}/return`, payload: { actor: 'admin-1' } });
+    const { body: second } = await assign(territoryId, 'worker-2');
+
+    const response = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/assignments` });
+    expect(response.statusCode).toBe(200);
+    const { assignments } = response.json();
+    expect(assignments.map((a: { id: number; status: string }) => [a.id, a.status])).toEqual([
+      [first.id, 'returned'],
+      [second.id, 'active']
+    ]);
+  });
+
+  it('returns an empty list, not an error, for a territory with no assignments yet', async () => {
+    const territoryId = await createTerritory('T-no-assignments');
+    const response = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/assignments` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ assignments: [] });
+  });
+
+  it('returns territory_not_found for a nonexistent territory', async () => {
+    const response = await app.inject({ method: 'GET', url: '/admin/territories/999999/assignments' });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: 'territory_not_found' });
+  });
+});
+
 describe('POST /admin/assignments/:id/return and /complete', () => {
   it('returns an active assignment, sets returned_at, and records an audit event', async () => {
     const territoryId = await createTerritory('T-return-01');
