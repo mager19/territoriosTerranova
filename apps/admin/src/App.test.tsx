@@ -14,7 +14,16 @@ describe('App', () => {
   it('renders the territory list and editor sections', () => {
     const html = renderToStaticMarkup(<App />);
 
-    expect(html).toContain('Territorios');
+    // Not the bare word "Territorios": that also appears in the page heading
+    // ("Gestión de Territorios — Administración"), so this assertion used to
+    // pass even with the list deleted.
     expect(html).toContain('Dibujar un territorio nuevo');
+    expect(html).toContain('Cargando territorios…');
+  });
+
+  it('offers a way to switch to the overview', () => {
+    const html = renderToStaticMarkup(<App />);
+
+    expect(html).toContain('Resumen');
   });
 });
