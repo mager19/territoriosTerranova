@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type JSX } from 'react';
 
 import { ApiError, describeApiError, getTerritoryOverview, type TerritoryOverviewRow } from '../../api/client.js';
 import { MonthStrip } from './MonthStrip.js';
+import { TerritoryPreview } from './TerritoryPreview.js';
 import { describeLastWorked, formatHectares, monthLabel } from './overview-format.js';
 
 const MONTHS = 12;
@@ -30,6 +31,10 @@ export function TerritoryOverview(): JSX.Element {
   const [includeArchived, setIncludeArchived] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [attention, setAttention] = useState<AttentionFilter>('all');
+  // The territory whose map preview is open — kept entirely separate from
+  // the fetch/filter/sort state above so selecting a row never refetches
+  // the table or resets any of it.
+  const [previewId, setPreviewId] = useState<number | null>(null);
   // 'number' means "leave the server's ordering alone" — it already sorts by
   // (length(number), number) with un-numbered territories last, which no
   // client-side comparator would reproduce as well.
@@ -212,7 +217,9 @@ export function TerritoryOverview(): JSX.Element {
               <tr key={row.id}>
                 <td>{row.number ?? '—'}</td>
                 <td>
-                  {row.name}
+                  <button type="button" className="territory-name-button" onClick={() => setPreviewId(row.id)}>
+                    {row.name}
+                  </button>
                   {row.status === 'archived' && ' (archivado)'}
                 </td>
                 <td>{timesInSelectedMonth(row)}</td>
@@ -230,6 +237,8 @@ export function TerritoryOverview(): JSX.Element {
       {!loading && !error && rows.length > 0 && visibleRows.length === 0 && (
         <p role="status">Ningún territorio coincide con ese filtro.</p>
       )}
+
+      <TerritoryPreview territoryId={previewId} onClose={() => setPreviewId(null)} />
     </section>
   );
 }
