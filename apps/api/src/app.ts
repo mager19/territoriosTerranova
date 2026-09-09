@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { registerAdminProgressRoutes } from './routes/admin/progress.js';
 import { registerAdminReferenceBarrioRoutes } from './routes/admin/reference-barrios.js';
 import { registerAdminShareTokenRoutes } from './routes/admin/share-tokens.js';
+import { registerAdminTerritoryOverviewRoutes } from './routes/admin/territory-overview.js';
 import { registerAdminTerritoryRoutes } from './routes/admin/territories.js';
 import { registerPublicTerritoryRoutes } from './routes/public/territories.js';
 import type { TransactionalPool } from './db/transaction.js';
@@ -72,6 +73,7 @@ export async function buildApp(
 
   if (deps.pool) {
     registerAdminTerritoryRoutes(app, { pool: deps.pool });
+    registerAdminTerritoryOverviewRoutes(app, { pool: deps.pool });
     registerAdminProgressRoutes(app, { pool: deps.pool });
     registerAdminShareTokenRoutes(app, { pool: deps.pool });
     registerAdminReferenceBarrioRoutes(app, { pool: deps.pool });

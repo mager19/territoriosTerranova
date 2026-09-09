@@ -48,6 +48,7 @@ export interface Territory {
   readonly status: 'active' | 'archived';
   readonly createdAt: string;
   readonly currentRevisionNumber: number;
+  readonly number: string | null;
 }
 
 export interface TerritoryWithRevisions extends Omit<Territory, 'currentRevisionNumber'> {
@@ -138,6 +139,7 @@ export function createTerritory(input: {
   name: string;
   geometry: Polygon;
   author: string;
+  number?: string;
 }): Promise<TerritoryWithRevisions> {
   return request('/admin/territories', { method: 'POST', body: JSON.stringify(input) });
 }
@@ -181,6 +183,40 @@ export function revokeShareToken(tokenId: number, actor: string): Promise<void> 
   return request(`/admin/share-tokens/${tokenId}/revoke`, { method: 'POST', body: JSON.stringify({ actor }) });
 }
 
+export interface TerritoryOverviewMonth {
+  readonly month: string;
+  readonly times: number;
+}
+
+/** One row of the administrator's overview. Deliberately carries no volunteer identity — this view speaks about territories, not people. */
+export interface TerritoryOverviewRow {
+  readonly id: number;
+  readonly number: string | null;
+  readonly name: string;
+  readonly status: 'active' | 'archived';
+  readonly areaHectares: number | null;
+  /** All-time, never windowed: this is what separates "never worked" from "nothing in the visible months". */
+  readonly lastWorkedAt: string | null;
+  readonly monthly: readonly TerritoryOverviewMonth[];
+}
+
+export function getTerritoryOverview(
+  options: { months?: number; includeArchived?: boolean } = {}
+): Promise<{ territories: readonly TerritoryOverviewRow[] }> {
+  const params = new URLSearchParams();
+  if (options.months !== undefined) params.set('months', String(options.months));
+  if (options.includeArchived) params.set('includeArchived', 'true');
+  const query = params.toString();
+  return request(`/admin/territories/overview${query === '' ? '' : `?${query}`}`);
+}
+
+export function setTerritoryNumber(territoryId: number, number: string): Promise<Territory> {
+  return request(`/admin/territories/${territoryId}/number`, {
+    method: 'PATCH',
+    body: JSON.stringify({ number })
+  });
+}
+
 /** An AMVA barrio (POT 2009 vintage) — admin-only drafting reference, never shown on the public view (AGENTS.md). */
 export interface ReferenceBarrio {
   readonly id: number;
@@ -212,6 +248,7 @@ const ERROR_MESSAGES_ES: Record<string, string> = {
   territory_not_found: 'Ese territorio no existe.',
   unauthorized_overlap: 'Esta forma se superpone con otro territorio activo.',
   boundary_reference_missing: 'Falta cargar el límite municipal de referencia.',
+  duplicate_territory_number: 'Ese número ya lo tiene otro territorio.',
   network_error: 'No se pudo conectar con el servidor.',
   unexpected_error: 'Ocurrió un error inesperado; no se guardó nada.'
 };
