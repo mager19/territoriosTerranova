@@ -291,6 +291,32 @@ describe('geometry constraints are enforced by the database', () => {
   });
 });
 
+describe('territory number', () => {
+  it('rejects two territories sharing a number', async () => {
+    await withClient(async (client) => {
+      await client.query(`INSERT INTO territories (name, number) VALUES ('number-a', 'T-1')`);
+      try {
+        await client.query(`INSERT INTO territories (name, number) VALUES ('number-b', 'T-1')`);
+        expect.unreachable('duplicate territory number was accepted');
+      } catch (error) {
+        const pgError = asPgError(error);
+        expect(pgError.code).toBe('23505');
+        expect(pgError.constraint).toBe('territories_number_unique');
+      }
+    });
+  });
+
+  it('allows many territories with no number at all', async () => {
+    await withClient(async (client) => {
+      await client.query(`INSERT INTO territories (name) VALUES ('unnumbered-a'), ('unnumbered-b')`);
+      const { rows } = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM territories WHERE number IS NULL AND name LIKE 'unnumbered-%'`
+      );
+      expect(rows[0]?.n).toBe(2);
+    });
+  });
+});
+
 describe('territory_revisions is immutable', () => {
   it('rejects UPDATE of any column, including geom', async () => {
     await withClient(async (client) => {
