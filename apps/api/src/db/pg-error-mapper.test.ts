@@ -5,10 +5,12 @@ import {
   mapProgressEntryError,
   mapTerritoryGeometryError,
   rethrowAsProgressEntryError,
-  rethrowAsTerritoryGeometryError
+  rethrowAsTerritoryGeometryError,
+  rethrowAsTerritoryNumberError
 } from './pg-error-mapper.js';
 import {
   BoundaryReferenceMissingError,
+  DuplicateTerritoryNumberError,
   InvalidGeometryError,
   OutOfBoundsError,
   UnauthorizedOverlapError,
@@ -118,5 +120,22 @@ describe('rethrowAsProgressEntryError', () => {
   it('rethrows the original error unchanged when unrecognized', () => {
     const original = new Error('unrelated failure');
     expect(() => rethrowAsProgressEntryError(original)).toThrow(original);
+  });
+});
+
+describe('rethrowAsTerritoryNumberError', () => {
+  it('maps the unique-violation on territories_number_unique', () => {
+    const pgError = Object.assign(new Error('duplicate key value violates unique constraint'), {
+      code: '23505',
+      constraint: 'territories_number_unique'
+    });
+
+    expect(() => rethrowAsTerritoryNumberError(pgError)).toThrow(DuplicateTerritoryNumberError);
+  });
+
+  it('rethrows anything else untouched', () => {
+    const other = new Error('connection terminated');
+
+    expect(() => rethrowAsTerritoryNumberError(other)).toThrow('connection terminated');
   });
 });

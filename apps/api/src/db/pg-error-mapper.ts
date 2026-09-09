@@ -15,6 +15,7 @@ import { DatabaseError } from 'pg';
 
 import {
   BoundaryReferenceMissingError,
+  DuplicateTerritoryNumberError,
   InvalidGeometryError,
   OutOfBoundsError,
   UnauthorizedOverlapError,
@@ -112,6 +113,18 @@ export function rethrowAsProgressEntryError(error: unknown): never {
   const mapped = mapProgressEntryError(error);
   if (mapped) {
     throw mapped;
+  }
+  throw error;
+}
+
+function isPgError(error: unknown): error is { code?: string; constraint?: string } {
+  return typeof error === 'object' && error !== null && 'code' in error;
+}
+
+/** A number collision is a real conflict with existing state, not bad input — see error-response.ts, which maps it to 409. */
+export function rethrowAsTerritoryNumberError(error: unknown): never {
+  if (isPgError(error) && error.code === '23505' && error.constraint === 'territories_number_unique') {
+    throw new DuplicateTerritoryNumberError();
   }
   throw error;
 }

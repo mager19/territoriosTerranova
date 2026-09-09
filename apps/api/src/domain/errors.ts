@@ -69,6 +69,14 @@ export class ValidationError extends Error {
   }
 }
 
+export class DuplicateTerritoryNumberError extends Error {
+  readonly code = 'duplicate_territory_number' as const;
+  constructor() {
+    super('territory number is already in use');
+    this.name = 'DuplicateTerritoryNumberError';
+  }
+}
+
 /** Every typed domain error a caller should catch and map to a distinct response. */
 export type DomainError =
   | InvalidGeometryError
@@ -77,7 +85,8 @@ export type DomainError =
   | BoundaryReferenceMissingError
   | UnauthorizedOverlapError
   | TerritoryNotFoundError
-  | ValidationError;
+  | ValidationError
+  | DuplicateTerritoryNumberError;
 
 export function isDomainError(error: unknown): error is DomainError {
   return (
@@ -87,6 +96,7 @@ export function isDomainError(error: unknown): error is DomainError {
     error instanceof BoundaryReferenceMissingError ||
     error instanceof UnauthorizedOverlapError ||
     error instanceof TerritoryNotFoundError ||
-    error instanceof ValidationError
+    error instanceof ValidationError ||
+    error instanceof DuplicateTerritoryNumberError
   );
 }

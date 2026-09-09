@@ -26,6 +26,7 @@ export function statusForDomainError(error: DomainError): number {
       return 400;
     case 'territory_not_found':
       return 404;
+    case 'duplicate_territory_number':
     case 'unauthorized_overlap':
       return 409;
     case 'boundary_reference_missing':
