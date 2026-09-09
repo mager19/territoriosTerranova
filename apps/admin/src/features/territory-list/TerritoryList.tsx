@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX } from 'react';
 
 import {
   ApiError,
+  describeApiError,
   getTerritory,
   listTerritories,
   type Territory,
@@ -16,11 +17,18 @@ export interface TerritoryListProps {
 }
 
 /**
- * The non-map, keyboard-operable fallback for reviewing territories and
- * their revision history (A5 brief DoD). Every control here is a native
- * <button>, reachable by Tab, with the browser's default focus ring never
+ * The non-map, keyboard-operable fallback for reviewing and selecting
+ * territories (A5 brief DoD). Every control here is a native <button>,
+ * reachable by Tab, with the browser's default focus ring never
  * suppressed — this is what a keyboard or screen-reader user relies on
  * instead of clicking the map canvas.
+ *
+ * Per-revision history (who changed what, when) is deliberately NOT
+ * duplicated here — AuditHistory (TerritoryDetail, once a territory is
+ * selected) already logs every `revision_submitted` event with the same
+ * author/timestamp, alongside sharing and progress events, as one
+ * coherent log. Showing it again here was redundant (found live,
+ * 2026-09-08: "no es necesario mostrarlo acá").
  */
 export function TerritoryList({ selectedTerritoryId, onSelect, refreshToken }: TerritoryListProps): JSX.Element {
   const [territories, setTerritories] = useState<readonly Territory[]>([]);
@@ -35,7 +43,7 @@ export function TerritoryList({ selectedTerritoryId, onSelect, refreshToken }: T
         if (!cancelled) setTerritories(result.territories);
       })
       .catch((caught) => {
-        if (!cancelled) setError(caught instanceof ApiError ? caught.message : 'could not load territories');
+        if (!cancelled) setError(caught instanceof ApiError ? describeApiError(caught) : 'No se pudieron cargar los territorios.');
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -50,16 +58,16 @@ export function TerritoryList({ selectedTerritoryId, onSelect, refreshToken }: T
       const territory = await getTerritory(id);
       onSelect(territory);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'could not load that territory');
+      setError(caught instanceof ApiError ? describeApiError(caught) : 'No se pudo cargar ese territorio.');
     }
   }
 
   return (
     <section aria-labelledby="territory-list-heading">
-      <h2 id="territory-list-heading">Territories</h2>
+      <h2 id="territory-list-heading">Territorios</h2>
       {error && <p role="alert">{error}</p>}
-      {loading && <p role="status">Loading territories…</p>}
-      {!loading && territories.length === 0 && <p>No territories yet. Draw one below.</p>}
+      {loading && <p role="status">Cargando territorios…</p>}
+      {!loading && territories.length === 0 && <p>Todavía no hay territorios. Dibujá uno abajo.</p>}
 
       <ul>
         {territories.map((territory) => (
@@ -69,63 +77,15 @@ export function TerritoryList({ selectedTerritoryId, onSelect, refreshToken }: T
               aria-current={territory.id === selectedTerritoryId ? 'true' : undefined}
               onClick={() => void handleSelect(territory.id)}
             >
-              {territory.name} — revision {territory.currentRevisionNumber}
+              {territory.name} — revisión {territory.currentRevisionNumber}
             </button>
           </li>
         ))}
       </ul>
 
       <button type="button" onClick={() => onSelect(null)} disabled={selectedTerritoryId === null}>
-        Draw a new territory instead
+        Dibujar un territorio nuevo
       </button>
-
-      {selectedTerritoryId !== null && (
-        <SelectedTerritoryHistory territoryId={selectedTerritoryId} refreshToken={refreshToken} />
-      )}
     </section>
-  );
-}
-
-function SelectedTerritoryHistory({
-  territoryId,
-  refreshToken
-}: {
-  territoryId: number;
-  refreshToken: number;
-}): JSX.Element {
-  const [territory, setTerritory] = useState<TerritoryWithRevisions | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getTerritory(territoryId)
-      .then((result) => {
-        if (!cancelled) setTerritory(result);
-      })
-      .catch(() => {
-        /* the parent's error banner already covers load failures */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [territoryId, refreshToken]);
-
-  if (!territory) {
-    return <p role="status">Loading revision history…</p>;
-  }
-
-  return (
-    <div aria-labelledby="revision-history-heading">
-      <h3 id="revision-history-heading">Revision history — {territory.name}</h3>
-      {/* Oldest first: a history reads chronologically, and nothing here is
-          ever an editable row — every revision is a permanent, numbered
-          fact, never replaced (AGENTS.md: revisions are immutable). */}
-      <ol>
-        {territory.revisions.map((revision) => (
-          <li key={revision.id}>
-            Revision {revision.revisionNumber} by {revision.author}, {new Date(revision.createdAt).toLocaleString()}
-          </li>
-        ))}
-      </ol>
-    </div>
   );
 }

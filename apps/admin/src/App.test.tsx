@@ -8,13 +8,13 @@ describe('App', () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain('<main>');
-    expect(html).toContain('Territory Management — Admin');
+    expect(html).toContain('Gestión de Territorios — Administración');
   });
 
   it('renders the territory list and editor sections', () => {
     const html = renderToStaticMarkup(<App />);
 
-    expect(html).toContain('Territories');
-    expect(html).toContain('Draw a new territory');
+    expect(html).toContain('Territorios');
+    expect(html).toContain('Dibujar un territorio nuevo');
   });
 });

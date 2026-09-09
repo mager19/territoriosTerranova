@@ -16,7 +16,7 @@
  */
 
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
-import type { Feature, FeatureCollection, Geometry, Polygon, Position } from '@territorios/geo';
+import type { Feature, FeatureCollection, Geometry, MultiPolygon, Polygon, Position } from '@territorios/geo';
 
 import type { Coordinate, DraftState } from './draft.js';
 
@@ -64,6 +64,77 @@ export function screenPointToCoordinate(map: MapLibreMap, point: { x: number; y:
   return [lng, lat];
 }
 
+const VERTEX_HIT_RADIUS_PX = 8;
+
+/**
+ * Which draft vertex (if any) sits under a screen point, for drag-to-move.
+ * Queries a small pixel bbox around the point rather than the exact pixel —
+ * a single point rarely lands exactly on a 7px circle's rendered pixels,
+ * on a mouse and especially on touch.
+ */
+export function findVertexIndexAtPoint(map: MapLibreMap, point: { x: number; y: number }): number | null {
+  const features = map.queryRenderedFeatures(
+    [
+      [point.x - VERTEX_HIT_RADIUS_PX, point.y - VERTEX_HIT_RADIUS_PX],
+      [point.x + VERTEX_HIT_RADIUS_PX, point.y + VERTEX_HIT_RADIUS_PX]
+    ],
+    { layers: ['draft-territory-vertices'] }
+  );
+  const index = features[0]?.properties?.index;
+  return typeof index === 'number' ? index : null;
+}
+
+const EDGE_HIT_RADIUS_PX = 10;
+
+/** Squared distance from a screen point to the segment [a, b] — squared throughout so no sqrt runs until the very end, once. */
+function distanceToSegment(point: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSquared = dx * dx + dy * dy;
+  const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared));
+  const closestX = a.x + t * dx;
+  const closestY = a.y + t * dy;
+  return Math.hypot(point.x - closestX, point.y - closestY);
+}
+
+/**
+ * Which EDGE (if any) a screen point is near, for click-to-add: inserting a
+ * new vertex belongs on the boundary/route itself, not in whatever empty
+ * water/backyard the admin happened to click. Returns the index of the
+ * vertex the edge starts at — draft.ts's insertVertex takes that same
+ * "insert after this index" convention.
+ *
+ * `closed` (default true) controls whether the wraparound edge from the
+ * last vertex back to the first is considered: true for a closed
+ * territory ring (needs >= 3 vertices), false for an open route/LineString
+ * (ProgressRecorder — needs only >= 2, and there is no "back to the
+ * start" edge for a path that never closes).
+ */
+export function findEdgeIndexAtPoint(
+  map: MapLibreMap,
+  vertices: readonly Coordinate[],
+  point: { x: number; y: number },
+  closed: boolean = true
+): number | null {
+  const minVertices = closed ? 3 : 2;
+  if (vertices.length < minVertices) return null;
+  const projected = vertices.map((vertex) => map.project([vertex[0], vertex[1]]));
+  const edgeCount = closed ? projected.length : projected.length - 1;
+  let bestIndex: number | null = null;
+  let bestDistance = EDGE_HIT_RADIUS_PX;
+  for (let i = 0; i < edgeCount; i += 1) {
+    const a = projected[i];
+    const b = projected[(i + 1) % projected.length];
+    if (!a || !b) continue;
+    const distance = distanceToSegment(point, a, b);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
+}
+
 /**
  * Installs two GeoJSON sources/layer pairs, visually distinct on purpose:
  * "saved" (the persisted territory, from the server) in a muted, filled
@@ -72,6 +143,21 @@ export function screenPointToCoordinate(map: MapLibreMap, point: { x: number; y:
  * currently drawing with what is already saved.
  */
 export function installEditorLayers(map: MapLibreMap): void {
+  // Added first (bottom of the layer stack) so it never visually competes
+  // with the saved/draft layers below — a thin dashed outline only, no
+  // fill, since it is a real-world AMVA barrio boundary shown purely as a
+  // drafting reference (2026-09-08: an admin expected one territory to
+  // cover a whole barrio; a territory is one manzana/block by design, so
+  // this lets them see the real barrio extent while drawing several).
+  // Empty until installReferenceBarrios (App.tsx's search) sets it.
+  map.addSource('reference-barrios', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer({
+    id: 'reference-barrios-line',
+    type: 'line',
+    source: 'reference-barrios',
+    paint: { 'line-color': '#8a5a2e', 'line-width': 2, 'line-dasharray': [3, 2] }
+  });
+
   map.addSource('saved-territory', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
   map.addLayer({
     id: 'saved-territory-fill',
@@ -136,8 +222,9 @@ export function installEditorLayers(map: MapLibreMap): void {
   });
 }
 
-function pointFeature(coordinate: Coordinate): Feature {
-  return { type: 'Feature', properties: null, geometry: { type: 'Point', coordinates: coordinate } };
+/** `index` is carried as a feature property so findVertexIndexAtPoint below can identify which vertex a click/drag hit — the only reason any draft feature has properties at all. */
+function pointFeature(coordinate: Coordinate, index: number): Feature {
+  return { type: 'Feature', properties: { index }, geometry: { type: 'Point', coordinates: coordinate } };
 }
 
 /** Renders the current draft: vertex points always; a dashed line while open; a filled+outlined polygon once closed. */
@@ -145,7 +232,7 @@ export function renderDraft(map: MapLibreMap, draft: DraftState): void {
   const source = asGeoJsonSource(map.getSource('draft-territory'));
   if (!source) return;
 
-  const features: Feature[] = draft.vertices.map(pointFeature);
+  const features: Feature[] = draft.vertices.map((vertex, index) => pointFeature(vertex, index));
 
   if (draft.vertices.length >= 2) {
     const geometry: Geometry = draft.isClosed
@@ -168,6 +255,23 @@ export function renderSavedTerritory(map: MapLibreMap, geometry: Polygon | null)
   );
 }
 
+export interface ReferenceBarrioFeatureInput {
+  readonly name: string;
+  readonly geometry: MultiPolygon;
+}
+
+/** Renders every barrio the search returned, or clears the layer for an empty/cleared search — same "empty means nothing to show" rule as the other overlay layers. */
+export function renderReferenceBarrios(map: MapLibreMap, barrios: readonly ReferenceBarrioFeatureInput[]): void {
+  const source = asGeoJsonSource(map.getSource('reference-barrios'));
+  if (!source) return;
+  const features: Feature[] = barrios.map((barrio) => ({
+    type: 'Feature',
+    properties: { name: barrio.name },
+    geometry: barrio.geometry
+  }));
+  source.setData({ type: 'FeatureCollection', features });
+}
+
 /**
  * Renders the remaining-area geometry from the latest progress entry, or
  * clears the layer when there is none — an empty layer here is the visual
@@ -187,6 +291,31 @@ export function renderRemainingArea(map: MapLibreMap, geometry: Polygon | null):
 /** Centers and fits the map to a polygon's bounding box, WGS84 in, WGS84 bounds out. */
 export function fitToPolygon(map: MapLibreMap, geometry: Polygon): void {
   const positions: readonly Position[] = geometry.coordinates.flat();
+  const first = positions[0];
+  if (!first) return;
+
+  let west = first[0];
+  let east = first[0];
+  let south = first[1];
+  let north = first[1];
+  for (const [lon, lat] of positions) {
+    west = Math.min(west, lon);
+    east = Math.max(east, lon);
+    south = Math.min(south, lat);
+    north = Math.max(north, lat);
+  }
+  map.fitBounds(
+    [
+      [west, south],
+      [east, north]
+    ],
+    { padding: 48, animate: false }
+  );
+}
+
+/** Same bbox-fit as fitToPolygon, one nesting level deeper for MultiPolygon's extra "which part" level. */
+export function fitToMultiPolygon(map: MapLibreMap, geometry: MultiPolygon): void {
+  const positions: readonly Position[] = geometry.coordinates.flat(2);
   const first = positions[0];
   if (!first) return;
 
