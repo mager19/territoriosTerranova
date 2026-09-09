@@ -227,6 +227,21 @@ for later planning.
 - **Statistics per territory over time.** No aggregation endpoint or view
   exists. The raw timestamped data is there (`progress_entries`,
   `audit_events`), so this is additive, not a schema change.
+- **Color-coded staleness by time since last worked.** Raised 2026-09-08
+  during A6 live testing: territory boundary fill uses a placeholder purple
+  tint (`apps/public/src/map.ts`) meant to eventually carry meaning — e.g.
+  green/yellow/red by how long a territory has gone unworked. Needs a
+  "last worked" query (derivable from `progress_entries`/`assignments`
+  timestamps, no schema change) and an agreed color scale/thresholds.
+- **Snapping ("magnetic") + point-by-point vertex editing when drawing a
+  route or territory geometry.** Raised 2026-09-08: a manually-recorded
+  demo route visibly didn't hug the real block edge. There is no drawing
+  UI for progress routes at all today (recorded via the admin API
+  directly in this session); the admin territory-editor's own freehand
+  polygon drawing (A5, `apps/admin/src/features/territory-editor/`) has
+  no snap-to-boundary or after-the-fact per-vertex drag either. Real
+  precision needs both: snapping while drawing, and editing an existing
+  vertex without redrawing the whole shape.
 
 ## Required reading for every agent
 

@@ -3,6 +3,12 @@
  * project. Every DoD bullet in docs/agents/A4-sharing.md gets its own
  * test here, against real PostGIS via Testcontainers, exercised through
  * the actual HTTP routes.
+ *
+ * A share token now scopes to a whole TERRITORY, not a per-person
+ * assignment — 2026-09-08: territories are shared to a group of
+ * volunteers, not assigned to one named person (db/migrations/
+ * 0004_remove_individual_assignment.sql). "Share this territory" IS the
+ * admin action; there is no separate assign step first.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -83,14 +89,14 @@ afterAll(async () => {
 interface ShareTokenBody {
   readonly id: number;
   readonly token: string;
-  readonly assignmentId: number;
+  readonly territoryId: number;
   readonly expiresAt: string | null;
 }
 
-async function createTerritoryAssignedAndShared(
+async function createTerritoryAndShare(
   geometry: unknown = VALID_SQUARE,
   name = `T-share-${Math.random().toString(36).slice(2)}`
-): Promise<{ territoryId: number; assignmentId: number; token: string; tokenId: number }> {
+): Promise<{ territoryId: number; token: string; tokenId: number }> {
   const territoryResponse = await app.inject({
     method: 'POST',
     url: '/admin/territories',
@@ -98,33 +104,26 @@ async function createTerritoryAssignedAndShared(
   });
   const territoryId = territoryResponse.json().id;
 
-  const assignmentResponse = await app.inject({
-    method: 'POST',
-    url: `/admin/territories/${territoryId}/assignments`,
-    payload: { assignedTo: 'worker-1', assignedBy: 'admin-1' }
-  });
-  const assignmentId = assignmentResponse.json().id;
-
   const tokenResponse = await app.inject({
     method: 'POST',
-    url: `/admin/assignments/${assignmentId}/share-tokens`,
-    payload: {}
+    url: `/admin/territories/${territoryId}/share-tokens`,
+    payload: { createdBy: 'admin-1' }
   });
   expect(tokenResponse.statusCode).toBe(201);
   const tokenBody = tokenResponse.json() as ShareTokenBody;
 
-  return { territoryId, assignmentId, token: tokenBody.token, tokenId: tokenBody.id };
+  return { territoryId, token: tokenBody.token, tokenId: tokenBody.id };
 }
 
-describe('POST /admin/assignments/:id/share-tokens', () => {
+describe('POST /admin/territories/:id/share-tokens', () => {
   it('creates a token and returns the plaintext exactly once', async () => {
-    const { token } = await createTerritoryAssignedAndShared();
+    const { token } = await createTerritoryAndShare();
     expect(typeof token).toBe('string');
     expect(token.length).toBeGreaterThan(30);
   });
 
   it('stores only a hash — the plaintext token never appears anywhere in the database', async () => {
-    const { token } = await createTerritoryAssignedAndShared();
+    const { token } = await createTerritoryAndShare();
 
     const rows = await withClient(async (client) => {
       const { rows } = await client.query<{ token_hash: string }>(`SELECT token_hash FROM share_tokens`);
@@ -137,20 +136,20 @@ describe('POST /admin/assignments/:id/share-tokens', () => {
     }
   });
 
-  it('returns assignment_not_found for a nonexistent assignment', async () => {
+  it('returns territory_not_found for a nonexistent territory', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: '/admin/assignments/999999/share-tokens',
-      payload: {}
+      url: '/admin/territories/999999/share-tokens',
+      payload: { createdBy: 'admin-1' }
     });
     expect(response.statusCode).toBe(404);
-    expect(response.json()).toMatchObject({ error: 'assignment_not_found' });
+    expect(response.json()).toMatchObject({ error: 'territory_not_found' });
   });
 });
 
 describe('GET /public/territories/:token — response shape', () => {
   it('returns exactly the allowlisted keys, nothing more', async () => {
-    const { token } = await createTerritoryAssignedAndShared();
+    const { token } = await createTerritoryAndShare();
 
     const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
     expect(response.statusCode).toBe(200);
@@ -159,19 +158,43 @@ describe('GET /public/territories/:token — response shape', () => {
     // This is the pinned list. Adding a field to the public response
     // requires deliberately updating this test — that friction is the
     // point (A4 brief: "must break when someone adds a field carelessly").
-    expect(Object.keys(body).sort()).toEqual(['boundary', 'remainingArea', 'remainingAreaStatus', 'territoryName']);
+    // `route` is the one deliberate exception to the exclusion list below
+    // (2026-09-08 product decision, AGENTS.md "Privacy rules").
+    expect(Object.keys(body).sort()).toEqual([
+      'boundary',
+      'remainingArea',
+      'remainingAreaStatus',
+      'route',
+      'territoryName'
+    ]);
   });
 
   it('returns the territory boundary as a valid Polygon', async () => {
-    const { token } = await createTerritoryAssignedAndShared();
+    const { token } = await createTerritoryAndShare();
     const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
     const body = response.json();
     expect(body.boundary.type).toBe('Polygon');
     expect(Array.isArray(body.boundary.coordinates)).toBe(true);
   });
 
+  it('always reflects the territory\'s CURRENT (latest) revision — there is no per-claim revision to pin against', async () => {
+    const { territoryId, token } = await createTerritoryAndShare();
+    const newGeometry = {
+      type: 'Polygon',
+      coordinates: [[[-75.5745, 6.3571], [-75.5721, 6.3571], [-75.5721, 6.3591], [-75.5745, 6.3591], [-75.5745, 6.3571]]]
+    };
+    await app.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/revisions`,
+      payload: { geometry: newGeometry, author: 'admin-2' }
+    });
+
+    const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
+    expect(response.json().boundary).toEqual(newGeometry);
+  });
+
   it('reports remaining area as explicitly unknown when no progress was recorded — never inferred', async () => {
-    const { token } = await createTerritoryAssignedAndShared();
+    const { token } = await createTerritoryAndShare();
     const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
     const body = response.json();
     expect(body.remainingArea).toBeNull();
@@ -179,14 +202,14 @@ describe('GET /public/territories/:token — response shape', () => {
   });
 
   it('shows the remaining area when progress recorded one', async () => {
-    const { token, assignmentId } = await createTerritoryAssignedAndShared();
+    const { token, territoryId } = await createTerritoryAndShare();
     const remainingArea = {
       type: 'Polygon',
       coordinates: [[[-75.5735, 6.358], [-75.5725, 6.358], [-75.5725, 6.3585], [-75.5735, 6.3585], [-75.5735, 6.358]]]
     };
     await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentId}/progress`,
+      url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', remainingArea }
     });
 
@@ -196,11 +219,11 @@ describe('GET /public/territories/:token — response shape', () => {
     expect(body.remainingArea).toEqual(remainingArea);
   });
 
-  it('never leaks assignee identity, notes, timestamps, routes, pause points, history, or internal ids', async () => {
-    const { token, assignmentId } = await createTerritoryAssignedAndShared();
+  it('never leaks recordedBy identity, notes, timestamps, pause points, history, or internal ids', async () => {
+    const { token, territoryId } = await createTerritoryAndShare();
     await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentId}/progress`,
+      url: `/admin/territories/${territoryId}/progress`,
       payload: {
         recordedBy: 'worker-1',
         note: 'a secret note the public must never see',
@@ -210,20 +233,40 @@ describe('GET /public/territories/:token — response shape', () => {
     });
 
     const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
-    const raw = JSON.stringify(response.json());
+    const body = response.json();
+    const raw = JSON.stringify(body);
     expect(raw).not.toContain('worker-1');
     expect(raw).not.toContain('secret note');
     expect(raw).not.toMatch(/"id"\s*:/); // no raw id field anywhere in the payload
     expect(raw).not.toContain('pausePoint');
-    expect(raw).not.toContain('route');
-    expect(raw).not.toContain('assignedTo');
     expect(raw).not.toContain('recordedAt');
+  });
+
+  it('exposes the route line by deliberate exception — a volunteer resuming their own coverage', async () => {
+    const { token, territoryId } = await createTerritoryAndShare();
+    const route = { type: 'LineString', coordinates: [[-75.5738, 6.3575], [-75.5732, 6.3585]] };
+    await app.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/progress`,
+      payload: { recordedBy: 'worker-1', route }
+    });
+
+    const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
+    const body = response.json();
+    expect(body.route).toEqual(route);
+  });
+
+  it('reports the route as null when no progress entry has recorded one — never inferred', async () => {
+    const { token } = await createTerritoryAndShare();
+    const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
+    const body = response.json();
+    expect(body.route).toBeNull();
   });
 });
 
 describe('GET /public/territories/:token — headers', () => {
   it('sets every required security header on a valid response', async () => {
-    const { token } = await createTerritoryAssignedAndShared();
+    const { token } = await createTerritoryAndShare();
     const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.headers['x-robots-tag']).toBe('noindex, nofollow');
@@ -246,12 +289,16 @@ describe('GET /public/territories/:token — revocation, expiry, and scope', () 
   });
 
   it('a revoked token returns 404 — never 403, which would confirm the token existed', async () => {
-    const { token, tokenId } = await createTerritoryAssignedAndShared();
+    const { token, tokenId } = await createTerritoryAndShare();
 
     const before = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
     expect(before.statusCode).toBe(200);
 
-    const revokeResponse = await app.inject({ method: 'POST', url: `/admin/share-tokens/${tokenId}/revoke` });
+    const revokeResponse = await app.inject({
+      method: 'POST',
+      url: `/admin/share-tokens/${tokenId}/revoke`,
+      payload: { actor: 'admin-1' }
+    });
     expect(revokeResponse.statusCode).toBe(204);
 
     const after = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
@@ -260,8 +307,8 @@ describe('GET /public/territories/:token — revocation, expiry, and scope', () 
   });
 
   it('revocation takes effect immediately — no cache window', async () => {
-    const { token, tokenId } = await createTerritoryAssignedAndShared();
-    await app.inject({ method: 'POST', url: `/admin/share-tokens/${tokenId}/revoke` });
+    const { token, tokenId } = await createTerritoryAndShare();
+    await app.inject({ method: 'POST', url: `/admin/share-tokens/${tokenId}/revoke`, payload: { actor: 'admin-1' } });
     // Immediately, not "eventually" — the very next request must already reflect it.
     const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
     expect(response.statusCode).toBe(404);
@@ -279,15 +326,10 @@ describe('GET /public/territories/:token — revocation, expiry, and scope', () 
       url: '/admin/territories',
       payload: { name: `T-expiry-${Math.random().toString(36).slice(2)}`, geometry: VALID_SQUARE, author: 'admin-1' }
     });
-    const assignmentResponse = await app.inject({
-      method: 'POST',
-      url: `/admin/territories/${territoryResponse.json().id}/assignments`,
-      payload: { assignedTo: 'worker-1', assignedBy: 'admin-1' }
-    });
     const tokenResponse = await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentResponse.json().id}/share-tokens`,
-      payload: { expiresAt: new Date(Date.now() + 800).toISOString() }
+      url: `/admin/territories/${territoryResponse.json().id}/share-tokens`,
+      payload: { createdBy: 'admin-1', expiresAt: new Date(Date.now() + 800).toISOString() }
     });
     expect(tokenResponse.statusCode).toBe(201);
     const token = (tokenResponse.json() as ShareTokenBody).token;
@@ -302,14 +344,14 @@ describe('GET /public/territories/:token — revocation, expiry, and scope', () 
   });
 
   it('a valid, unexpired, unrevoked token still works (control case for the expiry test)', async () => {
-    const { token } = await createTerritoryAssignedAndShared();
+    const { token } = await createTerritoryAndShare();
     const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
     expect(response.statusCode).toBe(200);
   });
 
-  it('cannot read another territory by any parameter manipulation — each token is scoped to exactly its own assignment', async () => {
-    const a = await createTerritoryAssignedAndShared(VALID_SQUARE, 'T-scope-A');
-    const b = await createTerritoryAssignedAndShared(OTHER_SQUARE, 'T-scope-B');
+  it('cannot read another territory by any parameter manipulation — each token is scoped to exactly its own territory', async () => {
+    const a = await createTerritoryAndShare(VALID_SQUARE, 'T-scope-A');
+    const b = await createTerritoryAndShare(OTHER_SQUARE, 'T-scope-B');
 
     const responseA = await app.inject({ method: 'GET', url: `/public/territories/${a.token}` });
     const responseB = await app.inject({ method: 'GET', url: `/public/territories/${b.token}` });
@@ -351,7 +393,7 @@ describe('a share token cannot invoke any administrative action', () => {
   });
 
   it('a token in an Authorization or custom header changes nothing about an admin route\'s response — it is never read as a credential', async () => {
-    const { token } = await createTerritoryAssignedAndShared();
+    const { token } = await createTerritoryAndShare();
 
     const withoutToken = await app.inject({ method: 'GET', url: '/admin/territories' });
     const withToken = await app.inject({
@@ -367,8 +409,8 @@ describe('a share token cannot invoke any administrative action', () => {
     expect(withToken.json().territories.length).toBe(withoutToken.json().territories.length);
   });
 
-  it('a share token string used as ordinary body data (author, actor, reason, assignedTo) carries no special privilege — it is just an opaque string', async () => {
-    const { token, territoryId, assignmentId } = await createTerritoryAssignedAndShared();
+  it('a share token string used as ordinary body data (author, recordedBy, createdBy) carries no special privilege — it is just an opaque string', async () => {
+    const { token, territoryId } = await createTerritoryAndShare();
 
     // These succeed — correctly. The point is what they prove: the value
     // is stored/used as plain text with no elevated meaning, the same as
@@ -383,17 +425,17 @@ describe('a share token cannot invoke any administrative action', () => {
     expect(revisionResponse.statusCode).toBe(201);
     expect(revisionResponse.json().author).toBe(token); // stored verbatim as text, not interpreted
 
-    const returnResponse = await app.inject({
+    const progressResponse = await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentId}/return`,
-      payload: { actor: token }
+      url: `/admin/territories/${territoryId}/progress`,
+      payload: { recordedBy: token, note: 'ordinary text, not a credential' }
     });
-    expect(returnResponse.statusCode).toBe(200);
-    expect(returnResponse.json().status).toBe('returned'); // an ordinary state transition, not an elevated one
+    expect(progressResponse.statusCode).toBe(201);
+    expect(progressResponse.json().recordedBy).toBe(token); // stored verbatim as text, not interpreted
   });
 
   it('the share token itself is never a valid territory id on an admin route — no implicit coercion path from token to admin resource', async () => {
-    const { token } = await createTerritoryAssignedAndShared();
+    const { token } = await createTerritoryAndShare();
     const response = await app.inject({ method: 'GET', url: `/admin/territories/${token}` });
     expect(response.statusCode).toBe(400); // fails the positive-integer id check, exactly like any other garbage id
   });
@@ -410,7 +452,7 @@ describe('rate limiting', () => {
     // Same database pool, fresh rate-limit state.
     const isolatedApp = await buildApp({ queryPostgisVersion: async () => '3.4.3', pool }, { logger: false });
     try {
-      const { token } = await createTerritoryAssignedAndShared();
+      const { token } = await createTerritoryAndShare();
 
       const statuses: number[] = [];
       for (let i = 0; i < 31; i += 1) {
@@ -462,8 +504,8 @@ describe('timing does not leak token existence', () => {
     // BEHAVIORAL invariant that actually prevents a timing leak: revoked,
     // expired, and nonexistent are byte-for-byte identical responses,
     // which is only possible if no branch does materially different work.
-    const { token, tokenId } = await createTerritoryAssignedAndShared();
-    await app.inject({ method: 'POST', url: `/admin/share-tokens/${tokenId}/revoke` });
+    const { token, tokenId } = await createTerritoryAndShare();
+    await app.inject({ method: 'POST', url: `/admin/share-tokens/${tokenId}/revoke`, payload: { actor: 'admin-1' } });
 
     const revoked = await timingApp.inject({ method: 'GET', url: `/public/territories/${token}` });
     const nonexistent = await timingApp.inject({ method: 'GET', url: '/public/territories/never-issued-token-guess' });
@@ -483,7 +525,7 @@ describe('timing does not leak token existence', () => {
   });
 
   it('best-effort timing check: mean latency for a hit vs. a miss stays within a generous ratio (not cryptographically rigorous — see the structural test above for the real guarantee)', async () => {
-    const { token } = await createTerritoryAssignedAndShared();
+    const { token } = await createTerritoryAndShare();
     const SAMPLES = 10; // 2 * SAMPLES public-route calls, kept comfortably under this isolated instance's own 30/minute per-IP limit
 
     const time = async (url: string): Promise<number> => {

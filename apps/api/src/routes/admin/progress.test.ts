@@ -1,8 +1,7 @@
 /**
  * Route-level unit tests for validation branches only — same discipline as
- * territories.test.ts / assignments.test.ts. Full happy-path and DB-error-
- * mapping behavior is proven against real PostGIS in
- * src/integration/progress-and-audit.test.ts.
+ * territories.test.ts. Full happy-path and DB-error-mapping behavior is
+ * proven against real PostGIS in src/integration/progress-and-audit.test.ts.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -28,23 +27,23 @@ function buildTestApp(): Promise<FastifyInstance> {
   return buildApp({ queryPostgisVersion: async () => '3.4.3', pool: poisonPool }, { logger: false });
 }
 
-describe('POST /admin/assignments/:id/progress — validation branches', () => {
+describe('POST /admin/territories/:id/progress — validation branches', () => {
   it('rejects a blank recordedBy without touching the database', async () => {
     app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
-      url: '/admin/assignments/1/progress',
+      url: '/admin/territories/1/progress',
       payload: { recordedBy: '   ' }
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: 'invalid_request' });
   });
 
-  it('rejects a non-integer assignment id without touching the database', async () => {
+  it('rejects a non-integer territory id without touching the database', async () => {
     app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
-      url: '/admin/assignments/not-a-number/progress',
+      url: '/admin/territories/not-a-number/progress',
       payload: { recordedBy: 'worker-1' }
     });
     expect(response.statusCode).toBe(400);
@@ -54,7 +53,7 @@ describe('POST /admin/assignments/:id/progress — validation branches', () => {
     app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
-      url: '/admin/assignments/1/progress',
+      url: '/admin/territories/1/progress',
       payload: { recordedBy: 'worker-1', pausePoint: { type: 'Polygon', coordinates: [] } }
     });
     expect(response.statusCode).toBe(400);
@@ -65,7 +64,7 @@ describe('POST /admin/assignments/:id/progress — validation branches', () => {
     app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
-      url: '/admin/assignments/1/progress',
+      url: '/admin/territories/1/progress',
       payload: { recordedBy: 'worker-1', route: { type: 'Point', coordinates: [0, 0] } }
     });
     expect(response.statusCode).toBe(400);
@@ -76,7 +75,7 @@ describe('POST /admin/assignments/:id/progress — validation branches', () => {
     app = await buildTestApp();
     const response = await app.inject({
       method: 'POST',
-      url: '/admin/assignments/1/progress',
+      url: '/admin/territories/1/progress',
       payload: { recordedBy: 'worker-1', remainingArea: { type: 'LineString', coordinates: [[0, 0], [1, 1]] } }
     });
     expect(response.statusCode).toBe(400);
@@ -84,10 +83,10 @@ describe('POST /admin/assignments/:id/progress — validation branches', () => {
   });
 });
 
-describe('GET /admin/assignments/:id/progress — validation branches', () => {
-  it('rejects a non-integer assignment id without touching the database', async () => {
+describe('GET /admin/territories/:id/progress — validation branches', () => {
+  it('rejects a non-integer territory id without touching the database', async () => {
     app = await buildTestApp();
-    const response = await app.inject({ method: 'GET', url: '/admin/assignments/not-a-number/progress' });
+    const response = await app.inject({ method: 'GET', url: '/admin/territories/not-a-number/progress' });
     expect(response.statusCode).toBe(400);
   });
 });

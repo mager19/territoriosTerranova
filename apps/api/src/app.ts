@@ -1,7 +1,6 @@
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
 
-import { registerAdminAssignmentRoutes } from './routes/admin/assignments.js';
 import { registerAdminProgressRoutes } from './routes/admin/progress.js';
 import { registerAdminShareTokenRoutes } from './routes/admin/share-tokens.js';
 import { registerAdminTerritoryRoutes } from './routes/admin/territories.js';
@@ -72,7 +71,6 @@ export async function buildApp(
 
   if (deps.pool) {
     registerAdminTerritoryRoutes(app, { pool: deps.pool });
-    registerAdminAssignmentRoutes(app, { pool: deps.pool });
     registerAdminProgressRoutes(app, { pool: deps.pool });
     registerAdminShareTokenRoutes(app, { pool: deps.pool });
     await registerPublicTerritoryRoutes(app, { pool: deps.pool });

@@ -1,7 +1,12 @@
 /**
- * Full-stack integration tests for slice 3 (progress entries + territory
- * audit history) against real PostGIS via Testcontainers. Own container,
- * separate from the other two integration files.
+ * Full-stack integration tests for progress entries + territory audit
+ * history against real PostGIS via Testcontainers. Own container, separate
+ * from the other two integration files.
+ *
+ * Progress is scoped directly to a territory — 2026-09-08: territories are
+ * shared to a group of volunteers, not assigned to one named person
+ * (db/migrations/0004_remove_individual_assignment.sql). There is no
+ * "active assignment" precondition to record progress against anymore.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -91,9 +96,6 @@ afterAll(async () => {
 interface CreatedTerritory {
   readonly id: number;
 }
-interface CreatedAssignment {
-  readonly id: number;
-}
 
 async function createTerritory(name: string, geometry: unknown = VALID_SQUARE): Promise<number> {
   const response = await app.inject({
@@ -105,30 +107,19 @@ async function createTerritory(name: string, geometry: unknown = VALID_SQUARE): 
   return (response.json() as CreatedTerritory).id;
 }
 
-async function assignTerritory(territoryId: number): Promise<number> {
-  const response = await app.inject({
-    method: 'POST',
-    url: `/admin/territories/${territoryId}/assignments`,
-    payload: { assignedTo: 'worker-1', assignedBy: 'admin-1' }
-  });
-  expect(response.statusCode).toBe(201);
-  return (response.json() as CreatedAssignment).id;
-}
-
-describe('POST /admin/assignments/:id/progress', () => {
+describe('POST /admin/territories/:id/progress', () => {
   it('records a progress entry with note only — remaining area is explicitly UNKNOWN, never inferred', async () => {
     const territoryId = await createTerritory('T-progress-01');
-    const assignmentId = await assignTerritory(territoryId);
 
     const response = await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentId}/progress`,
+      url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', note: 'started at the north corner' }
     });
     expect(response.statusCode).toBe(201);
     const body = response.json();
     expect(body).toMatchObject({
-      assignmentId,
+      territoryId,
       recordedBy: 'worker-1',
       note: 'started at the north corner',
       pausePoint: null,
@@ -140,11 +131,10 @@ describe('POST /admin/assignments/:id/progress', () => {
 
   it('records a progress entry with pause point, route, and remaining area', async () => {
     const territoryId = await createTerritory('T-progress-02');
-    const assignmentId = await assignTerritory(territoryId);
 
     const response = await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentId}/progress`,
+      url: `/admin/territories/${territoryId}/progress`,
       payload: {
         recordedBy: 'worker-1',
         pausePoint: PAUSE_POINT,
@@ -162,11 +152,10 @@ describe('POST /admin/assignments/:id/progress', () => {
 
   it('rejects a zero-area remaining-area geometry at the database level with the correct field named', async () => {
     const territoryId = await createTerritory('T-progress-03');
-    const assignmentId = await assignTerritory(territoryId);
 
     const response = await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentId}/progress`,
+      url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', remainingArea: ZERO_AREA_REMAINING }
     });
     expect(response.statusCode).toBe(400);
@@ -174,36 +163,38 @@ describe('POST /admin/assignments/:id/progress', () => {
     expect(response.json().message).toMatch(/remaining-area/);
   });
 
-  it('rejects recording progress on a returned (non-active) assignment, with a distinct 409', async () => {
+  it('anyone can record progress at any time — there is no "must be assigned/active" precondition', async () => {
     const territoryId = await createTerritory('T-progress-04');
-    const assignmentId = await assignTerritory(territoryId);
-    await app.inject({ method: 'POST', url: `/admin/assignments/${assignmentId}/return`, payload: { actor: 'admin-1' } });
 
-    const response = await app.inject({
+    const first = await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentId}/progress`,
-      payload: { recordedBy: 'worker-1', note: 'too late' }
+      url: `/admin/territories/${territoryId}/progress`,
+      payload: { recordedBy: 'worker-1', note: 'first volunteer' }
     });
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toMatchObject({ error: 'assignment_not_active' });
+    const second = await app.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/progress`,
+      payload: { recordedBy: 'worker-2', note: 'a different volunteer, same territory' }
+    });
+    expect(first.statusCode).toBe(201);
+    expect(second.statusCode).toBe(201);
   });
 
-  it('returns assignment_not_found for a nonexistent assignment', async () => {
+  it('returns territory_not_found for a nonexistent territory', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: '/admin/assignments/999999/progress',
+      url: '/admin/territories/999999/progress',
       payload: { recordedBy: 'worker-1' }
     });
     expect(response.statusCode).toBe(404);
-    expect(response.json()).toMatchObject({ error: 'assignment_not_found' });
+    expect(response.json()).toMatchObject({ error: 'territory_not_found' });
   });
 
   it('rejects a raw UPDATE against progress_entries at the database level (immutable, proven directly)', async () => {
     const territoryId = await createTerritory('T-progress-05');
-    const assignmentId = await assignTerritory(territoryId);
     const created = await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentId}/progress`,
+      url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', note: 'first note' }
     });
     const entryId = created.json().id;
@@ -214,48 +205,45 @@ describe('POST /admin/assignments/:id/progress', () => {
   });
 });
 
-describe('GET /admin/assignments/:id/progress', () => {
-  it('lists progress entries for an assignment in chronological order', async () => {
+describe('GET /admin/territories/:id/progress', () => {
+  it('lists progress entries for a territory in chronological order', async () => {
     const territoryId = await createTerritory('T-progress-list');
-    const assignmentId = await assignTerritory(territoryId);
     await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentId}/progress`,
+      url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', note: 'first' }
     });
     await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentId}/progress`,
+      url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', note: 'second' }
     });
 
-    const response = await app.inject({ method: 'GET', url: `/admin/assignments/${assignmentId}/progress` });
+    const response = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/progress` });
     expect(response.statusCode).toBe(200);
     const { entries } = response.json();
     expect(entries.map((e: { note: string }) => e.note)).toEqual(['first', 'second']);
   });
 
-  it('returns assignment_not_found for a nonexistent assignment', async () => {
-    const response = await app.inject({ method: 'GET', url: '/admin/assignments/999999/progress' });
+  it('returns territory_not_found for a nonexistent territory', async () => {
+    const response = await app.inject({ method: 'GET', url: '/admin/territories/999999/progress' });
     expect(response.statusCode).toBe(404);
-    expect(response.json()).toMatchObject({ error: 'assignment_not_found' });
+    expect(response.json()).toMatchObject({ error: 'territory_not_found' });
   });
 });
 
 describe('GET /admin/territories/:id/audit', () => {
-  it('exposes the full chronological history: territory events AND its assignments\' events, interleaved', async () => {
+  it('exposes the full chronological history for a territory: creation, sharing, progress, and new revisions', async () => {
     const territoryId = await createTerritory('T-audit-01');
-    const assignmentId = await assignTerritory(territoryId);
     await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentId}/progress`,
-      payload: { recordedBy: 'worker-1', note: 'halfway done' }
+      url: `/admin/territories/${territoryId}/share-tokens`,
+      payload: { createdBy: 'admin-1' }
     });
-    await app.inject({ method: 'POST', url: `/admin/assignments/${assignmentId}/return`, payload: { actor: 'admin-1' } });
     await app.inject({
       method: 'POST',
-      url: `/admin/assignments/${assignmentId}/reopen`,
-      payload: { actor: 'admin-2', reason: 'found more area to cover' }
+      url: `/admin/territories/${territoryId}/progress`,
+      payload: { recordedBy: 'worker-1', note: 'halfway done' }
     });
     await app.inject({
       method: 'POST',
@@ -275,15 +263,14 @@ describe('GET /admin/territories/:id/audit', () => {
     expect(body.territoryId).toBe(territoryId);
     expect(body.events.map((e: { action: string }) => e.action)).toEqual([
       'created',
-      'assigned',
+      'shared',
       'progress_recorded',
-      'returned',
-      'reopened',
       'revision_submitted'
     ]);
-    // Every event traces back to something under THIS territory.
+    // Everything is territory-scoped now — no separate 'assignment' entity type exists.
     for (const event of body.events) {
-      expect(['territory', 'assignment']).toContain(event.entityType);
+      expect(event.entityType).toBe('territory');
+      expect(event.entityId).toBe(territoryId);
     }
   });
 
@@ -293,7 +280,7 @@ describe('GET /admin/territories/:id/audit', () => {
     expect(response.json()).toMatchObject({ error: 'territory_not_found' });
   });
 
-  it("does not leak another territory's assignment events", async () => {
+  it("does not leak another territory's progress/share events", async () => {
     // Distinct, non-overlapping geometry for B — both territories must be
     // simultaneously active for this isolation check to mean anything, and
     // A2's overlap trigger correctly refuses two active territories sharing
@@ -304,26 +291,16 @@ describe('GET /admin/territories/:id/audit', () => {
     };
     const territoryA = await createTerritory('T-audit-isolation-A');
     const territoryB = await createTerritory('T-audit-isolation-B', DISTINCT_SQUARE);
-    const assignmentB = await assignTerritory(territoryB);
-    await assignTerritory(territoryA);
+    await app.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryB}/progress`,
+      payload: { recordedBy: 'worker-1', note: 'B only' }
+    });
 
     const response = await app.inject({ method: 'GET', url: `/admin/territories/${territoryA}/audit` });
-    const events = response.json().events as Array<{ entityType: string; entityId: number }>;
+    const events = response.json().events as Array<{ entityId: number; reason: string }>;
 
-    // The strong assertion: no event in A's history references B's assignment id.
-    expect(events.some((e) => e.entityType === 'assignment' && e.entityId === assignmentB)).toBe(false);
-    // And every assignment-typed event genuinely belongs to A, verified
-    // against the database directly rather than trusting the payload.
-    const assignmentEventIds = events.filter((e) => e.entityType === 'assignment').map((e) => e.entityId);
-    if (assignmentEventIds.length > 0) {
-      const belongsToA = await withClient(async (client) => {
-        const { rows } = await client.query<{ n: number }>(
-          `SELECT count(*)::int AS n FROM assignments WHERE id = ANY($1) AND territory_id <> $2`,
-          [assignmentEventIds, territoryA]
-        );
-        return rows[0]?.n;
-      });
-      expect(belongsToA).toBe(0);
-    }
+    expect(events.every((e) => e.entityId === territoryA)).toBe(true);
+    expect(events.some((e) => e.reason === 'B only')).toBe(false);
   });
 });

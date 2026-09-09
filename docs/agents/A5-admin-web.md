@@ -1,12 +1,13 @@
 # A5 — Admin Web
 
 **Mission**: The administrator's map editor. Draw territories over a real Bello
-basemap, manage assignments, and read history.
+basemap, share them with the volunteer group, and read history. (Originally
+"manage assignments" — superseded 2026-09-08, see Slice 2 below.)
 
 **Reasoning load**: Standard
 **Depends on**: A3
 **Blocks**: nothing
-**Milestones**: M1 (editor), M2 (assignment and history)
+**Milestones**: M1 (editor), M2 (sharing and history)
 **Runs in parallel with**: A4
 
 ## Read first
@@ -42,11 +43,16 @@ A3 API and shows the resulting revision.
 Optionally load AMVA barrio boundaries as a **drafting reference underlay** —
 visually distinct from the drawn territory, and clearly labelled as reference.
 
-### Slice 2 — Assignment and history (M2)
+### Slice 2 — Sharing and history (M2) — superseded 2026-09-08
 
-Assign, return, complete, and reopen with a reason. Show the revision timeline and
+**As originally briefed, this slice was "assign, return, complete, and reopen".**
+Territories are shared to the volunteer group, not assigned to one named person —
+there is no lifecycle to manage. What was actually built: a "Share this territory"
+action (SharePanel) that issues/revokes a link. Show the revision timeline and
 audit history. Show recorded progress, including remaining-area geometry when it
-exists.
+exists — this part is unchanged.
+
+~~Assign, return, complete, and reopen with a reason.~~
 
 ## Definition of done
 

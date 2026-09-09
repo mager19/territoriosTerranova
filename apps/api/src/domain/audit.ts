@@ -63,20 +63,19 @@ interface AuditEventRow {
 
 /**
  * The full audit history for a territory (A3 brief, slice 3): every event
- * recorded directly against the territory (created, revision_submitted)
- * PLUS every event recorded against any of its assignments (assigned,
- * returned, completed, reopened, progress_recorded) — one coherent
- * chronological timeline, not just the territory's own events. Does NOT
- * verify the territory exists; callers that need a 404 for a missing
- * territory should check that separately (an empty array here is
- * ambiguous between "no history yet" and "no such territory").
+ * recorded against it (created, revision_submitted, shared, share_revoked,
+ * progress_recorded) — everything is territory-scoped since 2026-09-08's
+ * removal of individual assignment (db/migrations/
+ * 0004_remove_individual_assignment.sql). Does NOT verify the territory
+ * exists; callers that need a 404 for a missing territory should check
+ * that separately (an empty array here is ambiguous between "no history
+ * yet" and "no such territory").
  */
 export async function getTerritoryAuditHistory(db: Queryable, territoryId: number): Promise<readonly AuditEvent[]> {
   const { rows } = await db.query<AuditEventRow>(
     `SELECT id, entity_type, entity_id, action, actor, reason, payload, created_at
      FROM audit_events
-     WHERE (entity_type = 'territory' AND entity_id = $1)
-        OR (entity_type = 'assignment' AND entity_id IN (SELECT id FROM assignments WHERE territory_id = $1))
+     WHERE entity_type = 'territory' AND entity_id = $1
      ORDER BY created_at ASC, id ASC`,
     [territoryId]
   );

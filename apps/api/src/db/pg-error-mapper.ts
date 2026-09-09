@@ -14,12 +14,10 @@
 import { DatabaseError } from 'pg';
 
 import {
-  ActiveAssignmentConflictError,
   BoundaryReferenceMissingError,
   InvalidGeometryError,
   OutOfBoundsError,
   UnauthorizedOverlapError,
-  ValidationError,
   ZeroAreaGeometryError,
   type DomainError
 } from '../domain/errors.js';
@@ -79,44 +77,6 @@ export function mapTerritoryGeometryError(error: unknown): DomainError | undefin
  */
 export function rethrowAsTerritoryGeometryError(error: unknown): never {
   const mapped = mapTerritoryGeometryError(error);
-  if (mapped) {
-    throw mapped;
-  }
-  throw error;
-}
-
-/**
- * Maps a raw `pg` DatabaseError from an assignments write into a typed
- * domain error, by constraint name or trigger message — same discipline as
- * mapTerritoryGeometryError, coupled to db/migrations/0002_core_schema.sql.
- */
-export function mapAssignmentError(error: unknown): DomainError | undefined {
-  if (!(error instanceof DatabaseError)) {
-    return undefined;
-  }
-
-  // SQLSTATE 23505 = unique_violation. The partial UNIQUE index enforces at
-  // most one ACTIVE assignment per territory; this fires both for a losing
-  // concurrent assign() and for a reopen() that would create a second
-  // active assignment for a territory another one already covers.
-  if (error.code === '23505' && error.constraint === 'assignments_one_active_per_territory') {
-    return new ActiveAssignmentConflictError(
-      'this territory already has an active assignment; return or complete it first'
-    );
-  }
-
-  // Defense-in-depth confirmation of the DB trigger backing the app-level
-  // check in domain/assignments.ts — reached only if that check is ever
-  // bypassed or buggy, never in the normal path.
-  if (error.code === 'P0001' && error.message.includes('requires a reopen_reason')) {
-    return new ValidationError('reopening an assignment requires a non-blank reason');
-  }
-
-  return undefined;
-}
-
-export function rethrowAsAssignmentError(error: unknown): never {
-  const mapped = mapAssignmentError(error);
   if (mapped) {
     throw mapped;
   }

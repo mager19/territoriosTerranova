@@ -36,7 +36,14 @@ The response is built by an **explicit allowlist**. Never serialize a domain
 object and remove fields — that pattern leaks the moment someone adds a column.
 
 Excluded by default, without exception: assignee identity, notes, timestamps,
-routes, pause points, history, other territories, AMVA attributes, internal ids.
+pause points, history, other territories, AMVA attributes, internal ids.
+
+The one deliberate inclusion beyond territoryName/boundary/remainingArea/
+remainingAreaStatus: the latest progress entry's **route** (a LineString), added
+2026-09-08 by explicit product decision — the assigned worker needs to see their
+own coverage line to resume the next day (the original product intent). This is
+still the one active assignment's own data, still behind the same token; it does
+not relax the identity/notes/timestamps/pause-point/history exclusions above.
 
 ### Transport and headers
 
