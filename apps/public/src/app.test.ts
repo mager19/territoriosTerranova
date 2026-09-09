@@ -38,7 +38,8 @@ describe('runApp', () => {
         territoryName: 'Navarra Norte',
         boundary: BOUNDARY,
         remainingArea: null,
-        remainingAreaStatus: 'unknown'
+        remainingAreaStatus: 'unknown',
+        route: null
       })
     );
     const onTerritoryResolved = vi.fn();

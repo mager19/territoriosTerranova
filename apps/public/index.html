@@ -34,6 +34,48 @@
         margin: 0 1rem 1rem;
       }
 
+      /* Large, thumb-friendly tap targets — same outdoor/one-handed
+         constraint as the rest of this page (A6 brief DoD). */
+      .actions {
+        display: flex;
+        gap: 0.75rem;
+        margin: 0 1rem 0.75rem;
+        flex-wrap: wrap;
+      }
+
+      .actions[hidden] {
+        display: none;
+      }
+
+      .action-button {
+        appearance: none;
+        border: 1px solid #111111;
+        border-radius: 999px;
+        background: #ffffff;
+        color: #111111;
+        font: inherit;
+        font-weight: 600;
+        font-size: 1rem;
+        padding: 0.75rem 1.25rem;
+        min-height: 44px;
+        text-decoration: none;
+        cursor: pointer;
+      }
+
+      .action-button:active {
+        background: #111111;
+        color: #ffffff;
+      }
+
+      p.location-status {
+        font-size: 1rem;
+        margin: 0 1rem 1rem;
+      }
+
+      p.location-status[hidden] {
+        display: none;
+      }
+
       p.attribution {
         font-size: 0.75rem;
         color: #444444;

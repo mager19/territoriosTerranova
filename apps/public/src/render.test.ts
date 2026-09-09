@@ -35,6 +35,15 @@ describe('mountPage', () => {
 
     expect(mapContainer.hidden).toBe(true);
   });
+
+  it('starts with the actions row (directions/locate) and location status hidden', () => {
+    const root = document.createElement('div');
+
+    const { actions, locationStatus } = mountPage(root);
+
+    expect(actions.hidden).toBe(true);
+    expect(locationStatus.hidden).toBe(true);
+  });
 });
 
 describe('renderStatus', () => {
@@ -44,11 +53,12 @@ describe('renderStatus', () => {
 
     renderStatus(elements, {
       status: 'ok',
-      view: { territoryName: 'Navarra Norte', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown' }
+      view: { territoryName: 'Navarra Norte', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null }
     });
 
     expect(elements.heading.textContent).toBe('Navarra Norte');
     expect(elements.mapContainer.hidden).toBe(false);
+    expect(elements.actions.hidden).toBe(false);
   });
 
   it('shows the same neutral message and keeps the map hidden for an unavailable token', () => {

@@ -15,6 +15,15 @@ const BOUNDARY = {
   ]
 };
 
+const ROUTE = {
+  type: 'LineString',
+  coordinates: [
+    [-75.5738, 6.3575],
+    [-75.5735, 6.358],
+    [-75.5732, 6.3585]
+  ]
+};
+
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
@@ -26,7 +35,8 @@ describe('fetchPublicTerritory', () => {
         territoryName: 'T-01',
         boundary: BOUNDARY,
         remainingArea: null,
-        remainingAreaStatus: 'unknown'
+        remainingAreaStatus: 'unknown',
+        route: null
       })
     );
 
@@ -42,7 +52,8 @@ describe('fetchPublicTerritory', () => {
         territoryName: 'Navarra Norte',
         boundary: BOUNDARY,
         remainingArea: BOUNDARY,
-        remainingAreaStatus: 'recorded'
+        remainingAreaStatus: 'recorded',
+        route: null
       })
     );
 
@@ -54,18 +65,55 @@ describe('fetchPublicTerritory', () => {
         territoryName: 'Navarra Norte',
         boundary: BOUNDARY,
         remainingArea: BOUNDARY,
-        remainingAreaStatus: 'recorded'
+        remainingAreaStatus: 'recorded',
+        route: null
       }
     });
   });
 
-  it('drops any field beyond the four-key allowlist — an unexpected field never reaches the returned view', async () => {
+  it('returns the route line when one was recorded — the one deliberate exception to the exclusion list', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse(200, {
         territoryName: 'Navarra Norte',
         boundary: BOUNDARY,
         remainingArea: null,
         remainingAreaStatus: 'unknown',
+        route: ROUTE
+      })
+    );
+
+    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.view.route).toEqual(ROUTE);
+    }
+  });
+
+  it('treats an invalid route shape as "error", never a fabricated view', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        territoryName: 'Navarra Norte',
+        boundary: BOUNDARY,
+        remainingArea: null,
+        remainingAreaStatus: 'unknown',
+        route: { type: 'Point', coordinates: [0, 0] }
+      })
+    );
+
+    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+
+    expect(result).toEqual({ status: 'error' });
+  });
+
+  it('drops any field beyond the five-key allowlist — an unexpected field never reaches the returned view', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        territoryName: 'Navarra Norte',
+        boundary: BOUNDARY,
+        remainingArea: null,
+        remainingAreaStatus: 'unknown',
+        route: null,
         assignedTo: 'field-worker-1',
         notes: 'private admin note',
         id: 42
@@ -77,7 +125,7 @@ describe('fetchPublicTerritory', () => {
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
       expect(Object.keys(result.view).sort()).toEqual(
-        ['boundary', 'remainingArea', 'remainingAreaStatus', 'territoryName'].sort()
+        ['boundary', 'remainingArea', 'remainingAreaStatus', 'route', 'territoryName'].sort()
       );
     }
   });

@@ -13,7 +13,7 @@
  */
 
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
-import type { Feature, FeatureCollection, Polygon, Position } from '@territorios/geo';
+import type { Feature, FeatureCollection, Geometry, LineString, Polygon, Position } from '@territorios/geo';
 
 export const BELLO_CENTER: [number, number] = [-75.5636, 6.3373];
 export const BELLO_ZOOM = 13;
@@ -63,50 +63,121 @@ export function computeBoundingBox(geometry: Polygon): BoundingBox {
   return { west, east, south, north };
 }
 
+export interface LatLon {
+  readonly lat: number;
+  readonly lon: number;
+}
+
+/**
+ * A single reference point for "where does this territory start" — the
+ * bounding box's center, not any particular vertex (no vertex is
+ * privileged as "the start" in the data model, and for a block-sized
+ * territory the difference from any real point on it is a few dozen
+ * meters at most — irrelevant for walking directions or a distance
+ * readout).
+ */
+export function boundingBoxCenter(box: BoundingBox): LatLon {
+  return { lat: (box.south + box.north) / 2, lon: (box.west + box.east) / 2 };
+}
+
+/**
+ * A plain "get directions" deep link — not an API integration. The
+ * browser/OS decides what opens it (the installed Google Maps app, or its
+ * web fallback); this app has no dependency on Google beyond this one
+ * outbound URL, the same category as a `mailto:` or `tel:` link. Chosen
+ * over a `geo:` URI because `geo:` has no reliable handler on iOS Safari —
+ * this format works cross-platform without guessing which maps app (if
+ * any) is installed.
+ */
+export function directionsUrl(destination: LatLon): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lon}&travelmode=walking`;
+}
+
+const EARTH_RADIUS_METERS = 6371000;
+
+/** Great-circle distance in meters — good enough at block/city scale, no need for an ellipsoidal model here. */
+export function haversineMeters(a: LatLon, b: LatLon): number {
+  const toRadians = (degrees: number): number => (degrees * Math.PI) / 180;
+  const deltaLat = toRadians(b.lat - a.lat);
+  const deltaLon = toRadians(b.lon - a.lon);
+  const lat1 = toRadians(a.lat);
+  const lat2 = toRadians(b.lat);
+  const h = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+  return 2 * EARTH_RADIUS_METERS * Math.asin(Math.sqrt(h));
+}
+
 function emptyFeatureCollection(): FeatureCollection {
   return { type: 'FeatureCollection', features: [] };
 }
 
 /**
- * Two GeoJSON sources/layer pairs, visually distinct: the persisted
- * territory boundary (teal) and the latest recorded remaining-area
- * estimate (dashed magenta) — never the same style, so a field worker
- * never confuses "the whole territory" with "what is left".
+ * A territory is a block (manzana): its boundary edges ARE the houses —
+ * the streets a field worker walks door to door. Progress is therefore a
+ * property of the PERIMETER, not an interior area: two layers, not three.
+ *
+ * - territory-boundary: the whole block outline, neutral gray and dashed
+ *   — "this is the block, undifferentiated" (the plain baseline in the
+ *   worker's own reference sketch).
+ * - progress-route: a bold, near-black line drawn on top of exactly the
+ *   stretch of that perimeter already covered. Where the boundary shows
+ *   through gray and dashed underneath, that side is not done yet — there
+ *   is no separate "remaining" shape to draw or keep in sync.
+ *
+ * remaining-area (a filled interior polygon) stays supported in the data
+ * model and this file (A3's domain, A4's contract) for a genuinely
+ * different case — open ground that isn't a walkable perimeter — but is
+ * deliberately understated here so it never visually competes with the
+ * route line for the common manzana case.
  */
 export function installTerritoryLayers(map: MapLibreMap): void {
   map.addSource('territory-boundary', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  // A light purple tint, not gray — a placeholder for the future
+  // staleness-by-color scheme (docs/agents/README.md "Deferred product
+  // scope": color will eventually encode how long a territory has gone
+  // unworked). Today it is purely decorative and carries no meaning.
   map.addLayer({
     id: 'territory-boundary-fill',
     type: 'fill',
     source: 'territory-boundary',
-    paint: { 'fill-color': '#2f6f5e', 'fill-opacity': 0.22 }
+    paint: { 'fill-color': '#8e5ec9', 'fill-opacity': 0.1 }
   });
   map.addLayer({
     id: 'territory-boundary-line',
     type: 'line',
     source: 'territory-boundary',
-    paint: { 'line-color': '#143f35', 'line-width': 2 }
+    paint: { 'line-color': '#9a9a9a', 'line-width': 2, 'line-dasharray': [2, 2] }
   });
 
-  // Empty when remainingArea is null — this is the visual counterpart of
-  // the "unknown" status text; it never renders a guessed shape (AGENTS.md:
+  // Understated on purpose (see doc comment above) — only meaningful when
+  // progress is genuinely area-shaped rather than perimeter-shaped. Empty
+  // when remainingArea is null; that is the visual counterpart of the
+  // "unknown" status text, it never renders a guessed shape (AGENTS.md:
   // coverage is never inferred).
   map.addSource('remaining-area', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
   map.addLayer({
     id: 'remaining-area-fill',
     type: 'fill',
     source: 'remaining-area',
-    paint: { 'fill-color': '#b0339a', 'fill-opacity': 0.2 }
+    paint: { 'fill-color': '#c9c9c9', 'fill-opacity': 0.35 }
   });
+
+  // The actual progress line — bold and near-black, the darkest element
+  // on the map, deliberately (2026-09-08 product decision, AGENTS.md
+  // "Privacy rules"): this is what a field worker actually walked, so
+  // far, drawn last so it always sits on top of the plain gray boundary.
+  // Absent (no progress entry recorded a route) means this layer stays
+  // empty, same "never a guessed shape" rule as remaining-area.
+  map.addSource('progress-route', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
   map.addLayer({
-    id: 'remaining-area-line',
+    id: 'progress-route-line',
     type: 'line',
-    source: 'remaining-area',
-    paint: { 'line-color': '#7a1f6b', 'line-width': 2, 'line-dasharray': [1, 1] }
+    source: 'progress-route',
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#161616', 'line-width': 4 }
   });
 }
 
-function setSource(map: MapLibreMap, sourceId: string, geometry: Polygon | null): void {
+function setSource(map: MapLibreMap, sourceId: string, geometry: Geometry | null): void {
   const source = map.getSource(sourceId);
   if (!source || !('setData' in source)) return;
   const feature: Feature = { type: 'Feature', properties: null, geometry };
@@ -114,9 +185,15 @@ function setSource(map: MapLibreMap, sourceId: string, geometry: Polygon | null)
   (source as { setData(data: GeoJSON.GeoJSON): void }).setData(data as unknown as GeoJSON.GeoJSON);
 }
 
-export function renderTerritory(map: MapLibreMap, boundary: Polygon, remainingArea: Polygon | null): void {
+export function renderTerritory(
+  map: MapLibreMap,
+  boundary: Polygon,
+  remainingArea: Polygon | null,
+  route: LineString | null
+): void {
   setSource(map, 'territory-boundary', boundary);
   setSource(map, 'remaining-area', remainingArea);
+  setSource(map, 'progress-route', route);
 }
 
 export function fitToBoundingBox(map: MapLibreMap, box: BoundingBox): void {

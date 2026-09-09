@@ -3,6 +3,7 @@ import type { PublicTerritoryResult } from './public-api.js';
 export const UNAVAILABLE_MESSAGE = 'This link is no longer available.';
 export const ERROR_MESSAGE = "We couldn't load this territory right now. Check your connection and try again.";
 export const LOADING_MESSAGE = 'Loading territory…';
+export const ROUTE_COVERAGE_MESSAGE = 'Progress recorded — the covered stretch is marked on the map.';
 export const RECORDED_COVERAGE_MESSAGE = 'Partial coverage recorded — the remaining area is marked on the map.';
 export const UNKNOWN_COVERAGE_MESSAGE = 'Remaining coverage: unknown. No progress has been recorded for this assignment yet.';
 
@@ -29,8 +30,18 @@ export function describeState(state: ViewState): RenderedStatus {
     case 'error':
       return { heading: 'Connection problem', body: ERROR_MESSAGE };
     case 'ok': {
-      const body =
-        state.view.remainingAreaStatus === 'recorded' ? RECORDED_COVERAGE_MESSAGE : UNKNOWN_COVERAGE_MESSAGE;
+      // route and remainingArea are independent, optionally-recorded
+      // fields (AGENTS.md: coverage is never inferred) — check route
+      // first since it is the common manzana/perimeter case; fall back
+      // to the area-based message when only remainingArea was recorded.
+      let body: string;
+      if (state.view.route !== null) {
+        body = ROUTE_COVERAGE_MESSAGE;
+      } else if (state.view.remainingAreaStatus === 'recorded') {
+        body = RECORDED_COVERAGE_MESSAGE;
+      } else {
+        body = UNKNOWN_COVERAGE_MESSAGE;
+      }
       return { heading: state.view.territoryName, body };
     }
   }
