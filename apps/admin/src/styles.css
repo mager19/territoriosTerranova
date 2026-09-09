@@ -1,0 +1,236 @@
+/**
+ * "Monad" design tokens, adapted from a marketing-site style reference to
+ * this dense CRUD admin tool: same palette/type pairing, smaller heading
+ * scale and tighter card padding than the source guide's spacious
+ * marketing rhythm (a data-entry screen needs less air than a hero
+ * section). No new UI colors invented beyond the reference — where the
+ * guide is silent (error/alert states), off-black + weight-500 mono
+ * carries the emphasis instead of an invented danger color.
+ */
+
+:root {
+  --color-parchment: #f6f3f1;
+  --color-lake-blue: #2b59d1;
+  --color-periwinkle-mist: #cfdaf5;
+  --color-off-black: #242424;
+  --color-graphite: #4e4d4d;
+  --color-smoke: #797776;
+  --color-ash: #cecac8;
+
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: Georgia, Cambria, 'Times New Roman', Times, serif;
+
+  --map-border: var(--color-ash);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-parchment);
+  color: var(--color-off-black);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 40px 24px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  color: var(--color-off-black);
+  margin: 0 0 16px;
+}
+
+h1 {
+  font-size: 32px;
+  line-height: 1.2;
+}
+
+h2 {
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+h3 {
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+p {
+  margin: 0 0 12px;
+  color: var(--color-graphite);
+}
+
+/* Every top-level <section> reads as a card — the system's one elevation
+   device (a hairline border and a soft-rounded rect), never a shadow. */
+section {
+  background: var(--color-parchment);
+  border: 1px solid var(--color-ash);
+  border-radius: 24px;
+  padding: 24px;
+}
+
+section > section,
+main > section {
+  margin: 0;
+}
+
+ul,
+ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+ul li,
+ol li {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-ash);
+  color: var(--color-graphite);
+}
+
+ul li:last-child,
+ol li:last-child {
+  border-bottom: none;
+}
+
+label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: -0.033em;
+  color: var(--color-smoke);
+  margin: 12px 0 4px;
+}
+
+input {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: -0.02em;
+  color: var(--color-off-black);
+  background: #ffffff;
+  border: 1px solid var(--color-ash);
+  border-radius: 12px;
+  padding: 10px 14px;
+  width: 100%;
+  max-width: 420px;
+}
+
+input:focus-visible {
+  outline: 2px solid var(--color-lake-blue);
+  outline-offset: 1px;
+}
+
+/* Pill buttons — the system's one container language for actions.
+   Off-Black is the default fill; `.primary` (the single conversion
+   action per section) is the only place Lake Blue appears as a fill. */
+button {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+  background: var(--color-off-black);
+  border: 1px solid var(--color-off-black);
+  border-radius: 100px;
+  padding: 10px 20px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+button:disabled {
+  background: var(--color-periwinkle-mist);
+  border-color: var(--color-periwinkle-mist);
+  color: var(--color-smoke);
+  cursor: not-allowed;
+}
+
+button[type='submit'],
+button.primary {
+  background: var(--color-lake-blue);
+  border-color: var(--color-lake-blue);
+}
+
+button[type='submit']:disabled,
+button.primary:disabled {
+  background: var(--color-periwinkle-mist);
+  border-color: var(--color-periwinkle-mist);
+  color: var(--color-smoke);
+}
+
+/* A toggled-on mode ("Edit points", aria-pressed) reads as a ghost pill in
+   the accent color, not a second solid fill competing with the primary
+   action. */
+button[aria-pressed='true'] {
+  background: transparent;
+  color: var(--color-lake-blue);
+  border-color: var(--color-lake-blue);
+}
+
+/* Selected/current item in a list — periwinkle is the system's one muted
+   emphasis surface, exactly the role a "you are here" state needs. */
+button[aria-current='true'] {
+  background: var(--color-periwinkle-mist);
+  border-color: var(--color-periwinkle-mist);
+  color: var(--color-off-black);
+}
+
+[role='group'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+[role='status'] {
+  font-size: 14px;
+  color: var(--color-smoke);
+}
+
+/* No designated error color in the source palette — weight and an
+   off-black border carry the emphasis instead of an invented red. */
+[role='alert'],
+.editor-error {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-off-black);
+  background: #ffffff;
+  border: 1px solid var(--color-off-black);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin: 8px 0;
+}
+
+.editor-hint {
+  font-size: 14px;
+  color: var(--color-smoke);
+}
+
+.map-attribution {
+  font-size: 12px;
+  color: var(--color-smoke);
+  margin: 6px 0 0;
+}
+
+form > div {
+  margin-bottom: 4px;
+}
