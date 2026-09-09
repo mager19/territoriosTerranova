@@ -17,6 +17,7 @@
  * not people (design doc, 2026-09-09).
  */
 
+import { ValidationError } from './errors.js';
 import { withTransaction, type TransactionalPool } from '../db/transaction.js';
 
 export interface TerritoryOverviewMonth {
@@ -40,7 +41,7 @@ interface OverviewDbRow {
   readonly name: string;
   readonly status: 'active' | 'archived';
   readonly area_hectares: string | null;
-  readonly last_worked_at: string | null;
+  readonly last_worked_at: Date | null;
   readonly monthly: readonly TerritoryOverviewMonth[];
 }
 
@@ -55,6 +56,10 @@ export async function getTerritoryOverview(
   pool: TransactionalPool,
   options: TerritoryOverviewOptions
 ): Promise<readonly TerritoryOverviewRow[]> {
+  if (!Number.isInteger(options.months) || options.months <= 0) {
+    throw new ValidationError('months must be a positive integer');
+  }
+
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<OverviewDbRow>(
       `WITH bounds AS (
@@ -80,7 +85,7 @@ export async function getTerritoryOverview(
               t.number,
               t.name,
               t.status,
-              (SELECT max(p.recorded_at)::text
+              (SELECT max(p.recorded_at)
                  FROM progress_entries p
                 WHERE p.territory_id = t.id) AS last_worked_at,
               (SELECT (ST_Area(r.geom::geography) / 10000.0)::text
@@ -107,7 +112,7 @@ export async function getTerritoryOverview(
       name: row.name,
       status: row.status,
       areaHectares: row.area_hectares === null ? null : Number(row.area_hectares),
-      lastWorkedAt: row.last_worked_at,
+      lastWorkedAt: row.last_worked_at === null ? null : row.last_worked_at.toISOString(),
       monthly: row.monthly
     }));
   });

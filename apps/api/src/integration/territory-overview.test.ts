@@ -9,6 +9,7 @@ import { Client, Pool } from 'pg';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { runMigrations } from '@territorios/geo/db/migrate';
 
+import { ValidationError } from '../domain/errors.js';
 import { getTerritoryOverview } from '../domain/territory-overview.js';
 
 const IMAGE = 'postgis/postgis:16-3.4';
@@ -167,14 +168,24 @@ describe('getTerritoryOverview', () => {
 
     expect(row?.monthly.every((month) => month.times === 0)).toBe(true);
     expect(row?.lastWorkedAt).not.toBeNull();
+    // ISO instant, not a session-timezone-dependent rendering — and the
+    // date component must survive intact.
+    expect(row?.lastWorkedAt).toMatch(/^2020-01-15/);
   });
 
   it('returns exactly `months` buckets, ending with the current month', async () => {
+    const id = await createTerritory('window-shape', 'S-0');
+
     const rows = await getTerritoryOverview(pool, { months: 12, includeArchived: false });
-    const row = rows[0];
+    const row = rows.find((candidate) => candidate.id === id);
 
     expect(row?.monthly).toHaveLength(12);
     expect(row?.monthly.at(-1)?.month).toBe(monthKey(new Date()));
+  });
+
+  it('rejects a non-positive months option instead of silently returning an empty list', async () => {
+    await expect(getTerritoryOverview(pool, { months: 0, includeArchived: false })).rejects.toThrow(ValidationError);
+    await expect(getTerritoryOverview(pool, { months: -1, includeArchived: false })).rejects.toThrow(ValidationError);
   });
 
   it('excludes archived territories unless asked', async () => {
