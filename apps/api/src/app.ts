@@ -2,6 +2,7 @@ import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { registerAdminProgressRoutes } from './routes/admin/progress.js';
+import { registerAdminReferenceBarrioRoutes } from './routes/admin/reference-barrios.js';
 import { registerAdminShareTokenRoutes } from './routes/admin/share-tokens.js';
 import { registerAdminTerritoryRoutes } from './routes/admin/territories.js';
 import { registerPublicTerritoryRoutes } from './routes/public/territories.js';
@@ -73,6 +74,7 @@ export async function buildApp(
     registerAdminTerritoryRoutes(app, { pool: deps.pool });
     registerAdminProgressRoutes(app, { pool: deps.pool });
     registerAdminShareTokenRoutes(app, { pool: deps.pool });
+    registerAdminReferenceBarrioRoutes(app, { pool: deps.pool });
     await registerPublicTerritoryRoutes(app, { pool: deps.pool });
   }
 
