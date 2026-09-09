@@ -46,6 +46,14 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Integration tests live behind their own script because they need a
+      # real database, so `pnpm test` alone never reached them — a whole
+      # suite (packages/geo) sat red and invisible for exactly that reason.
+      # These stand up their own PostGIS via Testcontainers; they do not use
+      # the compose service above.
+      - name: Integration tests (real PostGIS)
+        run: pnpm test:integration
+
       # DoD: `pnpm dev` starts the API and both web apps;
       #      `curl -s localhost:<api-port>/health` returns 200
       - name: Smoke-test pnpm dev

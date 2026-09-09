@@ -13,6 +13,7 @@
     "typecheck": "tsc -b tsconfig.json",
     "lint": "eslint .",
     "test": "pnpm -r test",
+    "test:integration": "pnpm -r test:integration",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "db:psql": "docker compose exec -T postgis psql -U territorios -d territorios",
