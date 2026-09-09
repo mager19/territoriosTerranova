@@ -142,3 +142,29 @@ describe('admin routes are absent when no pool is supplied', () => {
     expect(response.statusCode).toBe(404);
   });
 });
+
+describe('PATCH /admin/territories/:id/number — validation branches', () => {
+  it('rejects a non-numeric id without touching the database', async () => {
+    app = await buildTestApp();
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/admin/territories/abc/number',
+      payload: { number: 'T-1' }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'invalid_request' });
+  });
+
+  it('rejects a blank number without touching the database', async () => {
+    app = await buildTestApp();
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/admin/territories/1/number',
+      payload: { number: '   ' }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'invalid_request' });
+  });
+});

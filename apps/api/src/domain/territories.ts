@@ -15,7 +15,7 @@ import type { PoolClient } from 'pg';
 import { getTerritoryAuditHistory as queryTerritoryAuditHistory, recordAuditEvent, type AuditEvent } from './audit.js';
 import { TerritoryNotFoundError, ValidationError } from './errors.js';
 import { validateTerritoryGeometry } from './geometry.js';
-import { rethrowAsTerritoryGeometryError } from '../db/pg-error-mapper.js';
+import { rethrowAsTerritoryGeometryError, rethrowAsTerritoryNumberError } from '../db/pg-error-mapper.js';
 import { withTransaction, type TransactionalPool } from '../db/transaction.js';
 
 export type TerritoryStatus = 'active' | 'archived';
@@ -23,6 +23,7 @@ export type TerritoryStatus = 'active' | 'archived';
 export interface Territory {
   readonly id: number;
   readonly name: string;
+  readonly number: string | null;
   readonly status: TerritoryStatus;
   readonly createdAt: string;
   readonly currentRevisionNumber: number;
@@ -40,6 +41,7 @@ export interface TerritoryRevision {
 export interface TerritoryWithRevisions {
   readonly id: number;
   readonly name: string;
+  readonly number: string | null;
   readonly status: TerritoryStatus;
   readonly createdAt: string;
   readonly revisions: readonly TerritoryRevision[];
@@ -48,6 +50,7 @@ export interface TerritoryWithRevisions {
 interface TerritoryRow {
   readonly id: string;
   readonly name: string;
+  readonly number: string | null;
   readonly status: TerritoryStatus;
   readonly created_at: string;
   readonly current_revision_number: string | null;
@@ -66,6 +69,7 @@ function toTerritory(row: TerritoryRow): Territory {
   return {
     id: Number(row.id),
     name: row.name,
+    number: row.number,
     status: row.status,
     createdAt: row.created_at,
     currentRevisionNumber: row.current_revision_number === null ? 0 : Number(row.current_revision_number)
@@ -112,6 +116,7 @@ export interface CreateTerritoryInput {
   readonly name: string;
   readonly geometry: unknown;
   readonly author: string;
+  readonly number?: string;
 }
 
 export async function createTerritory(
@@ -129,10 +134,17 @@ export async function createTerritory(
   }
 
   return withTransaction(pool, async (client) => {
-    const { rows } = await client.query<{ id: string; status: TerritoryStatus; created_at: string }>(
-      `INSERT INTO territories (name) VALUES ($1) RETURNING id, status, created_at`,
-      [name]
-    );
+    const trimmedNumber = input.number?.trim();
+    const { rows } = await (async () => {
+      try {
+        return await client.query<{ id: string; status: TerritoryStatus; created_at: string }>(
+          `INSERT INTO territories (name, number) VALUES ($1, $2) RETURNING id, status, created_at`,
+          [name, trimmedNumber === undefined || trimmedNumber === '' ? null : trimmedNumber]
+        );
+      } catch (error) {
+        rethrowAsTerritoryNumberError(error);
+      }
+    })();
     const territoryRow = rows[0];
     if (!territoryRow) {
       throw new Error('territories insert returned no row');
@@ -153,6 +165,7 @@ export async function createTerritory(
     return {
       id: territoryId,
       name,
+      number: trimmedNumber === undefined || trimmedNumber === '' ? null : trimmedNumber,
       status: territoryRow.status,
       createdAt: territoryRow.created_at,
       revisions: [toRevision(revision)]
@@ -163,7 +176,7 @@ export async function createTerritory(
 export async function listTerritories(pool: TransactionalPool): Promise<readonly Territory[]> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<TerritoryRow>(
-      `SELECT t.id, t.name, t.status, t.created_at,
+      `SELECT t.id, t.name, t.number, t.status, t.created_at,
               (SELECT max(r.revision_number) FROM territory_revisions r WHERE r.territory_id = t.id)
                 AS current_revision_number
        FROM territories t
@@ -181,9 +194,10 @@ export async function getTerritoryWithRevisions(
     const { rows: territoryRows } = await client.query<{
       id: string;
       name: string;
+      number: string | null;
       status: TerritoryStatus;
       created_at: string;
-    }>(`SELECT id, name, status, created_at FROM territories WHERE id = $1`, [territoryId]);
+    }>(`SELECT id, name, number, status, created_at FROM territories WHERE id = $1`, [territoryId]);
     const territoryRow = territoryRows[0];
     if (!territoryRow) {
       throw new TerritoryNotFoundError(territoryId);
@@ -200,6 +214,7 @@ export async function getTerritoryWithRevisions(
     return {
       id: Number(territoryRow.id),
       name: territoryRow.name,
+      number: territoryRow.number,
       status: territoryRow.status,
       createdAt: territoryRow.created_at,
       revisions: revisionRows.map(toRevision)
@@ -276,5 +291,46 @@ export async function getTerritoryAuditHistory(
       throw new TerritoryNotFoundError(territoryId);
     }
     return queryTerritoryAuditHistory(client, territoryId);
+  });
+}
+
+/**
+ * Sets or replaces a territory's number. `territories` is a mutable table
+ * (only territory_revisions/progress_entries/audit_events are append-only),
+ * and the one BEFORE UPDATE trigger on it fires solely on reactivation, so
+ * this does not re-run the overlap check.
+ *
+ * No audit event is written: renaming a territory is not audited either, so
+ * auditing numbering alone would be incoherent. See the design doc.
+ */
+export async function setTerritoryNumber(
+  pool: TransactionalPool,
+  territoryId: number,
+  number: string
+): Promise<Territory> {
+  const trimmed = number.trim();
+  if (trimmed === '') {
+    throw new ValidationError('number must not be blank');
+  }
+
+  return withTransaction(pool, async (client) => {
+    try {
+      const { rows } = await client.query<TerritoryRow>(
+        `UPDATE territories SET number = $2
+         WHERE id = $1
+         RETURNING id, name, number, status, created_at,
+                   (SELECT max(r.revision_number) FROM territory_revisions r WHERE r.territory_id = territories.id)
+                     AS current_revision_number`,
+        [territoryId, trimmed]
+      );
+      const row = rows[0];
+      if (!row) {
+        throw new TerritoryNotFoundError(territoryId);
+      }
+      return toTerritory(row);
+    } catch (error) {
+      if (error instanceof TerritoryNotFoundError) throw error;
+      rethrowAsTerritoryNumberError(error);
+    }
   });
 }

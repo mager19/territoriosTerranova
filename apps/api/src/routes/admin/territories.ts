@@ -12,6 +12,7 @@ import {
   getTerritoryAuditHistory,
   getTerritoryWithRevisions,
   listTerritories,
+  setTerritoryNumber,
   submitRevision
 } from '../../domain/territories.js';
 import { isRecord, trySendDomainError } from './error-response.js';
@@ -28,7 +29,8 @@ export function registerAdminTerritoryRoutes(app: FastifyInstance, deps: AdminTe
       const territory = await createTerritory(deps.pool, {
         name: typeof body.name === 'string' ? body.name : '',
         geometry: body.geometry,
-        author: typeof body.author === 'string' ? body.author : ''
+        author: typeof body.author === 'string' ? body.author : '',
+        number: typeof body.number === 'string' ? body.number : undefined
       });
       return reply.status(201).send(territory);
     } catch (error) {
@@ -82,6 +84,25 @@ export function registerAdminTerritoryRoutes(app: FastifyInstance, deps: AdminTe
         author: typeof body.author === 'string' ? body.author : ''
       });
       return reply.status(201).send(revision);
+    } catch (error) {
+      if (trySendDomainError(reply, error)) return;
+      throw error;
+    }
+  });
+
+  app.patch<{ Params: { id: string } }>('/admin/territories/:id/number', async (request, reply) => {
+    const territoryId = Number(request.params.id);
+    if (!Number.isInteger(territoryId) || territoryId < 1) {
+      return reply.status(400).send({ error: 'invalid_request', message: 'territory id must be a positive integer' });
+    }
+    const body = isRecord(request.body) ? request.body : {};
+    const number = typeof body.number === 'string' ? body.number.trim() : '';
+    if (number === '') {
+      return reply.status(400).send({ error: 'invalid_request', message: 'number must be a non-blank string' });
+    }
+    try {
+      const territory = await setTerritoryNumber(deps.pool, territoryId, number);
+      return reply.status(200).send(territory);
     } catch (error) {
       if (trySendDomainError(reply, error)) return;
       throw error;
