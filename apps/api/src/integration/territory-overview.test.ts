@@ -122,30 +122,65 @@ function monthKey(date: Date): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
+// America/Bogota has been a fixed UTC-05:00 offset with no DST transitions
+// since 1993, so "current Bogota calendar month" can be derived with a plain
+// arithmetic shift instead of a timezone library — matching how the query
+// under test buckets via `now() AT TIME ZONE 'America/Bogota'`.
+function bogotaYearMonth(date: Date): { year: number; month: number } {
+  const bogota = new Date(date.getTime() - 5 * 60 * 60 * 1000);
+  return { year: bogota.getUTCFullYear(), month: bogota.getUTCMonth() + 1 };
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function monthKeyFromYearMonth(year: number, month: number): string {
+  return `${year}-${pad2(month)}`;
+}
+
+/** Last calendar day of the given 1-based month, e.g. lastDayOfMonth(2026, 2) === 28. */
+function lastDayOfMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** The Bogota calendar month immediately before the given one. */
+function previousYearMonth(year: number, month: number): { year: number; month: number } {
+  return month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
+}
+
 describe('getTerritoryOverview', () => {
   it('counts two entries on the same day as one visit', async () => {
     const id = await createTerritory('same-day', 'S-1');
-    await recordProgressAt(id, '2026-09-05 09:00:00');
-    await recordProgressAt(id, '2026-09-05 16:30:00');
+    const { year, month } = bogotaYearMonth(new Date());
+    // Day 1 exists in every month, so this stays inside the current Bogota
+    // month regardless of which day the suite happens to run on.
+    const datePrefix = `${year}-${pad2(month)}-01`;
+    await recordProgressAt(id, `${datePrefix} 09:00:00`);
+    await recordProgressAt(id, `${datePrefix} 16:30:00`);
 
     const rows = await getTerritoryOverview(pool, { months: 12, includeArchived: false });
     const row = rows.find((candidate) => candidate.id === id);
 
-    const september = row?.monthly.find((month) => month.month === '2026-09');
-    expect(september?.times).toBe(1);
+    const currentMonth = row?.monthly.find((entry) => entry.month === monthKeyFromYearMonth(year, month));
+    expect(currentMonth?.times).toBe(1);
   });
 
   it('keeps a 23:30 Bogota entry in its own month, not the next', async () => {
     const id = await createTerritory('timezone-edge', 'S-2');
-    // 2026-08-31 23:30 Bogota is 2026-09-01 04:30 UTC. Bucketing in UTC
-    // would file this under September and the strip would lie.
-    await recordProgressAt(id, '2026-08-31 23:30:00');
+    const current = bogotaYearMonth(new Date());
+    const previous = previousYearMonth(current.year, current.month);
+    const lastDay = lastDayOfMonth(previous.year, previous.month);
+    // 23:30 Bogota on the last day of `previous` is 04:30 UTC on the first
+    // day of `current`. Bucketing in UTC would file this under `current`
+    // and the strip would lie.
+    await recordProgressAt(id, `${previous.year}-${pad2(previous.month)}-${pad2(lastDay)} 23:30:00`);
 
     const rows = await getTerritoryOverview(pool, { months: 24, includeArchived: false });
     const row = rows.find((candidate) => candidate.id === id);
 
-    expect(row?.monthly.find((month) => month.month === '2026-08')?.times).toBe(1);
-    expect(row?.monthly.find((month) => month.month === '2026-09')?.times).toBe(0);
+    expect(row?.monthly.find((entry) => entry.month === monthKeyFromYearMonth(previous.year, previous.month))?.times).toBe(1);
+    expect(row?.monthly.find((entry) => entry.month === monthKeyFromYearMonth(current.year, current.month))?.times).toBe(0);
   });
 
   it('returns a territory with no progress at all, with zeros and a null lastWorkedAt', async () => {

@@ -71,6 +71,7 @@ export function TerritoryEditor({
   const [mapReady, setMapReady] = useState(false);
   const [draft, setDraft] = useState<DraftState>(createDraft());
   const [name, setName] = useState('');
+  const [number, setNumber] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Point-by-point editing is a separate, explicit mode rather than always
@@ -318,13 +319,20 @@ export function TerritoryEditor({
     setSaving(true);
     setError(null);
     try {
+      const trimmedNumber = number.trim();
       const saved = selectedTerritory
         ? await (async () => {
             const revision = await submitRevision(selectedTerritory.id, { geometry, author: DEFAULT_ACTOR });
             return { ...selectedTerritory, revisions: [...selectedTerritory.revisions, revision] };
           })()
-        : await createTerritory({ name: name.trim(), geometry, author: DEFAULT_ACTOR });
+        : await createTerritory({
+            name: name.trim(),
+            geometry,
+            author: DEFAULT_ACTOR,
+            ...(trimmedNumber === '' ? {} : { number: trimmedNumber })
+          });
       setDraft(resetDraft());
+      setNumber('');
       onSaved(saved);
     } catch (caught) {
       setError(caught instanceof ApiError ? describeApiError(caught) : 'Ocurrió un error inesperado; no se guardó nada.');
@@ -437,6 +445,13 @@ export function TerritoryEditor({
           <div>
             <label htmlFor="territory-name">Nombre del territorio</label>
             <input id="territory-name" value={name} onChange={(event) => setName(event.target.value)} required />
+          </div>
+        )}
+
+        {!selectedTerritory && (
+          <div>
+            <label htmlFor="territory-number">Número (opcional)</label>
+            <input id="territory-number" value={number} onChange={(event) => setNumber(event.target.value)} />
           </div>
         )}
 

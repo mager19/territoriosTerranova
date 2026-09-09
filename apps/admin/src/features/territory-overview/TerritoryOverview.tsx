@@ -100,6 +100,14 @@ export function TerritoryOverview(): JSX.Element {
     setSort((current) => (current.key === key ? { key, ascending: !current.ascending } : { key, ascending: true }));
   }
 
+  // The 'number' header never toggles: its key means "leave the server's
+  // ordering alone", which has no direction to flip. It stays a button
+  // because it is the only way back to server order once another column is
+  // sorted — but clicking it always lands on the same state.
+  function resetToServerOrder(): void {
+    setSort({ key: 'number', ascending: true });
+  }
+
   function sortIndicator(key: SortKey): string {
     if (sort.key !== key) return '';
     return sort.ascending ? ' ↑' : ' ↓';
@@ -172,9 +180,9 @@ export function TerritoryOverview(): JSX.Element {
         <table className="overview-table">
           <thead>
             <tr>
-              <th scope="col">
-                <button type="button" onClick={() => toggleSort('number')}>
-                  Nº{sortIndicator('number')}
+              <th scope="col" aria-sort={sort.key === 'number' ? 'ascending' : 'none'}>
+                <button type="button" onClick={resetToServerOrder}>
+                  Nº
                 </button>
               </th>
               <th scope="col">Territorio</th>
@@ -203,7 +211,10 @@ export function TerritoryOverview(): JSX.Element {
             {visibleRows.map((row) => (
               <tr key={row.id}>
                 <td>{row.number ?? '—'}</td>
-                <td>{row.name}</td>
+                <td>
+                  {row.name}
+                  {row.status === 'archived' && ' (archivado)'}
+                </td>
                 <td>{timesInSelectedMonth(row)}</td>
                 <td>
                   <MonthStrip monthly={row.monthly} />
