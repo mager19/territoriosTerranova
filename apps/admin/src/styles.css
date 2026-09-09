@@ -234,3 +234,36 @@ button[aria-current='true'] {
 form > div {
   margin-bottom: 4px;
 }
+
+/* Overview: the twelve-month activity strip. Four steps only — more stop
+   being distinguishable at this size. Colours come from the existing tokens;
+   no new palette values. */
+.month-strip {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.month-strip-block {
+  width: 10px;
+  height: 16px;
+  border-radius: 2px;
+  border: 1px solid var(--color-ash);
+  background: transparent;
+}
+
+.month-strip-block.level-1 {
+  background: var(--color-periwinkle-mist);
+  border-color: var(--color-periwinkle-mist);
+}
+
+.month-strip-block.level-2 {
+  background: var(--color-lake-blue);
+  border-color: var(--color-lake-blue);
+  opacity: 0.55;
+}
+
+.month-strip-block.level-3 {
+  background: var(--color-lake-blue);
+  border-color: var(--color-lake-blue);
+}
