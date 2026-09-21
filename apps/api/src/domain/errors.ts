@@ -69,34 +69,11 @@ export class ValidationError extends Error {
   }
 }
 
-export class AssignmentNotFoundError extends Error {
-  readonly code = 'assignment_not_found' as const;
-  constructor(assignmentId: number) {
-    super(`assignment ${assignmentId} does not exist`);
-    this.name = 'AssignmentNotFoundError';
-  }
-}
-
-/** Return/complete/reopen attempted against an assignment not in the required state. */
-export class AssignmentNotActiveError extends Error {
-  readonly code = 'assignment_not_active' as const;
-  constructor(message: string) {
-    super(message);
-    this.name = 'AssignmentNotActiveError';
-  }
-}
-
-/**
- * Exactly one active assignment per territory is a database-enforced
- * invariant (partial UNIQUE index, A2's migration). This is the typed,
- * distinct conflict response for the loser of a race to assign — or to
- * reopen into — the same territory, never an unmapped 23505.
- */
-export class ActiveAssignmentConflictError extends Error {
-  readonly code = 'active_assignment_conflict' as const;
-  constructor(message: string) {
-    super(message);
-    this.name = 'ActiveAssignmentConflictError';
+export class DuplicateTerritoryNumberError extends Error {
+  readonly code = 'duplicate_territory_number' as const;
+  constructor() {
+    super('territory number is already in use');
+    this.name = 'DuplicateTerritoryNumberError';
   }
 }
 
@@ -109,9 +86,7 @@ export type DomainError =
   | UnauthorizedOverlapError
   | TerritoryNotFoundError
   | ValidationError
-  | AssignmentNotFoundError
-  | AssignmentNotActiveError
-  | ActiveAssignmentConflictError;
+  | DuplicateTerritoryNumberError;
 
 export function isDomainError(error: unknown): error is DomainError {
   return (
@@ -122,8 +97,6 @@ export function isDomainError(error: unknown): error is DomainError {
     error instanceof UnauthorizedOverlapError ||
     error instanceof TerritoryNotFoundError ||
     error instanceof ValidationError ||
-    error instanceof AssignmentNotFoundError ||
-    error instanceof AssignmentNotActiveError ||
-    error instanceof ActiveAssignmentConflictError
+    error instanceof DuplicateTerritoryNumberError
   );
 }

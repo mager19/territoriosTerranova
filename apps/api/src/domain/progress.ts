@@ -1,6 +1,8 @@
 /**
- * Progress entries — slice 3 of the A3 brief. Append-only (A2's trigger
- * rejects UPDATE/DELETE/TRUNCATE on progress_entries, mirroring
+ * Progress entries — belong directly to a territory (2026-09-08: territories
+ * are shared to a group, not assigned to one person; see
+ * db/migrations/0004_remove_individual_assignment.sql). Append-only (A2's
+ * trigger rejects UPDATE/DELETE/TRUNCATE on progress_entries, mirroring
  * territory_revisions); this layer never attempts to mutate one, only
  * insert.
  *
@@ -14,7 +16,7 @@
 import type { LineString, Point, Polygon } from '@territorios/geo';
 
 import { recordAuditEvent } from './audit.js';
-import { AssignmentNotActiveError, AssignmentNotFoundError, ValidationError } from './errors.js';
+import { TerritoryNotFoundError, ValidationError } from './errors.js';
 import {
   validateOptionalPausePoint,
   validateOptionalRemainingArea,
@@ -25,7 +27,7 @@ import { withTransaction, type TransactionalPool } from '../db/transaction.js';
 
 export interface ProgressEntry {
   readonly id: number;
-  readonly assignmentId: number;
+  readonly territoryId: number;
   readonly recordedBy: string;
   readonly recordedAt: string;
   readonly note: string | null;
@@ -38,7 +40,7 @@ export interface ProgressEntry {
 
 interface ProgressEntryRow {
   readonly id: string;
-  readonly assignment_id: string;
+  readonly territory_id: string;
   readonly recorded_by: string;
   readonly recorded_at: string;
   readonly note: string | null;
@@ -50,7 +52,7 @@ interface ProgressEntryRow {
 function toProgressEntry(row: ProgressEntryRow): ProgressEntry {
   return {
     id: Number(row.id),
-    assignmentId: Number(row.assignment_id),
+    territoryId: Number(row.territory_id),
     recordedBy: row.recorded_by,
     recordedAt: row.recorded_at,
     note: row.note,
@@ -62,7 +64,7 @@ function toProgressEntry(row: ProgressEntryRow): ProgressEntry {
 }
 
 const PROGRESS_SELECT = `
-  SELECT id, assignment_id, recorded_by, recorded_at, note,
+  SELECT id, territory_id, recorded_by, recorded_at, note,
          ST_AsGeoJSON(pause_point)::json AS pause_point,
          ST_AsGeoJSON(route)::json AS route,
          ST_AsGeoJSON(remaining_area)::json AS remaining_area
@@ -79,7 +81,7 @@ export interface RecordProgressInput {
 
 export async function recordProgress(
   pool: TransactionalPool,
-  assignmentId: number,
+  territoryId: number,
   input: RecordProgressInput
 ): Promise<ProgressEntry> {
   const recordedBy = input.recordedBy.trim();
@@ -92,42 +94,33 @@ export async function recordProgress(
   const note = input.note?.trim() || null;
 
   return withTransaction(pool, async (client) => {
-    const { rows: assignmentRows } = await client.query<{ status: string }>(
-      `SELECT status FROM assignments WHERE id = $1`,
-      [assignmentId]
+    const { rows: territoryRows } = await client.query<{ id: string }>(
+      `SELECT id FROM territories WHERE id = $1`,
+      [territoryId]
     );
-    const assignment = assignmentRows[0];
-    if (!assignment) {
-      throw new AssignmentNotFoundError(assignmentId);
-    }
-    // Progress belongs to an in-progress field-work session. A returned or
-    // completed assignment is closed; further notes belong to a new
-    // assignment (opened by assigning again, or by reopening this one).
-    if (assignment.status !== 'active') {
-      throw new AssignmentNotActiveError(
-        `assignment ${assignmentId} is ${assignment.status}, not active; progress can only be recorded on an active assignment`
-      );
+    if (!territoryRows[0]) {
+      throw new TerritoryNotFoundError(territoryId);
     }
 
     try {
       const { rows } = await client.query<ProgressEntryRow>(
         `WITH inserted AS (
-           INSERT INTO progress_entries (assignment_id, recorded_by, note, pause_point, route, remaining_area)
+           INSERT INTO progress_entries (territory_id, recorded_by, note, pause_point, route, remaining_area)
            VALUES (
              $1, $2, $3,
              ST_SetSRID(ST_GeomFromGeoJSON($4), 4326),
              ST_SetSRID(ST_GeomFromGeoJSON($5), 4326),
              ST_SetSRID(ST_GeomFromGeoJSON($6), 4326)
            )
-           RETURNING id, assignment_id, recorded_by, recorded_at, note, pause_point, route, remaining_area
+           RETURNING id, territory_id, recorded_by, recorded_at, note, pause_point, route, remaining_area
          )
-         SELECT id, assignment_id, recorded_by, recorded_at, note,
+         SELECT id, territory_id, recorded_by, recorded_at, note,
                 ST_AsGeoJSON(pause_point)::json AS pause_point,
                 ST_AsGeoJSON(route)::json AS route,
                 ST_AsGeoJSON(remaining_area)::json AS remaining_area
          FROM inserted`,
         [
-          assignmentId,
+          territoryId,
           recordedBy,
           note,
           pausePoint ? JSON.stringify(pausePoint) : null,
@@ -142,8 +135,8 @@ export async function recordProgress(
       const entry = toProgressEntry(row);
 
       await recordAuditEvent(client, {
-        entityType: 'assignment',
-        entityId: assignmentId,
+        entityType: 'territory',
+        entityId: territoryId,
         action: 'progress_recorded',
         actor: recordedBy,
         reason: note ?? 'progress recorded',
@@ -164,20 +157,20 @@ export async function recordProgress(
 
 export async function listProgressEntries(
   pool: TransactionalPool,
-  assignmentId: number
+  territoryId: number
 ): Promise<readonly ProgressEntry[]> {
   return withTransaction(pool, async (client) => {
-    const { rows: assignmentRows } = await client.query<{ id: string }>(
-      `SELECT id FROM assignments WHERE id = $1`,
-      [assignmentId]
+    const { rows: territoryRows } = await client.query<{ id: string }>(
+      `SELECT id FROM territories WHERE id = $1`,
+      [territoryId]
     );
-    if (!assignmentRows[0]) {
-      throw new AssignmentNotFoundError(assignmentId);
+    if (!territoryRows[0]) {
+      throw new TerritoryNotFoundError(territoryId);
     }
 
     const { rows } = await client.query<ProgressEntryRow>(
-      `${PROGRESS_SELECT} WHERE assignment_id = $1 ORDER BY recorded_at ASC`,
-      [assignmentId]
+      `${PROGRESS_SELECT} WHERE territory_id = $1 ORDER BY recorded_at ASC`,
+      [territoryId]
     );
     return rows.map(toProgressEntry);
   });

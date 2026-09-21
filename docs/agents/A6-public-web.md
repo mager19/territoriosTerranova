@@ -55,10 +55,13 @@ bundle, smaller attack surface, less to audit.
   Design as if the viewer is a stranger, because eventually they are.
 - **Never fetch from an admin endpoint.** Not even for convenience during
   development. The bundle must contain no admin URL.
-- Do not render assignee identity, notes, timestamps, routes, pause points,
-  history, other territories, or AMVA attributes — even if the API mistakenly
-  returns them. **Report an unexpected field to the orchestrator immediately**:
-  that is an A4 defect and it is severe.
+- Do not render assignee identity, notes, timestamps, pause points, history,
+  other territories, or AMVA attributes — even if the API mistakenly returns
+  them. **Report an unexpected field to the orchestrator immediately**: that is
+  an A4 defect and it is severe.
+- The one exception is the progress **route** line (2026-09-08 product decision,
+  see AGENTS.md "Privacy rules"): render it as a distinct, bold progress line,
+  never confused with the territory boundary or the remaining-area fill.
 - No client-side storage of the token beyond the session.
 - Coordinate order is `[longitude, latitude]`.
 

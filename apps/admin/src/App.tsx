@@ -3,20 +3,27 @@ import { useState, type JSX } from 'react';
 import { TerritoryDetail } from './features/territory-detail/TerritoryDetail.js';
 import { TerritoryEditor } from './features/territory-editor/TerritoryEditor.js';
 import { TerritoryList } from './features/territory-list/TerritoryList.js';
+import { TerritoryOverview } from './features/territory-overview/TerritoryOverview.js';
 import type { Polygon } from '@territorios/geo';
 import type { TerritoryWithRevisions } from './api/client.js';
 
 /**
  * A5 brief, both slices: draw a territory over Bello and see its revision
- * history (slice 1); assign/return/complete/reopen, recorded progress, and
- * the full audit trail (slice 2). TerritoryDetail is shown only once a
- * territory is selected — a brand-new, unsaved draft has no assignment
- * history yet.
+ * history (slice 1); share it with the volunteer group, recorded progress,
+ * and the full audit trail (slice 2, reshaped 2026-09-08 — see
+ * TerritoryDetail's own comment). TerritoryDetail is shown only once a
+ * territory is selected — a brand-new, unsaved draft has no history yet.
+ *
+ * The app now has two views — the territory editor and the overview —
+ * held in local `view` state rather than routed with a URL. Two views do
+ * not justify pulling in a router dependency; the accepted tradeoff is
+ * that the overview has no URL of its own.
  */
 export function App(): JSX.Element {
   const [selected, setSelected] = useState<TerritoryWithRevisions | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [remainingAreaGeometry, setRemainingAreaGeometry] = useState<Polygon | null>(null);
+  const [view, setView] = useState<'territories' | 'overview'>('territories');
 
   function handleSelect(territory: TerritoryWithRevisions | null): void {
     setSelected(territory);
@@ -25,23 +32,41 @@ export function App(): JSX.Element {
 
   return (
     <main>
-      <h1>Territory Management — Admin</h1>
-      <TerritoryList selectedTerritoryId={selected?.id ?? null} onSelect={handleSelect} refreshToken={refreshToken} />
-      <TerritoryEditor
-        selectedTerritory={selected}
-        remainingAreaGeometry={remainingAreaGeometry}
-        onSaved={(territory) => {
-          setSelected(territory);
-          setRefreshToken((token) => token + 1);
-        }}
-      />
-      {selected && (
-        <TerritoryDetail
-          territoryId={selected.id}
-          refreshToken={refreshToken}
-          onRemainingAreaChange={setRemainingAreaGeometry}
-        />
+      <h1>Gestión de Territorios — Administración</h1>
+      <nav aria-label="Vistas" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+        <button type="button" onClick={() => setView('territories')} aria-current={view === 'territories'}>
+          Territorios
+        </button>
+        <button type="button" onClick={() => setView('overview')} aria-current={view === 'overview'}>
+          Resumen
+        </button>
+      </nav>
+      {view === 'territories' && (
+        <>
+          <TerritoryList
+            selectedTerritoryId={selected?.id ?? null}
+            onSelect={handleSelect}
+            refreshToken={refreshToken}
+          />
+          <TerritoryEditor
+            selectedTerritory={selected}
+            remainingAreaGeometry={remainingAreaGeometry}
+            onSaved={(territory) => {
+              setSelected(territory);
+              setRefreshToken((token) => token + 1);
+            }}
+          />
+          {selected && (
+            <TerritoryDetail
+              territoryId={selected.id}
+              boundary={selected.revisions.at(-1)?.geometry ?? null}
+              refreshToken={refreshToken}
+              onRemainingAreaChange={setRemainingAreaGeometry}
+            />
+          )}
+        </>
       )}
+      {view === 'overview' && <TerritoryOverview />}
     </main>
   );
 }

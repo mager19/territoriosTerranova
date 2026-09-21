@@ -24,12 +24,16 @@ exist; if you cite a file here, create it in the same change.
 - Application-owned geometry is RFC 7946 WGS84 GeoJSON and is the system of record.
   Map providers render, search, or supply optional reference overlays; they never
   own domain geometry.
-- Preserve immutable territory revisions, assignment events, progress entries, and
-  audit events. Derive current state rather than mutating history.
+- Preserve immutable territory revisions, progress entries, and audit events.
+  Derive current state rather than mutating history.
 - Validate geometry server-side. Reject invalid, zero-area, out-of-city, or
   unauthorized overlapping geometry rather than repairing it silently.
-- Ensure one active assignment per territory transactionally. Reopening requires an
-  auditable reason and preserves its referenced geometry revision.
+- Territories are shared to the volunteer group, not assigned to one named person
+  (2026-09-08 product decision, db/migrations/0004_remove_individual_assignment.sql
+  — superseding the original "one active assignment per territory" invariant this
+  bullet used to state). A share token and progress entries attach directly to the
+  territory; there is no per-person claim, no minimum, and no completion
+  requirement to enforce.
 - Keep administrative and public boundaries separate. A share token is a scoped
   public bearer secret, never an administrator principal.
 
@@ -47,9 +51,12 @@ reuse and freshness approval is still required before production use.
 
 ## Privacy rules
 
-- Public data must be minimized: expose only one active assignment's approved map
-  information. Exclude identity, notes, timestamps, routes, pause points, history,
-  other territories, and municipal attributes by default.
+- Public data must be minimized: expose only one territory's approved map
+  information. Exclude identity, notes, timestamps, pause points, history, other
+  territories, and municipal attributes by default. The one deliberate exception is
+  the progress route line (a LineString): exposed by explicit product decision
+  (2026-09-08) because a volunteer's own resume-progress use case needs it —
+  see docs/agents/A4-sharing.md and A6-public-web.md for the exact allowlist.
 - Protect public endpoints with opaque high-entropy tokens, hash storage,
   revocation, optional expiry, HTTPS, rate limits, `no-store`, `noindex`, a
   restrictive referrer policy, and short justified access-log retention.
@@ -62,7 +69,7 @@ attempt did exactly that for its API and E2E suites, producing a green run that
 asserted nothing. If a surface has no tests, it has no test script.
 
 - Unit tests for validation, token hashing, DTO minimization, and lifecycle transitions.
-- PostGIS integration tests for containment, overlap, concurrent assignment,
+- PostGIS integration tests for containment, overlap, concurrent geometry writes,
   immutable history, and share-link revocation/expiry.
 - End-to-end tests for admin history and public-scope boundaries, including the
   absence of sensitive fields.

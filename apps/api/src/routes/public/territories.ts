@@ -64,12 +64,16 @@ export async function registerPublicTerritoryRoutes(
 
       // Explicit allowlist, field by field — never spread a domain
       // object. This is the complete public response shape; see
-      // sharing/repository.test.ts for the test that pins it.
+      // sharing/repository.test.ts for the test that pins it. `route` is
+      // the one deliberate exception to the "exclude everything but the
+      // territory/coverage shape" rule — 2026-09-08 product decision,
+      // AGENTS.md "Privacy rules".
       return reply.status(200).send({
         territoryName: view.territoryName,
         boundary: view.boundary,
         remainingArea: view.remainingArea,
-        remainingAreaStatus: view.remainingAreaStatus
+        remainingAreaStatus: view.remainingAreaStatus,
+        route: view.route
       });
     }
   );

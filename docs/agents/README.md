@@ -208,6 +208,80 @@ These block production, not development. Do not let an agent invent an answer.
 - Reopen authority and audit-review process
 - Written AMVA/Bello reuse and freshness approval
 
+## Deferred product scope — future work
+
+Confirmed gaps against the original product vision, found while comparing the
+merged A1–A5 build against it on 2026-09-08. Not blocking A6/A7; parked here
+for later planning.
+
+- **Territory composition from real manzanas.** Today a territory is a
+  freehand polygon drawn inside a barrio boundary, not a set of actual
+  cadastral manzana (city block) polygons. AMVA's POT_Bello `Manzanas` layer
+  (id 15) carries only `OBJECTID`, `AREA`, `PERIMETER` — no name or code —
+  which is why it was never seeded. **Updated 2026-09-09: a usable source
+  now exists.** A different, previously unknown AMVA service —
+  `portalidem.metropol.gov.co/server/rest/services/Bello_Catastro/MapServer`
+  — has a `Manzanas` layer (id 3) with real `MANZANA` codes linked to a
+  `BARRIO` code, plus `Barrios` (id 2), `Construcciones` (5/6) and `Predios`
+  (7/8). Verified live: Guasimalito resolves to 24 manzana polygons in WGS84.
+  One caveat found and unresolved — `MANZANA` is **not unique** within a
+  barrio (code `0011` appears on 8 separate polygons there), so whether those
+  are fragments of one block or a data defect needs investigating before any
+  composition logic is built on it. See also the barrio-to-territory gap
+  below, which is the prerequisite either way.
+- **No barrio-to-territory relationship in the data model.** Raised
+  2026-09-09 when an administrator drew Guasimalito and reported it looked
+  far too small: a territory is one manzana by design, so a barrio needs
+  several — but nothing in the schema expresses "these territories together
+  cover this barrio". Territory names are free text. The 2026-09-09 barrio
+  reference overlay (`GET /admin/reference/barrios`) is a drawing aid only;
+  it does not make "how much of Guasimalito is covered?" answerable. Likely
+  a `barrio` reference on `territories`; small change, and it also unlocks
+  the statistics item below.
+- **Scheduled/planned work date on a territory.** There is no planned-date
+  field at all — nothing expresses "this territory is worked on [date]".
+  (Originally noted against `assignments.assigned_at`, a table dropped by
+  `0004`; the gap itself is unchanged.)
+- **Statistics per territory over time.** No aggregation endpoint or view
+  exists. The raw timestamped data is there (`progress_entries`,
+  `audit_events`), so this is additive, not a schema change.
+- **Color-coded staleness by time since last worked.** Raised 2026-09-08
+  during A6 live testing: territory boundary fill uses a placeholder purple
+  tint (`apps/public/src/map.ts`) meant to eventually carry meaning — e.g.
+  green/yellow/red by how long a territory has gone unworked. Needs a
+  "last worked" query (derivable from `progress_entries` timestamps, no
+  schema change) and an agreed color scale/thresholds. Note the admin
+  territory LIST shows no state at all either — to decide what to send the
+  group next week, an administrator must open each territory one by one.
+- **Snapping ("magnetic") when drawing a route or territory geometry.**
+  Raised 2026-09-08: a manually-recorded demo route visibly didn't hug the
+  real block edge. **Partially resolved 2026-09-08** — point-by-point vertex
+  editing now exists (drag to move, click an edge to insert, double-click to
+  remove) in both the territory editor and ProgressRecorder. Snap-to-boundary
+  does not: geometry is still placed by eye. Overpass was checked
+  2026-09-08 as a snap target and the OSM street network over central Bello
+  is dense enough (983 highway segments, 564 named, over ~2km²) — unlike its
+  buildings, which are far too sparse (91) to be useful for anything.
+
+### Open questions for the team — ask before building
+
+- **Should a volunteer be able to record progress from the share link?**
+  Raised 2026-09-09; deliberately parked for the team to decide, not a
+  technical blocker. Today progress is admin-only: the volunteer who walked
+  the territory tells the administrator, who redraws the route from a verbal
+  description. That makes the administrator a bottleneck for 10–15 people and
+  means the progress data is probably not being captured at all in practice —
+  which leaves the whole coverage feature, including the public view's
+  covered-stretch line, effectively decorative.
+  The infrastructure is mostly there: the token is already scoped to a
+  territory, the public view already renders the map, and route drawing
+  already exists in `draft.ts`.
+  **The decision to make:** the share token is currently a read-only bearer
+  secret, and this would make it write-capable. The link circulates freely in
+  a group chat and could leak beyond it. Mitigating: `progress_entries` is
+  append-only and audited, so the worst case is a wrong line that is visible
+  and destroys nothing. Not a decision to take unilaterally.
+
 ## Required reading for every agent
 
 - `PRD.md` — product intent, scope, non-goals

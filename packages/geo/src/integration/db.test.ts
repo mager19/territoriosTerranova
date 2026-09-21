@@ -144,17 +144,25 @@ describe('migration runner', () => {
       const tables = await client.query<{ table_name: string }>(
         `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`
       );
-      expect(tables.rows.map((row) => row.table_name)).toEqual(
+      const tableNames = tables.rows.map((row) => row.table_name);
+      expect(tableNames).toEqual(
         expect.arrayContaining([
-          'assignments',
           'audit_events',
           'progress_entries',
+          'reference_barrios',
+          'reference_municipal_boundary',
           'schema_migrations',
           'share_tokens',
           'territories',
           'territory_revisions'
         ])
       );
+      // Absence is asserted, not merely un-asserted: 0004 DROPs `assignments`
+      // (territories are shared to a group, never assigned to one person), so
+      // a schema built from empty must not have it. Without this, a migration
+      // that silently failed to apply — or a reintroduced table — would leave
+      // every other assertion here still green.
+      expect(tableNames).not.toContain('assignments');
     });
   });
 
@@ -283,6 +291,32 @@ describe('geometry constraints are enforced by the database', () => {
   });
 });
 
+describe('territory number', () => {
+  it('rejects two territories sharing a number', async () => {
+    await withClient(async (client) => {
+      await client.query(`INSERT INTO territories (name, number) VALUES ('number-a', 'T-1')`);
+      try {
+        await client.query(`INSERT INTO territories (name, number) VALUES ('number-b', 'T-1')`);
+        expect.unreachable('duplicate territory number was accepted');
+      } catch (error) {
+        const pgError = asPgError(error);
+        expect(pgError.code).toBe('23505');
+        expect(pgError.constraint).toBe('territories_number_unique');
+      }
+    });
+  });
+
+  it('allows many territories with no number at all', async () => {
+    await withClient(async (client) => {
+      await client.query(`INSERT INTO territories (name) VALUES ('unnumbered-a'), ('unnumbered-b')`);
+      const { rows } = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM territories WHERE number IS NULL AND name LIKE 'unnumbered-%'`
+      );
+      expect(rows[0]?.n).toBe(2);
+    });
+  });
+});
+
 describe('territory_revisions is immutable', () => {
   it('rejects UPDATE of any column, including geom', async () => {
     await withClient(async (client) => {
@@ -349,153 +383,6 @@ describe('territory_revisions is immutable', () => {
       );
       expect(current.rows[0]?.revision_number).toBe(2);
     });
-  });
-});
-
-describe('assignments reference a specific revision', () => {
-  it('rejects an assignment whose revision belongs to another territory (composite FK)', async () => {
-    await withClient(async (client) => {
-      const territoryA = await createTerritory(client, 'fk-territory-a');
-      const territoryB = await createTerritory(client, 'fk-territory-b');
-      const revisionA = await insertRevision(client, territoryA, 1, VALID_SQUARE);
-
-      try {
-        await client.query(
-          `INSERT INTO assignments (territory_id, territory_revision_id, assigned_to, assigned_by)
-           VALUES ($1, $2, 'worker', 'admin')`,
-          [territoryB, revisionA]
-        );
-        expect.unreachable('cross-territory revision reference was accepted');
-      } catch (error) {
-        const pgError = asPgError(error);
-        expect(pgError.code).toBe('23503');
-        expect(pgError.constraint).toBe('assignments_revision_belongs_to_territory');
-      }
-    });
-  });
-
-  it('rejects completion without a timestamp', async () => {
-    await withClient(async (client) => {
-      const territoryId = await createTerritory(client, 'completion-ts');
-      const revisionId = await insertRevision(client, territoryId, 1, VALID_SQUARE);
-      try {
-        await client.query(
-          `INSERT INTO assignments (territory_id, territory_revision_id, assigned_to, assigned_by, status)
-           VALUES ($1, $2, 'worker', 'admin', 'completed')`,
-          [territoryId, revisionId]
-        );
-        expect.unreachable('completed assignment without completed_at was accepted');
-      } catch (error) {
-        expect(asPgError(error).code).toBe('23514');
-        expect(asPgError(error).constraint).toBe('assignments_completed_has_timestamp');
-      }
-    });
-  });
-
-  it('requires an auditable reason to reopen, and preserves the revision reference', async () => {
-    await withClient(async (client) => {
-      const territoryId = await createTerritory(client, 'reopen-reason');
-      const revisionId = await insertRevision(client, territoryId, 1, VALID_SQUARE);
-      const { rows } = await client.query<{ id: string }>(
-        `INSERT INTO assignments (territory_id, territory_revision_id, assigned_to, assigned_by, status, completed_at)
-         VALUES ($1, $2, 'worker', 'admin', 'completed', now())
-         RETURNING id`,
-        [territoryId, revisionId]
-      );
-      const assignmentId = Number(rows[0]?.id);
-
-      for (const reason of [undefined, '   ']) {
-        try {
-          await client.query(`UPDATE assignments SET status = 'active', reopen_reason = $2 WHERE id = $1`, [
-            assignmentId,
-            reason
-          ]);
-          expect.unreachable('reopen without a reason was accepted');
-        } catch (error) {
-          const pgError = asPgError(error);
-          expect(pgError.code).toBe('P0001');
-          expect(pgError.message).toMatch(/requires a reopen_reason/);
-        }
-      }
-
-      await client.query(
-        `UPDATE assignments SET status = 'active', reopen_reason = 'follow-up visit needed' WHERE id = $1`,
-        [assignmentId]
-      );
-      const reopened = await client.query<{ status: string; territory_revision_id: string }>(
-        'SELECT status, territory_revision_id FROM assignments WHERE id = $1',
-        [assignmentId]
-      );
-      expect(reopened.rows[0]?.status).toBe('active');
-      // AGENTS.md: reopening preserves the referenced geometry revision.
-      expect(Number(reopened.rows[0]?.territory_revision_id)).toBe(revisionId);
-    });
-  });
-});
-
-describe('at most one active assignment per territory, under concurrency', () => {
-  it('two concurrent transactions produce exactly one active assignment', async () => {
-    const { territoryId, revisionId } = await withClient(async (client) => {
-      const created = await createTerritory(client, 'concurrency-one-active');
-      const revision = await insertRevision(client, created, 1, VALID_SQUARE);
-      return { territoryId: created, revisionId: revision };
-    });
-
-    const first = new Client({ connectionString: databaseUrl });
-    const second = new Client({ connectionString: databaseUrl });
-    await first.connect();
-    await second.connect();
-
-    const assignInTransaction = async (client: Client, worker: string, holdMs: number) => {
-      await client.query('BEGIN');
-      await client.query(
-        `INSERT INTO assignments (territory_id, territory_revision_id, assigned_to, assigned_by, status)
-         VALUES ($1, $2, $3, 'admin', 'active')`,
-        [territoryId, revisionId, worker]
-      );
-      // Hold the transaction open so the two writers genuinely overlap:
-      // the loser blocks on the partial unique index until the winner commits.
-      if (holdMs > 0) {
-        await sleep(holdMs);
-      }
-      await client.query('COMMIT');
-    };
-
-    const results = await Promise.allSettled([
-      assignInTransaction(first, 'worker-1', 750),
-      assignInTransaction(second, 'worker-2', 0)
-    ]);
-
-    for (const client of [first, second]) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      await client.end();
-    }
-
-    const fulfilled = results.filter((result) => result.status === 'fulfilled');
-    const rejected = results.filter(
-      (result): result is PromiseRejectedResult => result.status === 'rejected'
-    );
-
-    expect(fulfilled).toHaveLength(1);
-    expect(rejected).toHaveLength(1);
-    const loserError = asPgError(rejected[0]?.reason);
-    expect(loserError.code).toBe('23505');
-    expect(loserError.constraint).toBe('assignments_one_active_per_territory');
-
-    const activeCount = await withClient(async (client) => {
-      const { rows } = await client.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM assignments WHERE territory_id = $1 AND status = 'active'`,
-        [territoryId]
-      );
-      return rows[0]?.n ?? -1;
-    });
-
-    // Verbatim evidence line for the handoff.
-    console.log(
-      `[concurrency] winner=1 loserSqlState=${loserError.code} loserConstraint=${loserError.constraint} activeAssignmentsForTerritory=${activeCount}`
-    );
-
-    expect(activeCount).toBe(1);
   });
 });
 

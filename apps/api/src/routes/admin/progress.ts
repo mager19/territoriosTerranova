@@ -1,8 +1,9 @@
 /**
- * Admin progress-entry routes — slice 3 of the A3 brief. Progress is scoped
- * to its assignment (progress_entries.assignment_id is the real FK; there
- * is no territory_id on the table), matching how return/complete/reopen
- * are also assignment-scoped in slice 2.
+ * Admin progress-entry routes. Progress is scoped directly to its
+ * territory (progress_entries.territory_id) — 2026-09-08: territories are
+ * shared to a group, not assigned to one person, so there is no assignment
+ * to scope progress to anymore (db/migrations/
+ * 0004_remove_individual_assignment.sql).
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -16,14 +17,14 @@ export interface AdminProgressRouteDeps {
 }
 
 export function registerAdminProgressRoutes(app: FastifyInstance, deps: AdminProgressRouteDeps): void {
-  app.post<{ Params: { id: string } }>('/admin/assignments/:id/progress', async (request, reply) => {
-    const assignmentId = Number(request.params.id);
-    if (!Number.isInteger(assignmentId) || assignmentId < 1) {
-      return reply.status(400).send({ error: 'invalid_request', message: 'assignment id must be a positive integer' });
+  app.post<{ Params: { id: string } }>('/admin/territories/:id/progress', async (request, reply) => {
+    const territoryId = Number(request.params.id);
+    if (!Number.isInteger(territoryId) || territoryId < 1) {
+      return reply.status(400).send({ error: 'invalid_request', message: 'territory id must be a positive integer' });
     }
     const body = isRecord(request.body) ? request.body : {};
     try {
-      const entry = await recordProgress(deps.pool, assignmentId, {
+      const entry = await recordProgress(deps.pool, territoryId, {
         recordedBy: typeof body.recordedBy === 'string' ? body.recordedBy : '',
         note: typeof body.note === 'string' ? body.note : undefined,
         pausePoint: body.pausePoint,
@@ -37,13 +38,13 @@ export function registerAdminProgressRoutes(app: FastifyInstance, deps: AdminPro
     }
   });
 
-  app.get<{ Params: { id: string } }>('/admin/assignments/:id/progress', async (request, reply) => {
-    const assignmentId = Number(request.params.id);
-    if (!Number.isInteger(assignmentId) || assignmentId < 1) {
-      return reply.status(400).send({ error: 'invalid_request', message: 'assignment id must be a positive integer' });
+  app.get<{ Params: { id: string } }>('/admin/territories/:id/progress', async (request, reply) => {
+    const territoryId = Number(request.params.id);
+    if (!Number.isInteger(territoryId) || territoryId < 1) {
+      return reply.status(400).send({ error: 'invalid_request', message: 'territory id must be a positive integer' });
     }
     try {
-      const entries = await listProgressEntries(deps.pool, assignmentId);
+      const entries = await listProgressEntries(deps.pool, territoryId);
       return reply.status(200).send({ entries });
     } catch (error) {
       if (trySendDomainError(reply, error)) return;

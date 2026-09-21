@@ -1,10 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-import { addVertex, closeDraft, createDraft, draftToPolygonGeoJSON, resetDraft, undoVertex } from './draft.js';
+import {
+  addVertex,
+  closeDraft,
+  createDraft,
+  draftFromPolygon,
+  draftToLineStringGeoJSON,
+  draftToPolygonGeoJSON,
+  insertVertex,
+  moveVertex,
+  removeVertexAt,
+  resetDraft,
+  undoVertex
+} from './draft.js';
 
 const V1 = [-75.574, 6.357] as const;
 const V2 = [-75.572, 6.357] as const;
 const V3 = [-75.572, 6.359] as const;
+const V4 = [-75.574, 6.359] as const;
 
 describe('addVertex / undoVertex', () => {
   it('appends vertices in order', () => {
@@ -136,5 +149,126 @@ describe('draftToPolygonGeoJSON', () => {
       expect(lat).toBeGreaterThan(0);
       expect(lat).toBeLessThan(10);
     }
+  });
+});
+
+describe('draftFromPolygon', () => {
+  it('seeds a closed draft from an existing ring, dropping the repeated closing position', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V1]]);
+    expect(state.isClosed).toBe(true);
+    expect(state.vertices).toEqual([V1, V2, V3]);
+  });
+
+  it('the seeded draft converts back to the same ring on save', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V1]]);
+    expect(draftToPolygonGeoJSON(state)).toEqual({ type: 'Polygon', coordinates: [[V1, V2, V3, V1]] });
+  });
+
+  it('a seeded draft is not extendable by clicking — same rule as any other closed draft', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V1]]);
+    const nextVertex = [-75.57, 6.36] as const;
+    const restarted = addVertex(state, nextVertex);
+    expect(restarted.vertices).toEqual([nextVertex]);
+  });
+});
+
+describe('moveVertex', () => {
+  it('replaces the vertex at the given index, leaving the others untouched', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V1]]);
+    const moved = moveVertex(state, 1, [-75.5, 6.4]);
+    expect(moved.vertices).toEqual([V1, [-75.5, 6.4], V3]);
+  });
+
+  it('preserves the closed flag — moving a point is not the same as re-opening the draft', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V1]]);
+    const moved = moveVertex(state, 0, [-75.5, 6.4]);
+    expect(moved.isClosed).toBe(true);
+  });
+
+  it('is a no-op for an out-of-range index rather than throwing', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V1]]);
+    expect(moveVertex(state, 99, [-75.5, 6.4])).toEqual(state);
+    expect(moveVertex(state, -1, [-75.5, 6.4])).toEqual(state);
+  });
+});
+
+describe('insertVertex', () => {
+  it('inserts a new vertex right after the given index', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V1]]);
+    const inserted = insertVertex(state, 0, [-75.573, 6.357]);
+    expect(inserted.vertices).toEqual([V1, [-75.573, 6.357], V2, V3]);
+  });
+
+  it('inserting after the last vertex lands on the closing edge, back at the start', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V1]]);
+    const inserted = insertVertex(state, 2, [-75.573, 6.358]);
+    expect(inserted.vertices).toEqual([V1, V2, V3, [-75.573, 6.358]]);
+  });
+
+  it('preserves the closed flag', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V1]]);
+    expect(insertVertex(state, 0, [-75.573, 6.357]).isClosed).toBe(true);
+  });
+
+  it('is a no-op for an out-of-range index rather than throwing', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V1]]);
+    expect(insertVertex(state, 99, [-75.573, 6.357])).toEqual(state);
+    expect(insertVertex(state, -1, [-75.573, 6.357])).toEqual(state);
+  });
+});
+
+describe('removeVertexAt', () => {
+  it('removes the vertex at the given index, leaving the others in order', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V4, V1]]);
+    const removed = removeVertexAt(state, 1);
+    expect(removed.vertices).toEqual([V1, V3, V4]);
+  });
+
+  it('preserves the closed flag', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V4, V1]]);
+    expect(removeVertexAt(state, 1).isClosed).toBe(true);
+  });
+
+  it('refuses to go below the 3-vertex minimum a valid ring needs', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V1]]);
+    expect(removeVertexAt(state, 0)).toEqual(state);
+  });
+
+  it('accepts a lower minimum for a route, which only needs 2 points (RFC 7946 LineString)', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V1]]); // 3 vertices before closing
+    const removed = removeVertexAt(state, 0, 2);
+    expect(removed.vertices).toEqual([V2, V3]);
+    expect(removeVertexAt(removed, 0, 2)).toEqual(removed); // now at the 2-point floor
+  });
+
+  it('is a no-op for an out-of-range index rather than throwing', () => {
+    const state = draftFromPolygon([[V1, V2, V3, V4, V1]]);
+    expect(removeVertexAt(state, 99)).toEqual(state);
+    expect(removeVertexAt(state, -1)).toEqual(state);
+  });
+});
+
+describe('draftToLineStringGeoJSON', () => {
+  it("returns null for fewer than 2 vertices — RFC 7946's own LineString minimum", () => {
+    let state = createDraft();
+    expect(draftToLineStringGeoJSON(state)).toBeNull();
+    state = addVertex(state, V1);
+    expect(draftToLineStringGeoJSON(state)).toBeNull();
+  });
+
+  it('converts an open (never-closed) draft into a LineString, in click order', () => {
+    let state = createDraft();
+    state = addVertex(state, V1);
+    state = addVertex(state, V2);
+    state = addVertex(state, V3);
+    expect(draftToLineStringGeoJSON(state)).toEqual({ type: 'LineString', coordinates: [V1, V2, V3] });
+  });
+
+  it('does not require the draft to be closed — a route never closes', () => {
+    let state = createDraft();
+    state = addVertex(state, V1);
+    state = addVertex(state, V2);
+    expect(state.isClosed).toBe(false);
+    expect(draftToLineStringGeoJSON(state)).not.toBeNull();
   });
 });

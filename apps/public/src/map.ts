@@ -1,0 +1,207 @@
+/**
+ * MapLibre rendering glue — display-only, no drawing. Basemap config
+ * verified against the live service and reused from
+ * docs/map-references.md (same values as the admin app). OSM's public
+ * tile server is rate-limited and NOT approved for production traffic —
+ * fine for development only (docs/agents/README.md "Still open").
+ *
+ * Kept thin on purpose: everything here that touches a real MapLibre Map
+ * instance needs WebGL and is not exercised in unit tests (the same
+ * separation A5 kept between draft.ts and map-editor.ts). computeBoundingBox
+ * below is the one piece of real logic in this file, and it is pure, so it
+ * IS unit-tested (map.test.ts).
+ */
+
+import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
+import type { Feature, FeatureCollection, Geometry, LineString, Polygon, Position } from '@territorios/geo';
+
+export const BELLO_CENTER: [number, number] = [-75.5636, 6.3373];
+export const BELLO_ZOOM = 13;
+export const OSM_ATTRIBUTION = '© OpenStreetMap contributors';
+
+export function createBelloMapStyle(): StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      'osm-raster': {
+        type: 'raster',
+        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: OSM_ATTRIBUTION
+      }
+    },
+    layers: [{ id: 'osm-raster-layer', type: 'raster', source: 'osm-raster' }]
+  };
+}
+
+export interface BoundingBox {
+  readonly west: number;
+  readonly east: number;
+  readonly south: number;
+  readonly north: number;
+}
+
+/** Pure WGS84 bounding-box math over a polygon's positions — no map instance needed. */
+export function computeBoundingBox(geometry: Polygon): BoundingBox {
+  const positions: readonly Position[] = geometry.coordinates.flat();
+  const first = positions[0];
+  if (!first) {
+    throw new Error('cannot compute a bounding box for an empty polygon');
+  }
+
+  let west = first[0];
+  let east = first[0];
+  let south = first[1];
+  let north = first[1];
+  for (const [lon, lat] of positions) {
+    west = Math.min(west, lon);
+    east = Math.max(east, lon);
+    south = Math.min(south, lat);
+    north = Math.max(north, lat);
+  }
+  return { west, east, south, north };
+}
+
+export interface LatLon {
+  readonly lat: number;
+  readonly lon: number;
+}
+
+/**
+ * A single reference point for "where does this territory start" — the
+ * bounding box's center, not any particular vertex (no vertex is
+ * privileged as "the start" in the data model, and for a block-sized
+ * territory the difference from any real point on it is a few dozen
+ * meters at most — irrelevant for walking directions or a distance
+ * readout).
+ */
+export function boundingBoxCenter(box: BoundingBox): LatLon {
+  return { lat: (box.south + box.north) / 2, lon: (box.west + box.east) / 2 };
+}
+
+/**
+ * A plain "get directions" deep link — not an API integration. The
+ * browser/OS decides what opens it (the installed Google Maps app, or its
+ * web fallback); this app has no dependency on Google beyond this one
+ * outbound URL, the same category as a `mailto:` or `tel:` link. Chosen
+ * over a `geo:` URI because `geo:` has no reliable handler on iOS Safari —
+ * this format works cross-platform without guessing which maps app (if
+ * any) is installed.
+ */
+export function directionsUrl(destination: LatLon): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lon}&travelmode=walking`;
+}
+
+const EARTH_RADIUS_METERS = 6371000;
+
+/** Great-circle distance in meters — good enough at block/city scale, no need for an ellipsoidal model here. */
+export function haversineMeters(a: LatLon, b: LatLon): number {
+  const toRadians = (degrees: number): number => (degrees * Math.PI) / 180;
+  const deltaLat = toRadians(b.lat - a.lat);
+  const deltaLon = toRadians(b.lon - a.lon);
+  const lat1 = toRadians(a.lat);
+  const lat2 = toRadians(b.lat);
+  const h = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+  return 2 * EARTH_RADIUS_METERS * Math.asin(Math.sqrt(h));
+}
+
+function emptyFeatureCollection(): FeatureCollection {
+  return { type: 'FeatureCollection', features: [] };
+}
+
+/**
+ * A territory is a block (manzana): its boundary edges ARE the houses —
+ * the streets a field worker walks door to door. Progress is therefore a
+ * property of the PERIMETER, not an interior area: two layers, not three.
+ *
+ * - territory-boundary: the whole block outline, neutral gray and dashed
+ *   — "this is the block, undifferentiated" (the plain baseline in the
+ *   worker's own reference sketch).
+ * - progress-route: a bold, near-black line drawn on top of exactly the
+ *   stretch of that perimeter already covered. Where the boundary shows
+ *   through gray and dashed underneath, that side is not done yet — there
+ *   is no separate "remaining" shape to draw or keep in sync.
+ *
+ * remaining-area (a filled interior polygon) stays supported in the data
+ * model and this file (A3's domain, A4's contract) for a genuinely
+ * different case — open ground that isn't a walkable perimeter — but is
+ * deliberately understated here so it never visually competes with the
+ * route line for the common manzana case.
+ */
+export function installTerritoryLayers(map: MapLibreMap): void {
+  map.addSource('territory-boundary', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  // A light purple tint, not gray — a placeholder for the future
+  // staleness-by-color scheme (docs/agents/README.md "Deferred product
+  // scope": color will eventually encode how long a territory has gone
+  // unworked). Today it is purely decorative and carries no meaning.
+  map.addLayer({
+    id: 'territory-boundary-fill',
+    type: 'fill',
+    source: 'territory-boundary',
+    paint: { 'fill-color': '#8e5ec9', 'fill-opacity': 0.1 }
+  });
+  map.addLayer({
+    id: 'territory-boundary-line',
+    type: 'line',
+    source: 'territory-boundary',
+    paint: { 'line-color': '#9a9a9a', 'line-width': 2, 'line-dasharray': [2, 2] }
+  });
+
+  // Understated on purpose (see doc comment above) — only meaningful when
+  // progress is genuinely area-shaped rather than perimeter-shaped. Empty
+  // when remainingArea is null; that is the visual counterpart of the
+  // "unknown" status text, it never renders a guessed shape (AGENTS.md:
+  // coverage is never inferred).
+  map.addSource('remaining-area', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer({
+    id: 'remaining-area-fill',
+    type: 'fill',
+    source: 'remaining-area',
+    paint: { 'fill-color': '#c9c9c9', 'fill-opacity': 0.35 }
+  });
+
+  // The actual progress line — bold and near-black, the darkest element
+  // on the map, deliberately (2026-09-08 product decision, AGENTS.md
+  // "Privacy rules"): this is what a field worker actually walked, so
+  // far, drawn last so it always sits on top of the plain gray boundary.
+  // Absent (no progress entry recorded a route) means this layer stays
+  // empty, same "never a guessed shape" rule as remaining-area.
+  map.addSource('progress-route', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer({
+    id: 'progress-route-line',
+    type: 'line',
+    source: 'progress-route',
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#161616', 'line-width': 4 }
+  });
+}
+
+function setSource(map: MapLibreMap, sourceId: string, geometry: Geometry | null): void {
+  const source = map.getSource(sourceId);
+  if (!source || !('setData' in source)) return;
+  const feature: Feature = { type: 'Feature', properties: null, geometry };
+  const data: FeatureCollection = geometry === null ? emptyFeatureCollection() : { type: 'FeatureCollection', features: [feature] };
+  (source as { setData(data: GeoJSON.GeoJSON): void }).setData(data as unknown as GeoJSON.GeoJSON);
+}
+
+export function renderTerritory(
+  map: MapLibreMap,
+  boundary: Polygon,
+  remainingArea: Polygon | null,
+  route: LineString | null
+): void {
+  setSource(map, 'territory-boundary', boundary);
+  setSource(map, 'remaining-area', remainingArea);
+  setSource(map, 'progress-route', route);
+}
+
+export function fitToBoundingBox(map: MapLibreMap, box: BoundingBox): void {
+  map.fitBounds(
+    [
+      [box.west, box.south],
+      [box.east, box.north]
+    ],
+    { padding: 32, animate: false }
+  );
+}

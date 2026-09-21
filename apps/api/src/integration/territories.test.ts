@@ -39,6 +39,18 @@ const VALID_SQUARE = {
     ]
   ]
 };
+const FAR_SQUARE = {
+  type: 'Polygon',
+  coordinates: [
+    [
+      [-75.560, 6.340],
+      [-75.558, 6.340],
+      [-75.558, 6.342],
+      [-75.560, 6.342],
+      [-75.560, 6.340]
+    ]
+  ]
+};
 // A simple 4-point bowtie (swapping two adjacent corners of a valid
 // quadrilateral) ALWAYS nets to zero signed area — its two triangular lobes
 // have equal size and opposite winding, so they cancel exactly (verified
@@ -311,5 +323,53 @@ describe('POST /admin/territories/:id/revisions', () => {
     });
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ error: 'territory_not_found' });
+  });
+});
+
+describe('territory numbering', () => {
+  it('creates with a number, then changes it', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/admin/territories',
+      payload: { name: 'numbered-territory', geometry: VALID_SQUARE, author: 'admin-1', number: 'T-7' }
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().number).toBe('T-7');
+
+    const renumbered = await app.inject({
+      method: 'PATCH',
+      url: `/admin/territories/${created.json().id}/number`,
+      payload: { number: 'T-8' }
+    });
+    expect(renumbered.statusCode).toBe(200);
+    expect(renumbered.json().number).toBe('T-8');
+  });
+
+  it('refuses a number another territory already holds', async () => {
+    const first = await app.inject({
+      method: 'POST',
+      url: '/admin/territories',
+      payload: { name: 'holds-the-number', geometry: VALID_SQUARE, author: 'admin-1', number: 'T-9' }
+    });
+    expect(first.statusCode).toBe(201);
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/admin/territories',
+      payload: { name: 'wants-the-number', geometry: FAR_SQUARE, author: 'admin-1', number: 'T-9' }
+    });
+
+    expect(second.statusCode).toBe(409);
+    expect(second.json()).toMatchObject({ error: 'duplicate_territory_number' });
+  });
+
+  it('404s when numbering a territory that does not exist', async () => {
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/admin/territories/999999/number',
+      payload: { number: 'T-404' }
+    });
+
+    expect(response.statusCode).toBe(404);
   });
 });

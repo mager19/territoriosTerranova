@@ -1,26 +1,36 @@
 # Territory Management MVP
 
-The MVP enables administrators to manage urban territories and gives assigned field workers a safe, no-login map view while recording partial coverage honestly.
+The MVP enables administrators to manage urban territories and lets a volunteer open a safe, no-login map view to see what's shared and record partial coverage honestly. (2026-09-08: territories are shared to a group of volunteers, not assigned to one named person — see "Superseded 2026-09-08" note below.)
 
 ## Product intent
 
-Administrators need auditable control over territory boundaries, assignments, and progress. Field workers need a scoped view of an assigned territory without exposing identities, notes, or administrative data.
+Administrators need auditable control over territory boundaries, sharing, and progress. Volunteers need a scoped view of a shared territory without exposing identities, notes, or administrative data.
 
 ## Users
 
 | User | Need |
 | --- | --- |
-| Administrator | Define territory geometry, manage assignments, record progress, and inspect immutable history. |
-| Assigned field worker | Open a revocable, read-only link to one territory and understand approved coverage status. |
+| Administrator | Define territory geometry, share it with the volunteer group, record progress, and inspect immutable history. |
+| Volunteer | Open a revocable, read-only link to a shared territory and understand approved coverage status; self-select which shared territory to work, with no minimum or completion requirement. |
 | Maintainer | Approve provider evidence, privacy decisions, and operational controls before production use. |
 
 ## Scope
 
 - Versioned, administrator-managed territory polygons and lifecycle state.
-- Assignment, return, completion, and reasoned reopening with append-only history.
-- Timestamped progress notes with optional pause point, route, and remaining-area geometry.
-- Scoped, revocable, optionally expiring public links for an active assignment.
+- Sharing a territory to the volunteer group via a scoped, revocable, optionally expiring public link — with append-only history.
+- Timestamped progress notes with optional pause point, route, and remaining-area geometry, recordable by anyone with the link, at any time.
 - A real-city map-provider validation gate before production provider selection.
+
+### Superseded 2026-09-08 (was: individual assignment)
+
+The MVP originally specified assigning a territory to one named field worker
+(assign/return/complete/reopen with a mandatory reason). Live testing surfaced
+that the real organizational model is 1-2 administrators and 10-15 volunteers:
+an admin decides which territory to open for volunteering and shares one link to
+the whole group; whoever picks it up does what they can, with no minimum and no
+requirement to finish. There is deliberately no single "responsible party" for
+the system to track. See db/migrations/0004_remove_individual_assignment.sql and
+AGENTS.md "Architecture guardrails" for the current model.
 
 ## Non-goals
 
@@ -34,7 +44,7 @@ Administrators need auditable control over territory boundaries, assignments, an
 
 | Capability | MVP intent | Current state |
 | --- | --- | --- |
-| Territory administration | Immutable polygon revisions, lifecycle, assignment, and audit history. | Planned; no production workflow is implemented. |
+| Territory administration | Immutable polygon revisions, lifecycle, sharing, and audit history. | Planned; no production workflow is implemented. |
 | Field coverage progress | Immutable partial-coverage records without inferred completion. | Planned. |
 | Public sharing | Minimal, revocable anonymous read-only map access. | Planned. |
 | Provider validation | Evidence-based approval across real local references. | Prototype gate and scorecard exist; live evaluation and approval are pending. |
@@ -51,8 +61,8 @@ Administrators need auditable control over territory boundaries, assignments, an
 
 ## Success criteria
 
-- Administrators can audit territory, assignment, and partial-progress revisions.
-- Field workers can distinguish approved covered, paused, and remaining information without publishing sensitive details.
+- Administrators can audit territory, sharing, and partial-progress revisions.
+- Volunteers can distinguish approved covered, paused, and remaining information without publishing sensitive details.
 - A provider is selected only after documented precision, access, cost, and reuse validation.
 - Public access is scoped, revocable, non-indexable, and cannot authorize administrative actions.
 
@@ -60,7 +70,6 @@ Administrators need auditable control over territory boundaries, assignments, an
 
 - City boundary source and its permitted use.
 - Minimum retention period and deletion process for visit/progress data.
-- Whether public sharing may ever show assignee identity; current default is no exposure.
+- Whether public sharing may ever show volunteer identity; current default is no exposure.
 - Overlap exception authority and review path.
-- Reopen authority, mandatory reason, and audit review process.
 - Provider budget and written provider/AMVA approvals.

@@ -103,10 +103,16 @@ importers:
 
   apps/public:
     dependencies:
+      '@territorios/geo':
+        specifier: workspace:*
+        version: link:../../packages/geo
       maplibre-gl:
         specifier: ^6.7.0
         version: 6.7.0
     devDependencies:
+      '@types/geojson':
+        specifier: ^7946.0.16
+        version: 7946.0.16
       '@types/node':
         specifier: ^22.20.1
         version: 22.20.1

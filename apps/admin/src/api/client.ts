@@ -6,9 +6,21 @@
  * string.
  */
 
-import type { LineString, Point, Polygon } from '@territorios/geo';
+import type { LineString, MultiPolygon, Point, Polygon } from '@territorios/geo';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3000';
+/** apps/public's dev origin — used only to build a share link's display text (token.ts reads the fragment client-side, this app never fetches it). */
+export const PUBLIC_APP_BASE_URL = import.meta.env.VITE_PUBLIC_APP_BASE_URL ?? 'http://127.0.0.1:5174';
+
+/**
+ * Placeholder actor for every admin write (revision author, share
+ * created-by/revoked-by) until there is a real per-user profile/auth
+ * system (2026-09-08 product decision: stop asking for a name on every
+ * single action — one admin/volunteer group, no individual accountability
+ * yet). The server still requires a non-blank string in each of these
+ * fields, so this is what satisfies that until profiles exist.
+ */
+export const DEFAULT_ACTOR = 'admin';
 
 export class ApiError extends Error {
   readonly code: string;
@@ -36,6 +48,7 @@ export interface Territory {
   readonly status: 'active' | 'archived';
   readonly createdAt: string;
   readonly currentRevisionNumber: number;
+  readonly number: string | null;
 }
 
 export interface TerritoryWithRevisions extends Omit<Territory, 'currentRevisionNumber'> {
@@ -53,25 +66,9 @@ export interface AuditEvent {
   readonly createdAt: string;
 }
 
-export type AssignmentStatus = 'active' | 'completed' | 'returned';
-
-export interface Assignment {
-  readonly id: number;
-  readonly territoryId: number;
-  readonly territoryRevisionId: number;
-  readonly revisionNumber: number;
-  readonly assignedTo: string;
-  readonly assignedBy: string;
-  readonly status: AssignmentStatus;
-  readonly assignedAt: string;
-  readonly completedAt: string | null;
-  readonly returnedAt: string | null;
-  readonly reopenReason: string | null;
-}
-
 export interface ProgressEntry {
   readonly id: number;
-  readonly assignmentId: number;
+  readonly territoryId: number;
   readonly recordedBy: string;
   readonly recordedAt: string;
   readonly note: string | null;
@@ -80,6 +77,21 @@ export interface ProgressEntry {
   readonly remainingArea: Polygon | null;
   /** Explicit, never-inferred: 'unknown' means not recorded, never "fully covered" (AGENTS.md). */
   readonly remainingAreaStatus: 'recorded' | 'unknown';
+}
+
+/**
+ * A share token scopes to a whole territory, not a per-person claim
+ * (2026-09-08: territories are shared to a group of volunteers, not
+ * assigned to one named person). `token` is the plaintext link secret,
+ * present ONLY in the response to createShareToken — never returned or
+ * stored again after that.
+ */
+export interface ShareToken {
+  readonly id: number;
+  readonly token: string;
+  readonly territoryId: number;
+  readonly createdAt: string;
+  readonly expiresAt: string | null;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -127,6 +139,7 @@ export function createTerritory(input: {
   name: string;
   geometry: Polygon;
   author: string;
+  number?: string;
 }): Promise<TerritoryWithRevisions> {
   return request('/admin/territories', { method: 'POST', body: JSON.stringify(input) });
 }
@@ -145,35 +158,101 @@ export function getTerritoryAudit(territoryId: number): Promise<{ territoryId: n
   return request(`/admin/territories/${territoryId}/audit`);
 }
 
-export function listAssignments(territoryId: number): Promise<{ assignments: readonly Assignment[] }> {
-  return request(`/admin/territories/${territoryId}/assignments`);
+export function listProgress(territoryId: number): Promise<{ entries: readonly ProgressEntry[] }> {
+  return request(`/admin/territories/${territoryId}/progress`);
 }
 
-export function assignTerritory(
+export function recordProgress(
   territoryId: number,
-  input: { assignedTo: string; assignedBy: string }
-): Promise<Assignment> {
-  return request(`/admin/territories/${territoryId}/assignments`, {
+  input: { recordedBy: string; note?: string; route?: LineString }
+): Promise<ProgressEntry> {
+  return request(`/admin/territories/${territoryId}/progress`, { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function createShareToken(
+  territoryId: number,
+  input: { createdBy: string; expiresAt?: string }
+): Promise<ShareToken> {
+  return request(`/admin/territories/${territoryId}/share-tokens`, {
     method: 'POST',
     body: JSON.stringify(input)
   });
 }
 
-export function returnAssignment(assignmentId: number, actor: string): Promise<Assignment> {
-  return request(`/admin/assignments/${assignmentId}/return`, { method: 'POST', body: JSON.stringify({ actor }) });
+export function revokeShareToken(tokenId: number, actor: string): Promise<void> {
+  return request(`/admin/share-tokens/${tokenId}/revoke`, { method: 'POST', body: JSON.stringify({ actor }) });
 }
 
-export function completeAssignment(assignmentId: number, actor: string): Promise<Assignment> {
-  return request(`/admin/assignments/${assignmentId}/complete`, { method: 'POST', body: JSON.stringify({ actor }) });
+export interface TerritoryOverviewMonth {
+  readonly month: string;
+  readonly times: number;
 }
 
-export function reopenAssignment(assignmentId: number, actor: string, reason: string): Promise<Assignment> {
-  return request(`/admin/assignments/${assignmentId}/reopen`, {
-    method: 'POST',
-    body: JSON.stringify({ actor, reason })
+/** One row of the administrator's overview. Deliberately carries no volunteer identity — this view speaks about territories, not people. */
+export interface TerritoryOverviewRow {
+  readonly id: number;
+  readonly number: string | null;
+  readonly name: string;
+  readonly status: 'active' | 'archived';
+  readonly areaHectares: number | null;
+  /** All-time, never windowed: this is what separates "never worked" from "nothing in the visible months". */
+  readonly lastWorkedAt: string | null;
+  readonly monthly: readonly TerritoryOverviewMonth[];
+}
+
+export function getTerritoryOverview(
+  options: { months?: number; includeArchived?: boolean } = {}
+): Promise<{ territories: readonly TerritoryOverviewRow[] }> {
+  const params = new URLSearchParams();
+  if (options.months !== undefined) params.set('months', String(options.months));
+  if (options.includeArchived) params.set('includeArchived', 'true');
+  const query = params.toString();
+  return request(`/admin/territories/overview${query === '' ? '' : `?${query}`}`);
+}
+
+export function setTerritoryNumber(territoryId: number, number: string): Promise<Territory> {
+  return request(`/admin/territories/${territoryId}/number`, {
+    method: 'PATCH',
+    body: JSON.stringify({ number })
   });
 }
 
-export function listProgress(assignmentId: number): Promise<{ entries: readonly ProgressEntry[] }> {
-  return request(`/admin/assignments/${assignmentId}/progress`);
+/** An AMVA barrio (POT 2009 vintage) — admin-only drafting reference, never shown on the public view (AGENTS.md). */
+export interface ReferenceBarrio {
+  readonly id: number;
+  readonly name: string;
+  readonly geometry: MultiPolygon;
+  readonly extensionKm2: number | null;
+  readonly population: number | null;
+}
+
+export function searchReferenceBarrios(name: string): Promise<{ barrios: readonly ReferenceBarrio[] }> {
+  return request(`/admin/reference/barrios?name=${encodeURIComponent(name)}`);
+}
+
+/**
+ * The server's own error messages are English prose meant for a developer
+ * reading logs (AGENTS.md / A3 brief: technical artifacts default to
+ * English) — not for the Spanish-speaking admins/volunteers who actually
+ * use this UI. `error.code` is the stable, typed part of the contract
+ * (statusForDomainError's exhaustive switch, apps/api/src/routes/admin/
+ * error-response.ts), so it is what gets translated here; an unrecognized
+ * code (should not happen — the codes are a closed, tested set) falls back
+ * to the raw server message rather than showing nothing.
+ */
+const ERROR_MESSAGES_ES: Record<string, string> = {
+  invalid_geometry: 'La geometría no es válida.',
+  zero_area_geometry: 'La geometría no tiene área real.',
+  out_of_bounds: 'La forma queda fuera del límite municipal de Bello.',
+  invalid_request: 'Faltan datos o el formato no es válido.',
+  territory_not_found: 'Ese territorio no existe.',
+  unauthorized_overlap: 'Esta forma se superpone con otro territorio activo.',
+  boundary_reference_missing: 'Falta cargar el límite municipal de referencia.',
+  duplicate_territory_number: 'Ese número ya lo tiene otro territorio.',
+  network_error: 'No se pudo conectar con el servidor.',
+  unexpected_error: 'Ocurrió un error inesperado; no se guardó nada.'
+};
+
+export function describeApiError(error: ApiError): string {
+  return ERROR_MESSAGES_ES[error.code] ?? error.message;
 }

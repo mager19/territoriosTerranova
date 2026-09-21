@@ -2,33 +2,24 @@ import { describe, expect, it } from 'vitest';
 import { DatabaseError } from 'pg';
 
 import {
-  mapAssignmentError,
   mapProgressEntryError,
   mapTerritoryGeometryError,
-  rethrowAsAssignmentError,
   rethrowAsProgressEntryError,
-  rethrowAsTerritoryGeometryError
+  rethrowAsTerritoryGeometryError,
+  rethrowAsTerritoryNumberError
 } from './pg-error-mapper.js';
 import {
-  ActiveAssignmentConflictError,
   BoundaryReferenceMissingError,
+  DuplicateTerritoryNumberError,
   InvalidGeometryError,
   OutOfBoundsError,
   UnauthorizedOverlapError,
-  ValidationError,
   ZeroAreaGeometryError
 } from '../domain/errors.js';
 
 function checkViolation(constraint: string): DatabaseError {
   const error = new DatabaseError('check violation', 0, 'error');
   error.code = '23514';
-  error.constraint = constraint;
-  return error;
-}
-
-function uniqueViolation(constraint: string): DatabaseError {
-  const error = new DatabaseError('unique violation', 0, 'error');
-  error.code = '23505';
   error.constraint = constraint;
   return error;
 }
@@ -99,39 +90,6 @@ describe('rethrowAsTerritoryGeometryError', () => {
   });
 });
 
-describe('mapAssignmentError', () => {
-  it('maps assignments_one_active_per_territory to ActiveAssignmentConflictError', () => {
-    const mapped = mapAssignmentError(uniqueViolation('assignments_one_active_per_territory'));
-    expect(mapped).toBeInstanceOf(ActiveAssignmentConflictError);
-  });
-
-  it('maps the reopen-reason trigger message to ValidationError (defense-in-depth confirmation)', () => {
-    const mapped = mapAssignmentError(raiseException('reopening assignment 4 requires a reopen_reason'));
-    expect(mapped).toBeInstanceOf(ValidationError);
-  });
-
-  it('returns undefined for an unrecognized unique-violation constraint', () => {
-    expect(mapAssignmentError(uniqueViolation('some_other_unique_index'))).toBeUndefined();
-  });
-
-  it('returns undefined for a non-DatabaseError', () => {
-    expect(mapAssignmentError(new Error('plain error'))).toBeUndefined();
-  });
-});
-
-describe('rethrowAsAssignmentError', () => {
-  it('throws the mapped domain error when recognized', () => {
-    expect(() => rethrowAsAssignmentError(uniqueViolation('assignments_one_active_per_territory'))).toThrow(
-      ActiveAssignmentConflictError
-    );
-  });
-
-  it('rethrows the original error unchanged when unrecognized', () => {
-    const original = new Error('unrelated failure');
-    expect(() => rethrowAsAssignmentError(original)).toThrow(original);
-  });
-});
-
 describe('mapProgressEntryError', () => {
   it.each([
     ['progress_entries_pause_point_valid', /pause point/],
@@ -162,5 +120,22 @@ describe('rethrowAsProgressEntryError', () => {
   it('rethrows the original error unchanged when unrecognized', () => {
     const original = new Error('unrelated failure');
     expect(() => rethrowAsProgressEntryError(original)).toThrow(original);
+  });
+});
+
+describe('rethrowAsTerritoryNumberError', () => {
+  it('maps the unique-violation on territories_number_unique', () => {
+    const pgError = Object.assign(new Error('duplicate key value violates unique constraint'), {
+      code: '23505',
+      constraint: 'territories_number_unique'
+    });
+
+    expect(() => rethrowAsTerritoryNumberError(pgError)).toThrow(DuplicateTerritoryNumberError);
+  });
+
+  it('rethrows anything else untouched', () => {
+    const other = new Error('connection terminated');
+
+    expect(() => rethrowAsTerritoryNumberError(other)).toThrow('connection terminated');
   });
 });

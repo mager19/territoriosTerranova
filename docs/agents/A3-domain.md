@@ -1,7 +1,8 @@
 # A3 — Domain & Admin API
 
 **Mission**: The core of the product. Territory lifecycle, immutable revisions,
-assignments, progress, audit trail, and the administrator API over them.
+sharing, progress, audit trail, and the administrator API over them. (Originally
+"assignments" — superseded 2026-09-08, see Slice 2 below.)
 
 **Reasoning load**: High — this agent decides the invariants everything else trusts
 **Depends on**: A2
@@ -29,12 +30,22 @@ and every transition writes an audit event.
 
 Endpoints: create territory, list, read (with revision history), submit new revision.
 
-### Slice 2 — Assignment (M2)
+### Slice 2 — Assignment (M2) — superseded 2026-09-08
 
-Assign a territory to a field worker, return it, complete it, and reopen it with a
-**mandatory reason**. An assignment references a specific revision id, so history
+**This slice as originally briefed no longer exists.** Territories are shared to
+the volunteer group, not assigned to one named person — there is no single
+responsible party, no minimum, and no completion requirement
+(db/migrations/0004_remove_individual_assignment.sql). The `assignments` table,
+its domain module, and its admin routes were deleted; "share this territory"
+(A4's share-token creation) is now the whole admin action. Kept here, struck
+through in spirit rather than deleted outright, so a future reader can see what
+was originally decided and why it changed — see AGENTS.md "Architecture
+guardrails" for the current invariant.
+
+~~Assign a territory to a field worker, return it, complete it, and reopen it with
+a mandatory reason. An assignment references a specific revision id, so history
 stays coherent when geometry later changes. Exactly one active assignment per
-territory, enforced transactionally against the constraint A2 built.
+territory, enforced transactionally against the constraint A2 built.~~
 
 ### Slice 3 — Progress and audit (M2)
 
@@ -49,9 +60,10 @@ remaining-area geometry. Expose the full audit history for a territory.
 - [ ] Attempting to mutate an existing revision fails; a test proves it
 - [ ] Every lifecycle transition writes an audit event with actor, timestamp, and
       reason where required
-- [ ] Reopening without a reason is rejected
-- [ ] Concurrency test: parallel assignment requests for one territory yield exactly
-      one active assignment; the loser gets a clear conflict response
+- [ ] ~~Reopening without a reason is rejected~~ — N/A, superseded 2026-09-08
+- [ ] ~~Concurrency test: parallel assignment requests for one territory yield
+      exactly one active assignment; the loser gets a clear conflict response~~ —
+      N/A, superseded 2026-09-08 (no more per-person assignment slot to race for)
 - [ ] Coverage is never inferred from a territory polygon. An absent remaining-area
       geometry means **unknown**, and the API says so explicitly
 - [ ] Every endpoint has unit tests for its validation branches
