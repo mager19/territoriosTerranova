@@ -1,0 +1,166 @@
+/** Immutable, administrator-controlled operational work cycles. */
+
+import type { Polygon } from '@territorios/geo';
+import type { PoolClient } from 'pg';
+
+import { recordAuditEvent } from './audit.js';
+import { TerritoryNotFoundError, ValidationError } from './errors.js';
+import { withTransaction, type TransactionalPool } from '../db/transaction.js';
+
+export type OperationalState = 'no_record' | 'in_progress' | 'paused' | 'cycle_completed' | 'reopened';
+export type OperationalAction = Exclude<OperationalState, 'no_record'>;
+
+export interface TerritoryOperationalStatus {
+  readonly state: OperationalState;
+  readonly cycleNumber: number | null;
+  readonly effectiveCompletionDate: string | null;
+  readonly remainingArea: Polygon | null;
+  readonly remainingAreaStatus: 'recorded' | 'unknown';
+}
+
+interface EventRow {
+  readonly id: string;
+  readonly cycle_number: number;
+  readonly action: OperationalAction;
+  readonly effective_completion_date: string | null;
+}
+
+async function lockTerritory(client: PoolClient, territoryId: number): Promise<void> {
+  const { rows } = await client.query<{ id: string }>('SELECT id FROM territories WHERE id = $1 FOR UPDATE', [territoryId]);
+  if (!rows[0]) throw new TerritoryNotFoundError(territoryId);
+}
+
+async function latestEvent(client: PoolClient, territoryId: number): Promise<EventRow | null> {
+  const { rows } = await client.query<EventRow>(
+    `SELECT id, cycle_number, action, effective_completion_date
+     FROM territory_operational_events
+     WHERE territory_id = $1
+     ORDER BY id DESC
+     LIMIT 1`,
+    [territoryId]
+  );
+  return rows[0] ?? null;
+}
+
+function assertTransition(current: OperationalState, action: OperationalAction): void {
+  const allowed: Readonly<Record<OperationalState, readonly OperationalAction[]>> = {
+    no_record: ['in_progress'],
+    in_progress: ['paused', 'cycle_completed'],
+    paused: ['in_progress', 'cycle_completed'],
+    cycle_completed: ['reopened'],
+    reopened: ['paused', 'cycle_completed']
+  };
+  if (!allowed[current].includes(action)) {
+    throw new ValidationError(`cannot change operational state from ${current} to ${action}`);
+  }
+}
+
+function stateFromAction(action: OperationalAction | null): OperationalState {
+  return action ?? 'no_record';
+}
+
+async function queryTerritoryOperationalStatus(
+  client: PoolClient,
+  territoryId: number
+): Promise<TerritoryOperationalStatus> {
+  const { rows } = await client.query<{
+      id: string;
+      action: OperationalAction | null;
+      cycle_number: number | null;
+      effective_completion_date: Date | string | null;
+      remaining_area: Polygon | null;
+    }>(
+      `SELECT t.id, latest.action, latest.cycle_number, latest.effective_completion_date,
+              ST_AsGeoJSON(coverage.remaining_area)::json AS remaining_area
+       FROM territories t
+       LEFT JOIN LATERAL (
+         SELECT id, action, cycle_number, effective_completion_date, created_at
+         FROM territory_operational_events
+         WHERE territory_id = t.id
+         ORDER BY id DESC
+         LIMIT 1
+       ) latest ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT min(created_at) AS started_at
+         FROM territory_operational_events
+         WHERE territory_id = t.id AND cycle_number = latest.cycle_number
+       ) cycle_start ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT remaining_area
+         FROM progress_entries
+         WHERE territory_id = t.id
+           AND remaining_area IS NOT NULL
+           AND recorded_at >= cycle_start.started_at
+         ORDER BY recorded_at DESC, id DESC
+         LIMIT 1
+       ) coverage ON TRUE
+       WHERE t.id = $1`,
+      [territoryId]
+  );
+  const row = rows[0];
+  if (!row) throw new TerritoryNotFoundError(territoryId);
+  return {
+    state: stateFromAction(row.action),
+    cycleNumber: row.cycle_number,
+    effectiveCompletionDate: row.effective_completion_date === null
+      ? null
+      : typeof row.effective_completion_date === 'string'
+        ? row.effective_completion_date
+        : row.effective_completion_date.toISOString().slice(0, 10),
+    remainingArea: row.remaining_area,
+    remainingAreaStatus: row.remaining_area === null ? 'unknown' : 'recorded'
+  };
+}
+
+export async function getTerritoryOperationalStatus(
+  pool: TransactionalPool,
+  territoryId: number
+): Promise<TerritoryOperationalStatus> {
+  return withTransaction(pool, (client) => queryTerritoryOperationalStatus(client, territoryId));
+}
+
+export interface ChangeOperationalStateInput {
+  readonly action: OperationalAction;
+  readonly actor: string;
+  readonly reason?: string;
+  readonly effectiveCompletionDate?: string;
+}
+
+export async function changeTerritoryOperationalState(
+  pool: TransactionalPool,
+  territoryId: number,
+  input: ChangeOperationalStateInput
+): Promise<TerritoryOperationalStatus> {
+  const actor = input.actor.trim();
+  const reason = input.reason?.trim() || null;
+  if (actor === '') throw new ValidationError('actor must not be blank');
+  if (input.action === 'reopened' && reason === null) throw new ValidationError('reopening requires a reason');
+  if (input.action === 'cycle_completed' && !/^\d{4}-\d{2}-\d{2}$/.test(input.effectiveCompletionDate ?? '')) {
+    throw new ValidationError('cycle completion requires an effectiveCompletionDate in YYYY-MM-DD format');
+  }
+
+  return withTransaction(pool, async (client) => {
+    await lockTerritory(client, territoryId);
+    const latest = await latestEvent(client, territoryId);
+    const current = stateFromAction(latest?.action ?? null);
+    assertTransition(current, input.action);
+    const cycleNumber = input.action === 'reopened' ? (latest?.cycle_number ?? 0) + 1 : (latest?.cycle_number ?? 1);
+
+    await client.query(
+      `INSERT INTO territory_operational_events
+        (territory_id, cycle_number, action, actor, reason, effective_completion_date)
+       VALUES ($1, $2, $3, $4, $5, $6::date)`,
+      [territoryId, cycleNumber, input.action, actor, reason, input.effectiveCompletionDate ?? null]
+    );
+    await recordAuditEvent(client, {
+      entityType: 'territory',
+      entityId: territoryId,
+      action: `operational_${input.action}`,
+      actor,
+      reason: reason ?? `operational state changed to ${input.action}`,
+      payload: { cycleNumber, effectiveCompletionDate: input.effectiveCompletionDate ?? null }
+    });
+
+    return queryTerritoryOperationalStatus(client, territoryId);
+  });
+}

@@ -219,6 +219,31 @@ describe('GET /public/territories/:token — response shape', () => {
     expect(body.remainingArea).toEqual(remainingArea);
   });
 
+  it('does not reuse a prior cycle’s pending-area snapshot after an administrator reopens work', async () => {
+    const { token, territoryId } = await createTerritoryAndShare();
+    await app.inject({
+      method: 'POST', url: `/admin/territories/${territoryId}/operational-state`, payload: { action: 'in_progress', actor: 'admin-1' }
+    });
+    await app.inject({
+      method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload: { recordedBy: 'admin-1', remainingArea: VALID_SQUARE }
+    });
+    await app.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/operational-state`,
+      payload: { action: 'cycle_completed', actor: 'admin-1', effectiveCompletionDate: '2026-09-21' }
+    });
+    await app.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/operational-state`,
+      payload: { action: 'reopened', actor: 'admin-1', reason: 'new work started' }
+    });
+
+    const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ remainingArea: null, remainingAreaStatus: 'unknown', route: null });
+    expect(Object.keys(response.json())).not.toContain('operationalState');
+  });
+
   it('never leaks recordedBy identity, notes, timestamps, pause points, history, or internal ids', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
     await app.inject({

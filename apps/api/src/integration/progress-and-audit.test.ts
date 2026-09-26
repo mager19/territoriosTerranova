@@ -232,6 +232,80 @@ describe('GET /admin/territories/:id/progress', () => {
   });
 });
 
+describe('administrator-controlled operational cycles', () => {
+  it('derives immutable cycle state, preserves the effective completion date, and resets pending coverage on reopening', async () => {
+    const territoryId = await createTerritory('T-operational-cycle');
+
+    const initially = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/operational-state` });
+    expect(initially.statusCode).toBe(200);
+    expect(initially.json()).toMatchObject({ state: 'no_record', cycleNumber: null, remainingAreaStatus: 'unknown' });
+
+    const open = await app.inject({
+      method: 'POST', url: `/admin/territories/${territoryId}/operational-state`, payload: { action: 'in_progress', actor: 'admin-1' }
+    });
+    expect(open.statusCode).toBe(201);
+    expect(open.json().state).toBe('in_progress');
+
+    const coverage = await app.inject({
+      method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload: { recordedBy: 'admin-1', remainingArea: REMAINING_AREA }
+    });
+    expect(coverage.statusCode).toBe(201);
+
+    const paused = await app.inject({
+      method: 'POST', url: `/admin/territories/${territoryId}/operational-state`, payload: { action: 'paused', actor: 'admin-1' }
+    });
+    expect(paused.statusCode).toBe(201);
+    expect(paused.json()).toMatchObject({ state: 'paused', remainingArea: REMAINING_AREA, remainingAreaStatus: 'recorded' });
+
+    const completed = await app.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/operational-state`,
+      payload: { action: 'cycle_completed', actor: 'admin-1', effectiveCompletionDate: '2026-09-21' }
+    });
+    expect(completed.statusCode).toBe(201);
+    expect(completed.json()).toMatchObject({ state: 'cycle_completed', effectiveCompletionDate: '2026-09-21' });
+
+    const withoutReason = await app.inject({
+      method: 'POST', url: `/admin/territories/${territoryId}/operational-state`, payload: { action: 'reopened', actor: 'admin-1' }
+    });
+    expect(withoutReason.statusCode).toBe(400);
+
+    const reopened = await app.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/operational-state`,
+      payload: { action: 'reopened', actor: 'admin-1', reason: 'new addresses need coverage' }
+    });
+    expect(reopened.statusCode).toBe(201);
+    expect(reopened.json()).toMatchObject({ state: 'reopened', cycleNumber: 2, remainingArea: null, remainingAreaStatus: 'unknown' });
+
+    await expect(
+      withClient((client) => client.query(`UPDATE territory_operational_events SET reason = 'tampered' WHERE territory_id = $1`, [territoryId]))
+    ).rejects.toThrow(/append-only/);
+
+    const history = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
+    expect(history.json().events.map((event: { action: string }) => event.action)).toEqual([
+      'created', 'operational_in_progress', 'progress_recorded', 'operational_paused', 'operational_cycle_completed', 'operational_reopened'
+    ]);
+  });
+
+  it('rejects progress after completion until an administrator explicitly reopens the cycle', async () => {
+    const territoryId = await createTerritory('T-operational-completed');
+    await app.inject({
+      method: 'POST', url: `/admin/territories/${territoryId}/operational-state`, payload: { action: 'in_progress', actor: 'admin-1' }
+    });
+    await app.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/operational-state`,
+      payload: { action: 'cycle_completed', actor: 'admin-1', effectiveCompletionDate: '2026-09-21' }
+    });
+    const response = await app.inject({
+      method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload: { recordedBy: 'admin-1', route: ROUTE }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'invalid_request' });
+  });
+});
+
 describe('GET /admin/territories/:id/audit', () => {
   it('exposes the full chronological history for a territory: creation, sharing, progress, and new revisions', async () => {
     const territoryId = await createTerritory('T-audit-01');
@@ -264,6 +338,7 @@ describe('GET /admin/territories/:id/audit', () => {
     expect(body.events.map((e: { action: string }) => e.action)).toEqual([
       'created',
       'shared',
+      'operational_in_progress',
       'progress_recorded',
       'revision_submitted'
     ]);
