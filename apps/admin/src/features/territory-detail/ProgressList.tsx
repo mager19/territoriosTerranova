@@ -5,21 +5,17 @@ import { ApiError, describeApiError, listProgress, type ProgressEntry } from '..
 export interface ProgressListProps {
   readonly territoryId: number;
   readonly refreshToken: number;
-  /** The latest entry's remaining-area geometry (or null), so the parent can render it on the map. */
-  readonly onLatestRemainingArea: (geometry: ProgressEntry['remainingArea']) => void;
 }
 
 /**
  * Read-only progress display, scoped directly to a territory (2026-09-08:
  * territories are shared to a group, not assigned to one person, so
  * progress is never gated by an "active assignment" precondition anymore
- * — anyone who opens the shared link may have recorded it). Recording NEW
- * progress entries — drawing a pause point/route/remaining area — is not
- * built here: a full drawing UI for three more optional geometries is a
- * distinct, larger feature than this component's scope. Noted explicitly
- * rather than silently omitted.
+ * — only the administrator records it). This list preserves the immutable
+ * evidence history; the operational summary owns the current-cycle coverage
+ * snapshot so an older entry cannot be mistaken for reopened-cycle coverage.
  */
-export function ProgressList({ territoryId, refreshToken, onLatestRemainingArea }: ProgressListProps): JSX.Element {
+export function ProgressList({ territoryId, refreshToken }: ProgressListProps): JSX.Element {
   const [entries, setEntries] = useState<readonly ProgressEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -31,7 +27,6 @@ export function ProgressList({ territoryId, refreshToken, onLatestRemainingArea 
       .then((result) => {
         if (cancelled) return;
         setEntries(result.entries);
-        onLatestRemainingArea(result.entries.at(-1)?.remainingArea ?? null);
       })
       .catch((caught) => {
         if (!cancelled) setError(caught instanceof ApiError ? describeApiError(caught) : 'No se pudo cargar el progreso.');

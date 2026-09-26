@@ -1,26 +1,49 @@
 /**
- * "Monad" design tokens, adapted from a marketing-site style reference to
- * this dense CRUD admin tool: same palette/type pairing, smaller heading
- * scale and tighter card padding than the source guide's spacious
- * marketing rhythm (a data-entry screen needs less air than a hero
- * section). No new UI colors invented beyond the reference — where the
- * guide is silent (error/alert states), off-black + weight-500 mono
- * carries the emphasis instead of an invented danger color.
+ * "Dub" design system, adapted to this dense CRUD admin tool.
+ *
+ * Quiet editorial SaaS aesthetic: near-white canvas, hairline 1px borders
+ * (no heavy shadows), dense monochrome typography, ONE electric blue accent
+ * (#2563eb) reserved for links/active/focus/key highlights, and compact
+ * density (8px gaps, 12px card radius, 8px button radius, 9999px pills for
+ * tags/badges only). The primary CTA fill is near-black, never blue.
  */
 
 :root {
-  --color-parchment: #f6f3f1;
-  --color-lake-blue: #2b59d1;
-  --color-periwinkle-mist: #cfdaf5;
-  --color-off-black: #242424;
-  --color-graphite: #4e4d4d;
-  --color-smoke: #797776;
-  --color-ash: #cecac8;
+  /* Colors */
+  --color-canvas-white: #ffffff;
+  --color-paper-mist: #f5f5f5;
+  --color-ash: #e5e5e5;          /* hairline borders — THE structural line */
+  --color-smoke: #d4d4d4;
+  --color-pebble: #c8c8c8;
+  --color-midnight-ink: #0a0a0a;
+  --color-charcoal: #171717;     /* body text, default headings */
+  --color-graphite: #262626;
+  --color-slate: #404040;
+  --color-steel: #525252;
+  --color-fog: #737373;          /* muted/placeholder text */
+  --color-silver: #a3a3a3;
+  --color-electric-blue: #2563eb; /* accent only — links, active, key highlights */
+  --color-deep-sapphire: #1e40af;
+  --color-soft-mint: #dcfce7;
+  --color-vivid-green: #16a34a;
+  --color-tangerine: #ea580c;
+  --color-lavender: #7c3aed;
+  --color-primary-action-fill: #000000;
 
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --font-serif: Georgia, Cambria, 'Times New Roman', Times, serif;
+  /* Typography */
+  --font-display: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; /* Satoshi substitute: Inter weight 500 */
+  --font-body: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; /* Geist Mono substitute, for technical metadata only */
 
-  --map-border: var(--color-ash);
+  /* Radii */
+  --radius-tags: 9999px;
+  --radius-cards: 12px;
+  --radius-inputs: 6px;
+  --radius-buttons: 8px;
+  --radius-largecards: 16px;
+
+  /* Map border (kept so the two inline `var(--map-border, #ccc)` refs in the .tsx resolve consistently) */
+  --map-border: #e5e5e5;
 }
 
 * {
@@ -29,17 +52,71 @@
 
 body {
   margin: 0;
-  background: var(--color-parchment);
-  color: var(--color-off-black);
-  font-family: var(--font-mono);
+  background: var(--color-canvas-white);
+  color: var(--color-charcoal);
+  font-family: var(--font-body);
   font-size: 16px;
+  line-height: 1.5;
+}
+
+/* App shell: a fixed-width sidebar on the left edge, with the active view
+   flowing beside it. The sidebar's separation is a hairline ash border —
+   the same structural line every card uses. */
+.app-shell {
+  display: flex;
+  align-items: stretch;
+  min-height: 100vh;
+}
+
+.sidebar {
+  flex: 0 0 240px;
+  background: #eef2ff;
+  border-right: 1px solid var(--color-ash);
+  padding: 40px 24px;
+}
+
+/* The app brand in the sidebar — Inter 500, near-black, quiet. */
+.sidebar-brand {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 18px;
+  line-height: 1.25;
+  color: var(--color-charcoal);
+  margin: 0 0 24px;
+}
+
+/* Vertical nav: real <a> text links (2026-09-20 restructure — real URLs,
+   so no pill buttons). Rest state is transparent with near-black text. */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-nav a {
+  color: var(--color-charcoal);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
   line-height: 1.35;
-  letter-spacing: -0.02em;
+  padding: 12px 8px;
+  border-radius: 8px;
+}
+
+.sidebar-nav a:focus-visible {
+  outline: 2px solid var(--color-electric-blue);
+  outline-offset: 1px;
+}
+
+/* The active sidebar view: a soft blue fill with near-black text — Dub's
+   "Sidebar Nav Item" pattern (soft fill, not a bold left-border). */
+.sidebar-nav a[aria-current='true'] {
+  background: #dbeaff;
+  color: var(--color-charcoal);
 }
 
 main {
-  max-width: 960px;
-  margin: 0 auto;
+  flex: 1 1 auto;
   padding: 40px 24px 80px;
   display: flex;
   flex-direction: column;
@@ -49,26 +126,25 @@ main {
 h1,
 h2,
 h3 {
-  font-family: var(--font-serif);
-  font-weight: 400;
-  letter-spacing: -0.02em;
-  color: var(--color-off-black);
+  font-family: var(--font-display);
+  font-weight: 500;
+  color: var(--color-charcoal);
   margin: 0 0 16px;
 }
 
 h1 {
-  font-size: 32px;
-  line-height: 1.2;
+  font-size: 30px;
+  line-height: 1.38;
 }
 
 h2 {
   font-size: 24px;
-  line-height: 1.2;
+  line-height: 1.33;
 }
 
 h3 {
   font-size: 20px;
-  line-height: 1.2;
+  line-height: 1.4;
 }
 
 p {
@@ -76,13 +152,13 @@ p {
   color: var(--color-graphite);
 }
 
-/* Every top-level <section> reads as a card — the system's one elevation
-   device (a hairline border and a soft-rounded rect), never a shadow. */
+/* Every top-level <section> reads as a card — a hairline ash border and a
+   soft 12px rect, never a shadow. */
 section {
-  background: var(--color-parchment);
+  background: var(--color-canvas-white);
   border: 1px solid var(--color-ash);
-  border-radius: 24px;
-  padding: 24px;
+  border-radius: var(--radius-cards);
+  padding: 16px;
 }
 
 section > section,
@@ -101,7 +177,7 @@ ul li,
 ol li {
   padding: 10px 0;
   border-bottom: 1px solid var(--color-ash);
-  color: var(--color-graphite);
+  color: var(--color-charcoal);
 }
 
 ul li:last-child,
@@ -112,86 +188,107 @@ ol li:last-child {
 label {
   display: block;
   font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: -0.033em;
-  color: var(--color-smoke);
+  font-weight: 500;
+  color: var(--color-slate);
   margin: 12px 0 4px;
 }
 
+/* Dub's signature input: black border (inputs feel important), 6px radius,
+   compact padding, Inter. */
 input {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 14px;
-  letter-spacing: -0.02em;
-  color: var(--color-off-black);
+  color: var(--color-charcoal);
   background: #ffffff;
-  border: 1px solid var(--color-ash);
-  border-radius: 12px;
-  padding: 10px 14px;
+  border: 1px solid #000000;
+  border-radius: var(--radius-inputs);
+  padding: 8px 12px;
   width: 100%;
   max-width: 420px;
 }
 
-input:focus-visible {
-  outline: 2px solid var(--color-lake-blue);
+select {
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--color-charcoal);
+  background: #ffffff;
+  border: 1px solid #000000;
+  border-radius: var(--radius-inputs);
+  padding: 8px 12px;
+  min-height: 36px;
+}
+
+select:focus-visible {
+  outline: 2px solid var(--color-electric-blue);
   outline-offset: 1px;
 }
 
-/* Pill buttons — the system's one container language for actions.
-   Off-Black is the default fill; `.primary` (the single conversion
-   action per section) is the only place Lake Blue appears as a fill. */
+input:focus-visible {
+  outline: 2px solid var(--color-electric-blue);
+  outline-offset: 1px;
+}
+
+/* Buttons: quiet near-black CTA, 8px radius, sentence case. The default
+   (secondary) is a white surface with a hairline border. */
 button {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 14px;
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: -0.02em;
-  color: #ffffff;
-  background: var(--color-off-black);
-  border: 1px solid var(--color-off-black);
-  border-radius: 100px;
-  padding: 10px 20px;
+  color: var(--color-charcoal);
+  background: #ffffff;
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-buttons);
+  padding: 8px 16px;
   cursor: pointer;
 }
 
 button:hover:not(:disabled) {
-  opacity: 0.85;
+  background: var(--color-paper-mist);
+  border-color: var(--color-smoke);
 }
 
 button:disabled {
-  background: var(--color-periwinkle-mist);
-  border-color: var(--color-periwinkle-mist);
-  color: var(--color-smoke);
+  color: var(--color-silver);
+  background: var(--color-paper-mist);
+  border-color: var(--color-ash);
   cursor: not-allowed;
 }
 
+/* The primary action: near-black fill, NOT blue. 8px radius. */
 button[type='submit'],
 button.primary {
-  background: var(--color-lake-blue);
-  border-color: var(--color-lake-blue);
+  background: var(--color-midnight-ink);
+  color: #ffffff;
+  border-color: var(--color-midnight-ink);
+}
+
+button[type='submit']:hover:not(:disabled),
+button.primary:hover:not(:disabled) {
+  background: var(--color-charcoal);
+  border-color: var(--color-charcoal);
 }
 
 button[type='submit']:disabled,
 button.primary:disabled {
-  background: var(--color-periwinkle-mist);
-  border-color: var(--color-periwinkle-mist);
-  color: var(--color-smoke);
+  background: var(--color-paper-mist);
+  border-color: var(--color-ash);
+  color: var(--color-silver);
 }
 
-/* A toggled-on mode ("Edit points", aria-pressed) reads as a ghost pill in
-   the accent color, not a second solid fill competing with the primary
-   action. */
+/* A toggled-on mode ("Edit points", aria-pressed) reads as a ghost accent —
+   electric blue text and border on a transparent surface. */
 button[aria-pressed='true'] {
   background: transparent;
-  color: var(--color-lake-blue);
-  border-color: var(--color-lake-blue);
+  color: var(--color-electric-blue);
+  border-color: var(--color-electric-blue);
 }
 
-/* Selected/current item in a list — periwinkle is the system's one muted
+/* Selected/current item in a list — a soft blue fill, the system's one muted
    emphasis surface, exactly the role a "you are here" state needs. */
 button[aria-current='true'] {
-  background: var(--color-periwinkle-mist);
-  border-color: var(--color-periwinkle-mist);
-  color: var(--color-off-black);
+  background: #dbeaff;
+  border-color: #dbeaff;
+  color: var(--color-charcoal);
 }
 
 [role='group'] {
@@ -201,33 +298,68 @@ button[aria-current='true'] {
   margin: 8px 0;
 }
 
-[role='status'] {
-  font-size: 14px;
-  color: var(--color-smoke);
+/* The map tools are intentionally a compact, bounded action set rather than
+   a generic GIS palette. Native buttons keep every operation keyboard-ready;
+   the pressed state names the active drawing mode without color alone. */
+.map-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
 }
 
-/* No designated error color in the source palette — weight and an
-   off-black border carry the emphasis instead of an invented red. */
+.map-toolbar button {
+  min-height: 36px;
+}
+
+.map-toolbar button:focus-visible {
+  outline: 2px solid var(--color-electric-blue);
+  outline-offset: 2px;
+}
+
+.operational-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.operational-actions label {
+  margin: 0;
+}
+
+.operational-actions input {
+  width: auto;
+}
+
+[role='status'] {
+  font-size: 12px;
+  color: var(--color-fog);
+}
+
+/* Quiet error treatment within the palette — tangerine border carries the
+   emphasis instead of an invented red. */
 [role='alert'],
 .editor-error {
   font-size: 14px;
   font-weight: 500;
-  color: var(--color-off-black);
+  color: var(--color-charcoal);
   background: #ffffff;
-  border: 1px solid var(--color-off-black);
-  border-radius: 12px;
+  border: 1px solid var(--color-tangerine);
+  border-radius: var(--radius-buttons);
   padding: 10px 14px;
   margin: 8px 0;
 }
 
 .editor-hint {
-  font-size: 14px;
-  color: var(--color-smoke);
+  font-size: 12px;
+  color: var(--color-fog);
 }
 
 .map-attribution {
   font-size: 12px;
-  color: var(--color-smoke);
+  color: var(--color-fog);
   margin: 6px 0 0;
 }
 
@@ -235,9 +367,8 @@ form > div {
   margin-bottom: 4px;
 }
 
-/* Overview: the twelve-month activity strip. Four steps only — more stop
-   being distinguishable at this size. Colours come from the existing tokens;
-   no new palette values. */
+/* Overview: the twelve-month activity strip. Three levels of the accent
+   ramp — soft, half-strength electric blue, full electric blue. */
 .month-strip {
   display: inline-flex;
   gap: 2px;
@@ -253,26 +384,27 @@ form > div {
 }
 
 .month-strip-block.level-1 {
-  background: var(--color-periwinkle-mist);
-  border-color: var(--color-periwinkle-mist);
+  background: #dbeaff;
+  border-color: #dbeaff;
 }
 
 .month-strip-block.level-2 {
-  background: var(--color-lake-blue);
-  border-color: var(--color-lake-blue);
+  background: var(--color-electric-blue);
+  border-color: var(--color-electric-blue);
   opacity: 0.55;
 }
 
 .month-strip-block.level-3 {
-  background: var(--color-lake-blue);
-  border-color: var(--color-lake-blue);
+  background: var(--color-electric-blue);
+  border-color: var(--color-electric-blue);
 }
 
-/* Overview table. Borders only, no shadows, matching the rest of the admin. */
+/* Overview table. Borders only, no shadows. 14px dense data, near-black body. */
 .overview-table {
   width: 100%;
   border-collapse: collapse;
   margin-top: 0.75rem;
+  font-size: 14px;
 }
 
 .overview-table th,
@@ -281,14 +413,16 @@ form > div {
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--color-ash);
   vertical-align: middle;
+  color: var(--color-charcoal);
 }
 
 .overview-table th {
   font-weight: 500;
+  color: var(--color-slate);
 }
 
 /* Sortable headers are real buttons so they stay keyboard-operable, but they
-   should not look like the pill buttons used for actions elsewhere. */
+   should not look like the bordered buttons used for actions elsewhere. */
 .overview-table th button {
   appearance: none;
   background: none;
@@ -298,14 +432,20 @@ form > div {
   min-height: 0;
   font: inherit;
   font-weight: 500;
-  color: inherit;
+  color: var(--color-slate);
   cursor: pointer;
   text-align: left;
 }
 
+.overview-table th button:hover:not(:disabled) {
+  background: none;
+  border-color: transparent;
+  color: var(--color-electric-blue);
+}
+
 /* The territory name is a real button so it stays keyboard-operable (Tab +
-   default focus ring, not a clickable <tr>), but it should read as the row's
-   label, not a pill action — same precedent as the sortable headers above. */
+   default focus ring, not a clickable <tr>), but it reads as an electric-blue
+   underline link, not a bordered action. */
 .territory-name-button {
   appearance: none;
   background: none;
@@ -316,7 +456,7 @@ form > div {
   font: inherit;
   text-transform: none;
   letter-spacing: inherit;
-  color: var(--color-lake-blue);
+  color: var(--color-electric-blue);
   text-decoration: underline;
   cursor: pointer;
 }
@@ -328,4 +468,223 @@ form > div {
   height: 260px;
   border: 1px solid var(--map-border);
   border-radius: 12px;
+}
+
+/* Territory grid: a responsive card list. Compact 8px gap. */
+.territory-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 8px;
+}
+
+.territory-grid li {
+  padding: 0;
+  border-bottom: none;
+}
+
+/* One territory card: an <a> wrapping the whole unit, so it is fully
+   clickable and keyboard-operable. Borderless — the thumbnail + spacing + a
+   subtle paper-mist surface carry the card's definition (no gray hairline,
+   no heavy shadow). 12px radius. */
+.territory-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+  background: #eef2ff;
+  border-radius: 12px;
+  padding: 16px;
+  color: var(--color-charcoal);
+  text-decoration: none;
+}
+
+.territory-card:hover {
+  box-shadow: 0 0 0 1px var(--color-electric-blue);
+}
+
+.territory-card:focus-visible {
+  outline: 2px solid var(--color-electric-blue);
+  outline-offset: 1px;
+}
+
+/* Static SVG thumbnail of the territory's polygon — a filled+outlined shape,
+   NOT a MapLibre/WebGL map (browsers cap live WebGL contexts, so a map per
+   card would break a full grid). The svg element fills the box; the viewBox
+   letterboxes the polygon with `preserveAspectRatio` so it never distorts. */
+.territory-thumbnail {
+  display: block;
+  width: 100%;
+  height: 140px;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.territory-thumbnail polygon {
+  fill: #dbeaff;
+  stroke: var(--color-charcoal);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+/* Placeholder when a territory has no geometry yet — same box, so the card
+   layout never jumps. A dashed outline with muted centered text. */
+.territory-thumbnail--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px dashed var(--color-smoke);
+  color: var(--color-fog);
+  font-size: 13px;
+}
+
+.territory-card-name {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 17px;
+  line-height: 1.3;
+  color: var(--color-charcoal);
+}
+
+.territory-card-number {
+  font-size: 13px;
+  color: var(--color-fog);
+}
+
+.territory-card-revision {
+  font-size: 13px;
+  color: var(--color-graphite);
+}
+
+.territory-card-status {
+  font-size: 12px;
+  color: var(--color-fog);
+}
+
+/* "Editar mapa" is a navigation action to the territory's /editar route, so
+   it is an <a> — but it reads as the detail view's primary action, borrowing
+   the primary button's near-black fill and 8px radius. */
+.detail-edit-link {
+  display: inline-block;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 500;
+  color: #ffffff;
+  background: var(--color-midnight-ink);
+  border: 1px solid var(--color-midnight-ink);
+  border-radius: var(--radius-buttons);
+  padding: 8px 16px;
+  text-decoration: none;
+  cursor: pointer;
+  margin-bottom: 16px;
+}
+
+.detail-edit-link:hover {
+  background: var(--color-charcoal);
+  border-color: var(--color-charcoal);
+}
+
+.detail-edit-link:focus-visible {
+  outline: 2px solid var(--color-electric-blue);
+  outline-offset: 1px;
+}
+
+/* Reference-barrio autocomplete: a search-as-you-type combobox with a
+   single-select listbox popup and a "selected" badge. Inter, not mono. */
+.barrio-combobox {
+  position: relative;
+  max-width: 420px;
+}
+
+/* The dropdown itself — absolute so it floats over the content below (the
+   map's drawing controls) rather than pushing the layout around while the
+   admin types. */
+.barrio-options {
+  position: absolute;
+  z-index: 10;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 4px 0 0;
+  padding: 4px;
+  background: #ffffff;
+  border: 1px solid var(--color-ash);
+  border-radius: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+/* Each option is a native <button> (clickable + keyboard-operable via the
+   input's arrow keys). It reads as a list row, not a bordered action. */
+.barrio-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--color-charcoal);
+  cursor: pointer;
+}
+
+.barrio-option:hover,
+.barrio-option[aria-selected='true'] {
+  background: var(--color-paper-mist);
+}
+
+.barrio-option:focus-visible {
+  outline: 2px solid var(--color-electric-blue);
+  outline-offset: -2px;
+}
+
+.barrio-option-name {
+  font-weight: 500;
+}
+
+.barrio-option-extension {
+  color: var(--color-fog);
+  white-space: nowrap;
+}
+
+.barrio-status {
+  font-size: 12px;
+  color: var(--color-fog);
+  margin: 6px 0 0;
+}
+
+/* The "Referencia: <name>" badge once a barrio is selected — a soft mint
+   tint on a 9999px pill, near-black text. */
+.barrio-selected {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  background: var(--color-soft-mint);
+  border-radius: var(--radius-tags);
+  font-size: 14px;
+  color: var(--color-charcoal);
+}
+
+/* "Quitar" is a secondary action inside the badge — a ghost outline button
+   rather than the full near-black fill, so it never competes with the badge. */
+.barrio-clear {
+  font-size: 12px;
+  padding: 4px 12px;
+  background: transparent;
+  color: var(--color-charcoal);
+  border: 1px solid var(--color-charcoal);
+}
+
+.barrio-clear:hover:not(:disabled) {
+  background: var(--color-paper-mist);
+  border-color: var(--color-smoke);
 }

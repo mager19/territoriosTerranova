@@ -2,11 +2,14 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import { Map as MapLibreMap, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-import { ApiError, describeApiError, recordProgress } from '../../api/client.js';
+import { ApiError, DEFAULT_ACTOR, describeApiError, recordProgress } from '../../api/client.js';
 import {
   addVertex,
+  closeDraft,
+  coordinateToPointGeoJSON,
   createDraft,
   draftToLineStringGeoJSON,
+  draftToPolygonGeoJSON,
   insertVertex,
   moveVertex,
   removeVertexAt,
@@ -24,10 +27,11 @@ import {
   fitToPolygon,
   installEditorLayers,
   renderDraft,
+  renderPausePoint,
   renderSavedTerritory,
   screenPointToCoordinate
 } from '../territory-editor/map-editor.js';
-import type { Polygon } from '@territorios/geo';
+import type { Point, Polygon } from '@territorios/geo';
 
 export interface ProgressRecorderProps {
   readonly territoryId: number;
@@ -41,24 +45,25 @@ const ROUTE_MIN_VERTICES = 2;
 /**
  * Stands in for a real volunteer-facing recording tool, which doesn't
  * exist yet — "por ahora lo hace el admin" (2026-09-08): until there is
- * one, the admin draws the route themselves and records who actually
- * walked it. Reuses TerritoryEditor's exact click-to-add-vertex draft
+ * one, the admin draws the route with the established default admin actor.
+ * Reuses TerritoryEditor's exact click-to-add-vertex draft
  * (draft.ts) and its rendering layer (map-editor.ts): a route is simply a
  * draft that never closes — draftToLineStringGeoJSON, not
  * draftToPolygonGeoJSON, converts it. Point editing (drag to move, click
  * an edge to add, double-click to remove) mirrors TerritoryEditor's own
  * "edit points" mode, with `findEdgeIndexAtPoint`'s `closed` argument set
- * to false — a route has no wraparound edge back to its start. Only
- * records `route`; pause point and remaining-area geometry stay unbuilt
- * here on purpose, same "distinct, larger feature" scoping note
- * ProgressList already carries.
+ * to false — a route has no wraparound edge back to its start. The same map
+ * places one optional pause Point; remaining area stays optional and unknown
+ * unless a future explicit recorder adds it.
  */
 export function ProgressRecorder({ territoryId, boundary, onRecorded }: ProgressRecorderProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [draft, setDraft] = useState<DraftState>(createDraft());
-  const [recordedBy, setRecordedBy] = useState('');
+  const [pausePoint, setPausePoint] = useState<Point | null>(null);
+  const [activeTool, setActiveTool] = useState<'route' | 'remaining' | 'pause' | null>(null);
+  const [draftKind, setDraftKind] = useState<'route' | 'remaining' | null>(null);
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,22 +94,27 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
     mapRef.current = map;
   }, []);
 
-  // Click-to-extend: appends a point to the end of the route. Suppressed
-  // in edit-points mode — the effect below owns every pointer interaction
-  // there (drag/insert/remove), same split as TerritoryEditor.
+  // Click-to-draw is explicitly tool-gated: one active tool places route
+  // vertices, the other replaces the single pause marker. This prevents a
+  // click intended for one geometry from mutating the other.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
     const handleClick = (event: MapMouseEvent) => {
-      if (editingPoints) return;
+      if (editingPoints || activeTool === null) return;
       const coordinate = screenPointToCoordinate(map, event.point);
-      setDraft((current) => addVertex(current, coordinate));
+      if (activeTool === 'route' || activeTool === 'remaining') {
+        setDraft((current) => addVertex(current, coordinate));
+      } else {
+        setPausePoint(coordinateToPointGeoJSON(coordinate));
+        setActiveTool(null);
+      }
     };
     map.on('click', handleClick);
     return () => {
       map.off('click', handleClick);
     };
-  }, [mapReady, editingPoints]);
+  }, [mapReady, editingPoints, activeTool]);
 
   // Point editing: drag to move, click an edge to insert, double-click a
   // point to remove. `closed: false` throughout — a route never wraps
@@ -193,27 +203,39 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
+    renderPausePoint(map, pausePoint);
+  }, [pausePoint, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
     renderSavedTerritory(map, boundary);
     if (boundary) {
       fitToPolygon(map, boundary);
     }
   }, [boundary, mapReady]);
 
-  const route = draftToLineStringGeoJSON(draft);
-  const canSave = route !== null && recordedBy.trim() !== '';
+  const route = draftKind === 'route' ? draftToLineStringGeoJSON(draft) : null;
+  const remainingArea = draftKind === 'remaining' && draft.isClosed ? draftToPolygonGeoJSON(draft) : null;
+  const canSave = route !== null || remainingArea !== null || pausePoint !== null;
 
   async function handleSave(): Promise<void> {
-    if (!route) return;
+    if (!route && !remainingArea && !pausePoint) return;
     setSaving(true);
     setError(null);
     try {
       await recordProgress(territoryId, {
-        recordedBy: recordedBy.trim(),
+        recordedBy: DEFAULT_ACTOR,
         note: note.trim() === '' ? undefined : note.trim(),
-        route
+        ...(pausePoint === null ? {} : { pausePoint }),
+        ...(route === null ? {} : { route }),
+        ...(remainingArea === null ? {} : { remainingArea })
       });
       setDraft(resetDraft());
+      setPausePoint(null);
       setEditingPoints(false);
+      setActiveTool(null);
+      setDraftKind(null);
       setNote('');
       onRecorded();
     } catch (caught) {
@@ -225,8 +247,8 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
 
   return (
     <section aria-labelledby="progress-recorder-heading">
-      <h3 id="progress-recorder-heading">Registrar progreso</h3>
-      <p>Marcá el tramo recorrido en el mapa, un clic por punto.</p>
+      <h3 id="progress-recorder-heading">Registrar área pendiente o evidencia</h3>
+      <p>El área pendiente es el registro principal. La ruta y el punto de pausa son evidencia opcional.</p>
 
       <div
         ref={containerRef}
@@ -242,7 +264,54 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
       />
       <p className="map-attribution">{OSM_ATTRIBUTION}</p>
 
-      <div role="group" aria-label="Controles de dibujo de ruta" style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+      <div role="toolbar" aria-label="Herramientas de progreso" className="map-toolbar">
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(resetDraft());
+            setDraftKind('remaining');
+            setActiveTool('remaining');
+            setEditingPoints(false);
+          }}
+          aria-pressed={activeTool === 'remaining'}
+        >
+          Dibujar área pendiente
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(resetDraft());
+            setDraftKind('route');
+            setActiveTool('route');
+            setEditingPoints(false);
+          }}
+          aria-pressed={activeTool === 'route'}
+        >
+          Dibujar ruta
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setDraft((current) => closeDraft(current));
+            setActiveTool(null);
+          }}
+          disabled={draftKind !== 'remaining' || draft.vertices.length < 3 || draft.isClosed}
+        >
+          Cerrar área pendiente
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTool('pause');
+            setEditingPoints(false);
+          }}
+          aria-pressed={activeTool === 'pause'}
+        >
+          Colocar pausa
+        </button>
+        <button type="button" onClick={() => setPausePoint(null)} disabled={pausePoint === null}>
+          Quitar pausa
+        </button>
         <button
           type="button"
           onClick={() => setDraft((current) => undoVertex(current))}
@@ -254,17 +323,37 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
           type="button"
           onClick={() => {
             setDraft(resetDraft());
-            setEditingPoints(false);
+            setDraftKind(null);
+            setActiveTool(null);
           }}
           disabled={draft.vertices.length === 0}
         >
-          Borrar todo
+          Quitar dibujo
         </button>
-        {draft.vertices.length >= ROUTE_MIN_VERTICES && (
-          <button type="button" onClick={() => setEditingPoints((current) => !current)} aria-pressed={editingPoints}>
-            {editingPoints ? 'Dejar de editar puntos' : 'Editar puntos'}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => {
+              setDraft(resetDraft());
+              setDraftKind(null);
+            setPausePoint(null);
+            setEditingPoints(false);
+            setActiveTool(null);
+          }}
+          disabled={draft.vertices.length === 0 && pausePoint === null}
+        >
+          Cancelar registro
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setEditingPoints((current) => !current);
+            setActiveTool(null);
+          }}
+          disabled={draftKind !== 'route' || draft.vertices.length < ROUTE_MIN_VERTICES}
+          aria-pressed={editingPoints}
+        >
+          Editar vértices
+        </button>
       </div>
 
       <form
@@ -275,15 +364,6 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
         style={{ marginTop: '0.75rem' }}
       >
         <div>
-          <label htmlFor="progress-recorded-by">Registrado por (qué voluntario)</label>
-          <input
-            id="progress-recorded-by"
-            value={recordedBy}
-            onChange={(event) => setRecordedBy(event.target.value)}
-            required
-          />
-        </div>
-        <div>
           <label htmlFor="progress-note">Nota (opcional)</label>
           <input id="progress-note" value={note} onChange={(event) => setNote(event.target.value)} />
         </div>
@@ -291,11 +371,19 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
         <p role="status">
           {editingPoints
             ? 'Arrastrá un punto para moverlo, hacé clic en un borde para agregar uno, doble clic en un punto para borrarlo.'
-            : draft.vertices.length === 0
-              ? 'Hacé clic en el mapa para ubicar el primer punto.'
-              : draft.vertices.length === 1
-                ? '1 punto ubicado — se necesitan al menos 2 para guardar una ruta.'
-                : `${draft.vertices.length} puntos ubicados. Editá puntos para ajustar uno, o guardá.`}
+              : activeTool === 'route'
+                ? 'Hacé clic en el mapa para agregar puntos a la ruta.'
+                : activeTool === 'remaining'
+                  ? 'Hacé clic en el mapa para delimitar el área pendiente y después usá “Cerrar área pendiente”.'
+                : activeTool === 'pause'
+                ? 'Hacé clic en el mapa para colocar el punto de pausa.'
+                : draft.vertices.length === 0 && pausePoint === null
+                  ? 'Elegí “Dibujar ruta” o “Colocar pausa” para comenzar.'
+                  : draft.vertices.length === 1
+                    ? '1 punto ubicado — se necesitan al menos 2 para guardar una ruta.'
+                    : remainingArea !== null
+                      ? 'Área pendiente delimitada. Guardá para registrar esta cobertura.'
+                      : `${draft.vertices.length} puntos de ruta${pausePoint === null ? '' : ' y un punto de pausa'} registrados. Editá vértices para ajustar la ruta, o guardá.`}
         </p>
 
         {error && (

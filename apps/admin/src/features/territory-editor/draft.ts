@@ -149,6 +149,11 @@ export interface DraftLineStringGeoJSON {
   readonly coordinates: readonly Coordinate[];
 }
 
+/** Converts one WGS84 draft coordinate into the RFC 7946 Point used for a progress pause marker. */
+export function coordinateToPointGeoJSON(coordinate: Coordinate): { readonly type: 'Point'; readonly coordinates: Coordinate } {
+  return { type: 'Point', coordinates: coordinate };
+}
+
 /**
  * Converts an in-progress draft into RFC 7946 GeoJSON as an open
  * LineString — for recording a progress route (ProgressRecorder), reusing

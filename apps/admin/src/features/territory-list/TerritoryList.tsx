@@ -3,37 +3,38 @@ import { useEffect, useState, type JSX } from 'react';
 import {
   ApiError,
   describeApiError,
-  getTerritory,
   listTerritories,
-  type Territory,
-  type TerritoryWithRevisions
+  type TerritoryListItem
 } from '../../api/client.js';
+import { polygonToThumbnail } from './thumbnail.js';
 
 export interface TerritoryListProps {
-  readonly selectedTerritoryId: number | null;
-  readonly onSelect: (territory: TerritoryWithRevisions | null) => void;
   /** Bumped by the parent after a successful save, to force a refetch. */
   readonly refreshToken: number;
 }
 
+const OPERATIONAL_STATE_LABELS: Record<TerritoryListItem['operationalState'], string> = {
+  no_record: 'Sin registro',
+  in_progress: 'En progreso',
+  paused: 'Pausado',
+  cycle_completed: 'Ciclo completado',
+  reopened: 'Reabierto — en progreso'
+};
+
 /**
- * The non-map, keyboard-operable fallback for reviewing and selecting
- * territories (A5 brief DoD). Every control here is a native <button>,
- * reachable by Tab, with the browser's default focus ring never
- * suppressed — this is what a keyboard or screen-reader user relies on
- * instead of clicking the map canvas.
- *
- * Per-revision history (who changed what, when) is deliberately NOT
- * duplicated here — AuditHistory (TerritoryDetail, once a territory is
- * selected) already logs every `revision_submitted` event with the same
- * author/timestamp, alongside sharing and progress events, as one
- * coherent log. Showing it again here was redundant (found live,
- * 2026-09-08: "no es necesario mostrarlo acá").
+ * The territory grid (A5 brief's non-map review surface). Every card is a
+ * real `<a href="/territorios/:id">` anchor — the whole card is clickable,
+ * keyboard-operable (Tab + the browser's default focus ring, never
+ * suppressed), and middle-click/copy-link friendly because the href is a
+ * real URL. This component only lists: selecting a territory is now the
+ * deep-link's job (App fetches on arrival), so there is no `onSelect` and
+ * no `getTerritory` here.
  */
-export function TerritoryList({ selectedTerritoryId, onSelect, refreshToken }: TerritoryListProps): JSX.Element {
-  const [territories, setTerritories] = useState<readonly Territory[]>([]);
+export function TerritoryList({ refreshToken }: TerritoryListProps): JSX.Element {
+  const [territories, setTerritories] = useState<readonly TerritoryListItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [stateFilter, setStateFilter] = useState<'all' | TerritoryListItem['operationalState']>('all');
 
   useEffect(() => {
     let cancelled = false;
@@ -53,39 +54,51 @@ export function TerritoryList({ selectedTerritoryId, onSelect, refreshToken }: T
     };
   }, [refreshToken]);
 
-  async function handleSelect(id: number): Promise<void> {
-    try {
-      const territory = await getTerritory(id);
-      onSelect(territory);
-    } catch (caught) {
-      setError(caught instanceof ApiError ? describeApiError(caught) : 'No se pudo cargar ese territorio.');
-    }
-  }
-
   return (
     <section aria-labelledby="territory-list-heading">
       <h2 id="territory-list-heading">Territorios</h2>
       {error && <p role="alert">{error}</p>}
       {loading && <p role="status">Cargando territorios…</p>}
-      {!loading && territories.length === 0 && <p>Todavía no hay territorios. Dibujá uno abajo.</p>}
+      {!loading && territories.length === 0 && <p>Todavía no hay territorios. Creá el primero desde «Nuevo Territorio».</p>}
 
-      <ul>
-        {territories.map((territory) => (
-          <li key={territory.id}>
-            <button
-              type="button"
-              aria-current={territory.id === selectedTerritoryId ? 'true' : undefined}
-              onClick={() => void handleSelect(territory.id)}
-            >
-              {territory.name} — revisión {territory.currentRevisionNumber}
-            </button>
-          </li>
-        ))}
+      <label htmlFor="operational-state-filter">Filtrar por estado operativo</label>
+      <select id="operational-state-filter" value={stateFilter} onChange={(event) => setStateFilter(event.target.value as typeof stateFilter)}>
+        <option value="all">Todos los estados</option>
+        <option value="no_record">Sin registro</option>
+        <option value="in_progress">En progreso</option>
+        <option value="paused">Pausado</option>
+        <option value="cycle_completed">Ciclo completado</option>
+        <option value="reopened">Reabierto — en progreso</option>
+      </select>
+      <ul className="territory-grid">
+        {territories.filter((territory) => stateFilter === 'all' || territory.operationalState === stateFilter).map((territory) => {
+          const thumbnail = territory.geometry === null ? null : polygonToThumbnail(territory.geometry);
+          return (
+            <li key={territory.id}>
+              <a className="territory-card" href={`/territorios/${territory.id}`}>
+                {thumbnail ? (
+                  <svg
+                    className="territory-thumbnail"
+                    viewBox={thumbnail.viewBox}
+                    role="img"
+                    aria-label={`Contorno de ${territory.name}`}
+                    focusable="false"
+                  >
+                    <polygon points={thumbnail.points} />
+                  </svg>
+                ) : (
+                  <div className="territory-thumbnail territory-thumbnail--empty">Sin contorno</div>
+                )}
+                <span className="territory-card-name">{territory.name}</span>
+                <span className="territory-card-number">{territory.number ?? '—'}</span>
+                <span className="territory-card-revision">revisión {territory.currentRevisionNumber}</span>
+                <span className="territory-card-status">{OPERATIONAL_STATE_LABELS[territory.operationalState]}</span>
+                {territory.status === 'archived' && <span className="territory-card-status">(archivado)</span>}
+              </a>
+            </li>
+          );
+        })}
       </ul>
-
-      <button type="button" onClick={() => onSelect(null)} disabled={selectedTerritoryId === null}>
-        Dibujar un territorio nuevo
-      </button>
     </section>
   );
 }

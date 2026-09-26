@@ -94,12 +94,42 @@ export async function recordProgress(
   const note = input.note?.trim() || null;
 
   return withTransaction(pool, async (client) => {
+    // This row lock makes the first coverage record atomically open cycle 1
+    // and prevents a completed cycle from receiving a late progress entry.
     const { rows: territoryRows } = await client.query<{ id: string }>(
-      `SELECT id FROM territories WHERE id = $1`,
+      `SELECT id FROM territories WHERE id = $1 FOR UPDATE`,
       [territoryId]
     );
     if (!territoryRows[0]) {
       throw new TerritoryNotFoundError(territoryId);
+    }
+
+    const { rows: operationalRows } = await client.query<{ action: string; cycle_number: number }>(
+      `SELECT action, cycle_number
+       FROM territory_operational_events
+       WHERE territory_id = $1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [territoryId]
+    );
+    const operational = operationalRows[0];
+    if (operational?.action === 'cycle_completed') {
+      throw new ValidationError('reopen the completed cycle before recording more progress');
+    }
+    if (!operational) {
+      await client.query(
+        `INSERT INTO territory_operational_events (territory_id, cycle_number, action, actor)
+         VALUES ($1, 1, 'in_progress', $2)`,
+        [territoryId, recordedBy]
+      );
+      await recordAuditEvent(client, {
+        entityType: 'territory',
+        entityId: territoryId,
+        action: 'operational_in_progress',
+        actor: recordedBy,
+        reason: 'operational cycle opened by first progress record',
+        payload: { cycleNumber: 1 }
+      });
     }
 
     try {

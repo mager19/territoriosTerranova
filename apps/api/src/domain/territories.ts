@@ -29,6 +29,17 @@ export interface Territory {
   readonly currentRevisionNumber: number;
 }
 
+/**
+ * A territory as returned by the list endpoint — the base `Territory` plus
+ * the CURRENT revision's geometry (the highest `revision_number`), so the
+ * admin grid can render a static thumbnail without a per-card WebGL map.
+ * `geometry` is `null` when the territory has no revisions yet.
+ */
+export interface TerritoryListItem extends Territory {
+  readonly geometry: Polygon | null;
+  readonly operationalState: 'no_record' | 'in_progress' | 'paused' | 'cycle_completed' | 'reopened';
+}
+
 export interface TerritoryRevision {
   readonly id: number;
   readonly territoryId: number;
@@ -56,6 +67,11 @@ interface TerritoryRow {
   readonly current_revision_number: string | null;
 }
 
+interface TerritoryListItemRow extends TerritoryRow {
+  readonly geometry: Polygon | null;
+  readonly operational_state: TerritoryListItem['operationalState'];
+}
+
 interface RevisionRow {
   readonly id: string;
   readonly territory_id: string;
@@ -74,6 +90,10 @@ function toTerritory(row: TerritoryRow): Territory {
     createdAt: row.created_at,
     currentRevisionNumber: row.current_revision_number === null ? 0 : Number(row.current_revision_number)
   };
+}
+
+function toTerritoryListItem(row: TerritoryListItemRow): TerritoryListItem {
+  return { ...toTerritory(row), geometry: row.geometry, operationalState: row.operational_state };
 }
 
 function toRevision(row: RevisionRow): TerritoryRevision {
@@ -173,16 +193,32 @@ export async function createTerritory(
   });
 }
 
-export async function listTerritories(pool: TransactionalPool): Promise<readonly Territory[]> {
+export async function listTerritories(pool: TransactionalPool): Promise<readonly TerritoryListItem[]> {
   return withTransaction(pool, async (client) => {
-    const { rows } = await client.query<TerritoryRow>(
+    const { rows } = await client.query<TerritoryListItemRow>(
       `SELECT t.id, t.name, t.number, t.status, t.created_at,
               (SELECT max(r.revision_number) FROM territory_revisions r WHERE r.territory_id = t.id)
-                AS current_revision_number
+                AS current_revision_number,
+               latest.geometry,
+               COALESCE(operation.action::text, 'no_record') AS operational_state
        FROM territories t
+       LEFT JOIN LATERAL (
+         SELECT ST_AsGeoJSON(r.geom)::json AS geometry
+         FROM territory_revisions r
+         WHERE r.territory_id = t.id
+         ORDER BY r.revision_number DESC
+         LIMIT 1
+       ) latest ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT action
+         FROM territory_operational_events
+         WHERE territory_id = t.id
+         ORDER BY id DESC
+         LIMIT 1
+       ) operation ON TRUE
        ORDER BY t.id`
     );
-    return rows.map(toTerritory);
+    return rows.map(toTerritoryListItem);
   });
 }
 

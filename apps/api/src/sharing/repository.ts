@@ -168,7 +168,7 @@ export async function resolvePublicTerritoryView(
          st.expires_at,
          t.name AS territory_name,
          ST_AsGeoJSON(tr.geom)::json AS boundary,
-         ST_AsGeoJSON(pe.remaining_area)::json AS remaining_area,
+         ST_AsGeoJSON(coverage.remaining_area)::json AS remaining_area,
          ST_AsGeoJSON(pe.route)::json AS route
        FROM share_tokens st
        JOIN territories t ON t.id = st.territory_id
@@ -179,11 +179,30 @@ export async function resolvePublicTerritoryView(
          ORDER BY revision_number DESC
          LIMIT 1
        ) tr ON TRUE
-       LEFT JOIN LATERAL (
-         SELECT remaining_area, route
-         FROM progress_entries
-         WHERE territory_id = t.id
-         ORDER BY recorded_at DESC
+        LEFT JOIN LATERAL (
+          SELECT min(created_at) AS started_at
+          FROM territory_operational_events
+          WHERE territory_id = t.id
+            AND cycle_number = (
+              SELECT cycle_number FROM territory_operational_events
+              WHERE territory_id = t.id ORDER BY id DESC LIMIT 1
+            )
+        ) cycle_start ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT remaining_area
+          FROM progress_entries
+          WHERE territory_id = t.id
+            AND remaining_area IS NOT NULL
+            AND recorded_at >= cycle_start.started_at
+          ORDER BY recorded_at DESC, id DESC
+          LIMIT 1
+        ) coverage ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT route
+          FROM progress_entries
+          WHERE territory_id = t.id
+            AND recorded_at >= cycle_start.started_at
+          ORDER BY recorded_at DESC
          LIMIT 1
        ) pe ON TRUE
        WHERE st.token_hash = $1`,
