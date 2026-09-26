@@ -292,10 +292,86 @@ export function renderReferenceBarrios(map: MapLibreMap, barrios: readonly Refer
  * Renders the remaining-area geometry from the latest progress entry, or
  * clears the layer when there is none — an empty layer here is the visual
  * counterpart of the "unknown" status text; it never shows a guessed shape
- * (AGENTS.md: coverage is never inferred from a territory polygon).
+ * (AGENTS.md: coverage is never inferred from a territory polygon). An
+ * explicit EMPTY polygon ("nothing left", db/migrations/0007) also clears
+ * it: there is simply nothing to draw.
  */
-export function renderRemainingArea(map: MapLibreMap, geometry: Polygon | null): void {
+export function renderRemainingArea(map: MapLibreMap, geometry: Polygon | MultiPolygon | null): void {
   const source = asGeoJsonSource(map.getSource('remaining-area'));
+  if (!source) return;
+  source.setData(
+    geometry === null || geometry.coordinates.length === 0
+      ? { type: 'FeatureCollection', features: [] }
+      : { type: 'FeatureCollection', features: [{ type: 'Feature', properties: null, geometry }] }
+  );
+}
+
+/**
+ * Session layers for the admin-only coverage recorder, added on top of
+ * installEditorLayers (call that first):
+ *
+ * - progress-sessions: each earlier session's covered area in its own color
+ *   (feature property `color`), with a stronger fill/outline for the one
+ *   highlighted from the session list (`highlighted`). Inserted below the
+ *   remaining-area and draft layers so what is being drawn stays on top.
+ * - session-secondary: the part of the in-progress session that is NOT
+ *   being edited right now (the closed covered area while the route is
+ *   drawn, or vice versa) — shown, but not editable, so a click never
+ *   mutates the wrong geometry.
+ */
+export function installSessionLayers(map: MapLibreMap): void {
+  map.addSource('progress-sessions', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer(
+    {
+      id: 'progress-sessions-fill',
+      type: 'fill',
+      source: 'progress-sessions',
+      paint: {
+        'fill-color': ['get', 'color'],
+        'fill-opacity': ['case', ['boolean', ['get', 'highlighted'], false], 0.65, 0.35]
+      }
+    },
+    'remaining-area-fill'
+  );
+  map.addLayer(
+    {
+      id: 'progress-sessions-line',
+      type: 'line',
+      source: 'progress-sessions',
+      paint: {
+        'line-color': ['get', 'color'],
+        'line-width': ['case', ['boolean', ['get', 'highlighted'], false], 3, 1]
+      }
+    },
+    'remaining-area-fill'
+  );
+
+  map.addSource('session-secondary', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer({
+    id: 'session-secondary-fill',
+    type: 'fill',
+    source: 'session-secondary',
+    filter: ['==', ['geometry-type'], 'Polygon'],
+    paint: { 'fill-color': '#e08a2e', 'fill-opacity': 0.2 }
+  });
+  map.addLayer({
+    id: 'session-secondary-line',
+    type: 'line',
+    source: 'session-secondary',
+    paint: { 'line-color': '#a85a12', 'line-width': 2 }
+  });
+}
+
+/** Renders already-built session features (see territory-detail/sessions.ts), or clears the layer. */
+export function renderSessions(map: MapLibreMap, sessions: FeatureCollection): void {
+  const source = asGeoJsonSource(map.getSource('progress-sessions'));
+  if (!source) return;
+  source.setData(sessions);
+}
+
+/** Renders the non-edited half of the in-progress session (a closed covered area or a route), or clears it. */
+export function renderSecondaryDraft(map: MapLibreMap, geometry: Geometry | null): void {
+  const source = asGeoJsonSource(map.getSource('session-secondary'));
   if (!source) return;
   source.setData(
     geometry === null

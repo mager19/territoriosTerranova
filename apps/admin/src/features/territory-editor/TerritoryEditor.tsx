@@ -41,7 +41,7 @@ import {
   renderSavedTerritory,
   screenPointToCoordinate
 } from './map-editor.js';
-import type { Polygon } from '@territorios/geo';
+import type { MultiPolygon, Polygon } from '@territorios/geo';
 import { formatKm2, nextActiveIndex } from './barrio.js';
 
 export interface TerritoryEditorProps {
@@ -49,7 +49,7 @@ export interface TerritoryEditorProps {
   readonly selectedTerritory: TerritoryWithRevisions | null;
   readonly onSaved: (territory: TerritoryWithRevisions) => void;
   /** The latest recorded progress entry's remaining-area geometry, or null when unknown (slice 2: TerritoryDetail owns fetching this). */
-  readonly remainingAreaGeometry?: Polygon | null;
+  readonly remainingAreaGeometry?: Polygon | MultiPolygon | null;
 }
 
 /**

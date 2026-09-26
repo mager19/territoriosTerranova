@@ -1,11 +1,12 @@
-import { useState, type JSX } from 'react';
+import { useCallback, useEffect, useMemo, useState, type JSX } from 'react';
 
-import type { ProgressEntry } from '../../api/client.js';
+import { listProgress, type ProgressEntry, type TerritoryOperationalStatus } from '../../api/client.js';
 import { AuditHistory } from './AuditHistory.js';
 import { ProgressList } from './ProgressList.js';
 import { ProgressRecorder } from './ProgressRecorder.js';
 import { OperationalStatusPanel } from './OperationalStatusPanel.js';
 import { SharePanel } from './SharePanel.js';
+import { currentCycleSessions } from './sessions.js';
 import type { Polygon } from '@territorios/geo';
 
 export interface TerritoryDetailProps {
@@ -32,6 +33,35 @@ export interface TerritoryDetailProps {
 export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemainingAreaChange, onEdit }: TerritoryDetailProps): JSX.Element {
   const [progressVersion, setProgressVersion] = useState(0);
   const combinedRefreshToken = refreshToken + progressVersion;
+  const [status, setStatus] = useState<TerritoryOperationalStatus | null>(null);
+  const [entries, setEntries] = useState<readonly ProgressEntry[]>([]);
+
+  // Sessions feed the recorder map; a failed load only hides earlier
+  // sessions there (ProgressList reports its own load errors).
+  useEffect(() => {
+    let cancelled = false;
+    listProgress(territoryId)
+      .then((result) => {
+        if (!cancelled) setEntries(result.entries);
+      })
+      .catch(() => {
+        if (!cancelled) setEntries([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [territoryId, combinedRefreshToken]);
+
+  // Stable identity: OperationalStatusPanel refetches whenever this changes.
+  const handleStatus = useCallback(
+    (next: TerritoryOperationalStatus) => {
+      setStatus(next);
+      onRemainingAreaChange(next.remainingArea);
+    },
+    [onRemainingAreaChange]
+  );
+
+  const sessions = useMemo(() => currentCycleSessions(entries, status?.cycleNumber ?? null), [entries, status]);
 
   return (
     <section aria-labelledby="territory-detail-heading">
@@ -50,11 +80,13 @@ export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemaini
         territoryId={territoryId}
         refreshToken={combinedRefreshToken}
         onChanged={() => setProgressVersion((version) => version + 1)}
-        onRemainingAreaChange={(status) => onRemainingAreaChange(status.remainingArea)}
+        onRemainingAreaChange={handleStatus}
       />
       <ProgressRecorder
         territoryId={territoryId}
         boundary={boundary}
+        remainingArea={status?.remainingArea ?? null}
+        sessions={sessions}
         onRecorded={() => setProgressVersion((version) => version + 1)}
       />
       <ProgressList territoryId={territoryId} refreshToken={combinedRefreshToken} />

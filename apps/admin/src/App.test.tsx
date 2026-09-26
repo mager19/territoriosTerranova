@@ -42,7 +42,7 @@ describe('App', () => {
     const html = renderToStaticMarkup(
       <TerritoryDetail territoryId={1} boundary={null} refreshToken={0} onRemainingAreaChange={() => undefined} onEdit={() => undefined} />
     );
-    expect(html.indexOf('Cobertura y estado operativo')).toBeLessThan(html.indexOf('Registrar área pendiente o evidencia'));
+    expect(html.indexOf('Cobertura y estado operativo')).toBeLessThan(html.indexOf('Registrar sesión'));
   });
 
   it('renders a sidebar nav with all three view links', () => {

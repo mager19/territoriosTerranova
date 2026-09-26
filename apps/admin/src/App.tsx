@@ -4,7 +4,7 @@ import { TerritoryDetail } from './features/territory-detail/TerritoryDetail.js'
 import { TerritoryEditor } from './features/territory-editor/TerritoryEditor.js';
 import { TerritoryList } from './features/territory-list/TerritoryList.js';
 import { TerritoryOverview } from './features/territory-overview/TerritoryOverview.js';
-import type { Polygon } from '@territorios/geo';
+import type { MultiPolygon, Polygon } from '@territorios/geo';
 import { getTerritory, type TerritoryWithRevisions } from './api/client.js';
 import { matchPath, pathForView, type RouteMatch, type View } from './routes.js';
 
@@ -39,7 +39,7 @@ function activeNavItem(view: View): 'resumen' | 'territorios' | 'nuevo' {
 export function App(): JSX.Element {
   const [selected, setSelected] = useState<TerritoryWithRevisions | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [remainingAreaGeometry, setRemainingAreaGeometry] = useState<Polygon | null>(null);
+  const [remainingAreaGeometry, setRemainingAreaGeometry] = useState<Polygon | MultiPolygon | null>(null);
   const [route, setRoute] = useState<RouteMatch>(() => matchPath(currentPathname()));
 
   /**
