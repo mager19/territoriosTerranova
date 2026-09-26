@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type JSX, type KeyboardEvent as ReactKeybo
 import { Map as MapLibreMap, NavigationControl, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
+import { ADMIN_BASEMAP, BasemapAttribution, applyBasemap } from './basemap-ui.js';
 import {
   ApiError,
   createTerritory,
@@ -28,8 +29,6 @@ import {
 import {
   BELLO_CENTER,
   BELLO_ZOOM,
-  OSM_ATTRIBUTION,
-  createBelloMapStyle,
   findEdgeIndexAtPoint,
   findVertexIndexAtPoint,
   fitToMultiPolygon,
@@ -129,10 +128,10 @@ export function TerritoryEditor({
 
     const map = new MapLibreMap({
       container: containerRef.current,
-      style: createBelloMapStyle(),
       center: BELLO_CENTER,
       zoom: BELLO_ZOOM
     });
+    applyBasemap(map, ADMIN_BASEMAP);
     map.addControl(new NavigationControl({ showCompass: false }), 'top-right');
     map.on('load', () => {
       installEditorLayers(map);
@@ -453,7 +452,7 @@ export function TerritoryEditor({
         }`}
         style={{ width: '100%', height: '420px', border: '1px solid var(--map-border, #ccc)' }}
       />
-      <p className="map-attribution">{OSM_ATTRIBUTION}</p>
+      <BasemapAttribution kind={ADMIN_BASEMAP.kind} />
 
       <div className="barrio-combobox" ref={barrioComboboxRef}>
         <label htmlFor="barrio-search">Barrio de referencia</label>

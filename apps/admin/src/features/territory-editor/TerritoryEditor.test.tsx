@@ -17,6 +17,7 @@ vi.mock('maplibre-gl', () => ({
   Map: class {
     addControl(): void {}
     on(): void {}
+    setStyle(): void {}
   },
   NavigationControl: class {}
 }));

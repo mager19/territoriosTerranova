@@ -2,12 +2,11 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import { Map as MapLibreMap } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
+import { ADMIN_BASEMAP, BasemapAttribution, applyBasemap } from '../territory-editor/basemap-ui.js';
 import { ApiError, describeApiError, getTerritory, type TerritoryWithRevisions } from '../../api/client.js';
 import {
   BELLO_CENTER,
   BELLO_ZOOM,
-  OSM_ATTRIBUTION,
-  createBelloMapStyle,
   fitToPolygon,
   installEditorLayers,
   renderSavedTerritory
@@ -52,10 +51,10 @@ export function TerritoryPreview({ territoryId, onClose }: TerritoryPreviewProps
 
     const map = new MapLibreMap({
       container: containerRef.current,
-      style: createBelloMapStyle(),
       center: BELLO_CENTER,
       zoom: BELLO_ZOOM
     });
+    applyBasemap(map, ADMIN_BASEMAP);
     map.on('load', () => {
       installEditorLayers(map);
       setMapReady(true);
@@ -145,7 +144,7 @@ export function TerritoryPreview({ territoryId, onClose }: TerritoryPreviewProps
         aria-label="Mapa de vista previa del territorio seleccionado."
         className="territory-preview-map"
       />
-      <p className="map-attribution">{OSM_ATTRIBUTION}</p>
+      <BasemapAttribution kind={ADMIN_BASEMAP.kind} />
     </section>
   );
 }
