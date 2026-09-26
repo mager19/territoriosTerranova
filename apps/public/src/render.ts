@@ -1,3 +1,11 @@
+import {
+  MAPTILER_COPYRIGHT_URL,
+  MAPTILER_HOME_URL,
+  MAPTILER_LOGO_URL,
+  OSM_COPYRIGHT_URL,
+  type BasemapKind
+} from './basemap.js';
+import { OSM_ATTRIBUTION } from './map.js';
 import { describeState, type ViewState } from './status.js';
 
 export interface PageElements {
@@ -26,7 +34,7 @@ export interface PageElements {
  * essential information (territory name, coverage status) independent of
  * whether the map ever renders, e.g. no WebGL on an old outdoor device.
  */
-export function mountPage(root: HTMLElement): PageElements {
+export function mountPage(root: HTMLElement, basemap: BasemapKind = 'osm'): PageElements {
   const heading = document.createElement('h1');
 
   const status = document.createElement('p');
@@ -59,12 +67,50 @@ export function mountPage(root: HTMLElement): PageElements {
   mapContainer.setAttribute('aria-label', 'Territory map');
   mapContainer.hidden = true;
 
-  const attribution = document.createElement('p');
-  attribution.className = 'attribution';
-  attribution.textContent = '© OpenStreetMap contributors';
+  const attribution = createAttribution(basemap);
 
   root.replaceChildren(heading, status, actions, locationStatus, mapContainer, attribution);
   return { heading, status, actions, directionsLink, locateButton, locationStatus, mapContainer };
+}
+
+function externalLink(href: string, text: string): HTMLAnchorElement {
+  const link = document.createElement('a');
+  link.href = href;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = text;
+  return link;
+}
+
+/**
+ * The page's own attribution line (MapLibre's attribution control is
+ * disabled in main.ts). OSM fallback: plain text, unchanged. MapTiler:
+ * the free plan requires its logo plus "© MapTiler © OpenStreetMap
+ * contributors", both linked to their copyright pages.
+ */
+function createAttribution(basemap: BasemapKind): HTMLParagraphElement {
+  const attribution = document.createElement('p');
+  attribution.className = 'attribution';
+  if (basemap === 'osm') {
+    attribution.textContent = OSM_ATTRIBUTION;
+    return attribution;
+  }
+
+  const logoLink = externalLink(MAPTILER_HOME_URL, '');
+  logoLink.className = 'maptiler-logo';
+  const logo = document.createElement('img');
+  logo.src = MAPTILER_LOGO_URL;
+  logo.alt = 'MapTiler logo';
+  logo.height = 18;
+  logoLink.append(logo);
+
+  attribution.append(
+    logoLink,
+    externalLink(MAPTILER_COPYRIGHT_URL, '© MapTiler'),
+    ' ',
+    externalLink(OSM_COPYRIGHT_URL, '© OpenStreetMap contributors')
+  );
+  return attribution;
 }
 
 export function renderStatus(elements: PageElements, state: ViewState): void {

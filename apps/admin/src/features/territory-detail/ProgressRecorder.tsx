@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import { Map as MapLibreMap, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
+import { ADMIN_BASEMAP, BasemapAttribution, applyBasemap } from '../territory-editor/basemap-ui.js';
 import { ApiError, DEFAULT_ACTOR, describeApiError, recordProgress } from '../../api/client.js';
 import {
   addVertex,
@@ -20,8 +21,6 @@ import {
 import {
   BELLO_CENTER,
   BELLO_ZOOM,
-  OSM_ATTRIBUTION,
-  createBelloMapStyle,
   findEdgeIndexAtPoint,
   findVertexIndexAtPoint,
   fitToPolygon,
@@ -83,10 +82,10 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
 
     const map = new MapLibreMap({
       container: containerRef.current,
-      style: createBelloMapStyle(),
       center: BELLO_CENTER,
       zoom: BELLO_ZOOM
     });
+    applyBasemap(map, ADMIN_BASEMAP);
     map.on('load', () => {
       installEditorLayers(map);
       setMapReady(true);
@@ -262,7 +261,7 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
         }`}
         style={{ width: '100%', height: '280px', border: '1px solid var(--map-border, #ccc)' }}
       />
-      <p className="map-attribution">{OSM_ATTRIBUTION}</p>
+      <BasemapAttribution kind={ADMIN_BASEMAP.kind} />
 
       <div role="toolbar" aria-label="Herramientas de progreso" className="map-toolbar">
         <button

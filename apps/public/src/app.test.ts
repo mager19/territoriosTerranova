@@ -31,6 +31,14 @@ describe('runApp', () => {
     expect(onTerritoryResolved).not.toHaveBeenCalled();
   });
 
+  it('renders the attribution line for the basemap main.ts selected', async () => {
+    const root = document.createElement('div');
+
+    await runApp(root, { locationHash: '', basemap: 'maptiler' });
+
+    expect(root.querySelector('p.attribution')?.textContent).toBe('© MapTiler © OpenStreetMap contributors');
+  });
+
   it('resolves a valid token and invokes the map callback exactly once', async () => {
     const root = document.createElement('div');
     const fetchImpl = vi.fn().mockResolvedValue(

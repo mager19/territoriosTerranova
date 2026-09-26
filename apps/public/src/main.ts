@@ -1,12 +1,12 @@
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 import { runApp } from './app.js';
+import { selectBasemap } from './basemap.js';
 import {
   BELLO_CENTER,
   BELLO_ZOOM,
   boundingBoxCenter,
   computeBoundingBox,
-  createBelloMapStyle,
   directionsUrl,
   fitToBoundingBox,
   haversineMeters,
@@ -19,8 +19,14 @@ if (container === null) {
   throw new Error('root container #root not found');
 }
 
+// MapTiler Streets v2 when VITE_MAPTILER_KEY is set, otherwise the OSM
+// raster fallback (docs/map-references.md "Basemap"). Only the style is
+// fetched from MapTiler — no geocoding/search.
+const basemap = selectBasemap(import.meta.env.VITE_MAPTILER_KEY);
+
 void runApp(container, {
   locationHash: window.location.hash,
+  basemap: basemap.kind,
   onTerritoryResolved: async (elements, result) => {
     const box = computeBoundingBox(result.view.boundary);
     const territoryStart = boundingBoxCenter(box);
@@ -36,11 +42,18 @@ void runApp(container, {
     const { Map, Marker } = await import('maplibre-gl');
     const map = new Map({
       container: elements.mapContainer,
-      style: createBelloMapStyle(),
       center: BELLO_CENTER,
       zoom: BELLO_ZOOM,
       attributionControl: false
     });
+    // Style set right after construction (what the constructor's `style`
+    // option does internally) so the MapTiler style can go through
+    // transformStyle; 'load' still fires once for either basemap.
+    if (basemap.kind === 'maptiler') {
+      map.setStyle(basemap.style, { transformStyle: basemap.transformStyle });
+    } else {
+      map.setStyle(basemap.style);
+    }
     map.on('load', () => {
       installTerritoryLayers(map);
       renderTerritory(map, result.view.boundary, result.view.remainingArea, result.view.route);
