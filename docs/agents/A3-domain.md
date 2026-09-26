@@ -52,6 +52,19 @@ territory, enforced transactionally against the constraint A2 built.~~
 Append timestamped progress entries with optional pause point, route, and
 remaining-area geometry. Expose the full audit history for a territory.
 
+**Superseded in part 2026-09-26 (coverage sessions,
+`db/migrations/0007_progress_covered_area.sql`):** every new entry is a
+session that REQUIRES the area covered in it; the client no longer sends a
+remaining area. The server derives it as (latest remaining area of the current
+cycle) minus (covered area), under the territory row lock. When the cycle has
+no remaining area yet, the request must carry the explicit
+`baseline: 'whole_territory'` confirmation (otherwise `baseline_required`);
+reopened cycles need a new baseline. Covered area, pause point, and route must
+lie within the current revision. Full coverage stores an explicit empty
+polygon (0% left), never NULL. The admin operational state exposes
+`progressPercent` (geodesic areas; null = unknown). `covered_area` is admin
+only and never part of the public view.
+
 ## Definition of done
 
 - [ ] Server-side geometry validation rejects invalid, zero-area, out-of-city, and

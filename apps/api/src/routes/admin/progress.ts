@@ -60,6 +60,8 @@ export function registerAdminProgressRoutes(app: FastifyInstance, deps: AdminPro
       const entry = await recordProgress(deps.pool, territoryId, {
         recordedBy: typeof body.recordedBy === 'string' ? body.recordedBy : '',
         note: typeof body.note === 'string' ? body.note : undefined,
+        coveredArea: body.coveredArea,
+        baseline: body.baseline,
         pausePoint: body.pausePoint,
         route: body.route,
         remainingArea: body.remainingArea

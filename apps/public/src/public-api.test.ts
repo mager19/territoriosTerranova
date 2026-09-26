@@ -90,6 +90,46 @@ describe('fetchPublicTerritory', () => {
     }
   });
 
+  it('accepts a MultiPolygon remaining area — subtracting a session can split what is left', async () => {
+    const multi = { type: 'MultiPolygon', coordinates: [BOUNDARY.coordinates] };
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(200, { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: multi, remainingAreaStatus: 'recorded', route: null })
+    );
+
+    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+
+    expect(result).toMatchObject({ status: 'ok', view: { remainingArea: multi, remainingAreaStatus: 'recorded' } });
+  });
+
+  it('keeps an explicit empty remaining area ("nothing left") distinct from unknown', async () => {
+    const empty = { type: 'Polygon', coordinates: [] };
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(200, { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: empty, remainingAreaStatus: 'recorded', route: null })
+    );
+
+    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+
+    expect(result).toMatchObject({ status: 'ok', view: { remainingArea: empty, remainingAreaStatus: 'recorded' } });
+  });
+
+  it('never carries a covered area into the view even if the API mistakenly sent one', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        territoryName: 'T-01',
+        boundary: BOUNDARY,
+        remainingArea: null,
+        remainingAreaStatus: 'unknown',
+        route: null,
+        coveredArea: BOUNDARY
+      })
+    );
+
+    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+
+    expect(result.status).toBe('ok');
+    expect(JSON.stringify(result)).not.toContain('coveredArea');
+  });
+
   it('treats an invalid route shape as "error", never a fabricated view', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse(200, {

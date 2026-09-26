@@ -22,7 +22,7 @@
  * distinguishing signal.
  */
 
-import type { LineString, Polygon } from '@territorios/geo';
+import type { LineString, MultiPolygon, Polygon } from '@territorios/geo';
 
 import { generateShareToken, hashShareToken } from './token-crypto.js';
 import { recordAuditEvent } from '../domain/audit.js';
@@ -128,7 +128,8 @@ export async function revokeShareToken(pool: TransactionalPool, tokenId: number,
 export interface PublicTerritoryView {
   readonly territoryName: string;
   readonly boundary: Polygon;
-  readonly remainingArea: Polygon | null;
+  /** Polygon or MultiPolygon since coverage sessions (0007); an empty polygon means nothing is left, null means unknown. */
+  readonly remainingArea: Polygon | MultiPolygon | null;
   readonly remainingAreaStatus: 'recorded' | 'unknown';
   /**
    * The latest progress entry's route line — deliberately exposed
@@ -145,7 +146,7 @@ interface PublicViewRow {
   readonly expires_at: string | null;
   readonly territory_name: string;
   readonly boundary: Polygon;
-  readonly remaining_area: Polygon | null;
+  readonly remaining_area: Polygon | MultiPolygon | null;
   readonly route: LineString | null;
 }
 

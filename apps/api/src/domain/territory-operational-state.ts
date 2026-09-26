@@ -1,6 +1,6 @@
 /** Immutable, administrator-controlled operational work cycles. */
 
-import type { Polygon } from '@territorios/geo';
+import type { MultiPolygon, Polygon } from '@territorios/geo';
 import type { PoolClient } from 'pg';
 
 import { recordAuditEvent } from './audit.js';
@@ -14,8 +14,16 @@ export interface TerritoryOperationalStatus {
   readonly state: OperationalState;
   readonly cycleNumber: number | null;
   readonly effectiveCompletionDate: string | null;
-  readonly remainingArea: Polygon | null;
+  /** Latest remaining area of the current cycle; an empty polygon means nothing is left, null means unknown. */
+  readonly remainingArea: Polygon | MultiPolygon | null;
   readonly remainingAreaStatus: 'recorded' | 'unknown';
+  /**
+   * Approximate progress of the current cycle, 0–100:
+   * 100 × (1 − geodesic area(remaining) / geodesic area(current revision)),
+   * clamped to [0, 100]. null (unknown) when the cycle has no remaining
+   * area — never inferred from the territory polygon.
+   */
+  readonly progressPercent: number | null;
 }
 
 interface EventRow {
@@ -68,11 +76,26 @@ async function queryTerritoryOperationalStatus(
       action: OperationalAction | null;
       cycle_number: number | null;
       effective_completion_date: Date | string | null;
-      remaining_area: Polygon | null;
+      remaining_area: Polygon | MultiPolygon | null;
+      progress_percent: number | null;
     }>(
       `SELECT t.id, latest.action, latest.cycle_number, latest.effective_completion_date,
-              ST_AsGeoJSON(coverage.remaining_area)::json AS remaining_area
+              ST_AsGeoJSON(coverage.remaining_area)::json AS remaining_area,
+              CASE
+                WHEN coverage.remaining_area IS NULL OR current_revision.geom IS NULL THEN NULL
+                ELSE 100 * GREATEST(0, LEAST(1,
+                  1 - ST_Area(coverage.remaining_area::geography)
+                      / NULLIF(ST_Area(current_revision.geom::geography), 0)
+                ))
+              END AS progress_percent
        FROM territories t
+       LEFT JOIN LATERAL (
+         SELECT geom
+         FROM territory_revisions
+         WHERE territory_id = t.id
+         ORDER BY revision_number DESC
+         LIMIT 1
+       ) current_revision ON TRUE
        LEFT JOIN LATERAL (
          SELECT id, action, cycle_number, effective_completion_date, created_at
          FROM territory_operational_events
@@ -108,7 +131,8 @@ async function queryTerritoryOperationalStatus(
         ? row.effective_completion_date
         : row.effective_completion_date.toISOString().slice(0, 10),
     remainingArea: row.remaining_area,
-    remainingAreaStatus: row.remaining_area === null ? 'unknown' : 'recorded'
+    remainingAreaStatus: row.remaining_area === null ? 'unknown' : 'recorded',
+    progressPercent: row.progress_percent === null ? null : Number(row.progress_percent)
   };
 }
 

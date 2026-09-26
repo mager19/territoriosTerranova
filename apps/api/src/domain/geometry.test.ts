@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   validateOptionalPausePoint,
-  validateOptionalRemainingArea,
+  validateCoveredArea,
+  validateOptionalBaseline,
   validateOptionalRoute,
   validateTerritoryGeometry
 } from './geometry.js';
-import { InvalidGeometryError } from './errors.js';
+import { InvalidGeometryError, ValidationError } from './errors.js';
 
 const VALID_SQUARE = {
   type: 'Polygon',
@@ -156,29 +157,45 @@ describe('validateOptionalRoute', () => {
   });
 });
 
-describe('validateOptionalRemainingArea', () => {
+describe('validateCoveredArea', () => {
   const validArea = {
     type: 'Polygon',
     coordinates: [[[-75.574, 6.357], [-75.572, 6.357], [-75.572, 6.359], [-75.574, 6.357]]]
   };
 
-  it('returns undefined for undefined and null — this is what "unknown" means, never a computed shape', () => {
-    expect(validateOptionalRemainingArea(undefined)).toBeUndefined();
-    expect(validateOptionalRemainingArea(null)).toBeUndefined();
+  it('requires a covered area — a new session without one is rejected as an invalid request', () => {
+    expect(() => validateCoveredArea(undefined)).toThrow(ValidationError);
+    expect(() => validateCoveredArea(null)).toThrow(/coveredArea is required/);
   });
 
   it('accepts a well-formed WGS84 Polygon', () => {
-    expect(validateOptionalRemainingArea(validArea)).toEqual(validArea);
+    expect(validateCoveredArea(validArea)).toEqual(validArea);
   });
 
   it('rejects a MultiPolygon (application input is single-Polygon only)', () => {
-    expect(() => validateOptionalRemainingArea({ type: 'MultiPolygon', coordinates: [validArea.coordinates] })).toThrow(
+    expect(() => validateCoveredArea({ type: 'MultiPolygon', coordinates: [validArea.coordinates] })).toThrow(
       InvalidGeometryError
     );
   });
 
   it('rejects an out-of-range coordinate', () => {
     const bad = { type: 'Polygon', coordinates: [[[-75.574, 6.357], [-200, 6.357], [-75.572, 6.359], [-75.574, 6.357]]] };
-    expect(() => validateOptionalRemainingArea(bad)).toThrow(/WGS84 range/);
+    expect(() => validateCoveredArea(bad)).toThrow(/WGS84 range/);
+  });
+});
+
+describe('validateOptionalBaseline', () => {
+  it('returns undefined when no baseline was confirmed — never a default', () => {
+    expect(validateOptionalBaseline(undefined)).toBeUndefined();
+    expect(validateOptionalBaseline(null)).toBeUndefined();
+  });
+
+  it("accepts the explicit 'whole_territory' confirmation", () => {
+    expect(validateOptionalBaseline('whole_territory')).toBe('whole_territory');
+  });
+
+  it('rejects any other value', () => {
+    expect(() => validateOptionalBaseline('everything')).toThrow(ValidationError);
+    expect(() => validateOptionalBaseline(true)).toThrow(/baseline/);
   });
 });

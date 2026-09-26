@@ -12,7 +12,7 @@
 
 import { isLineString, isPoint, isPolygon, isWgs84Position, type LineString, type Point, type Polygon } from '@territorios/geo';
 
-import { InvalidGeometryError } from './errors.js';
+import { InvalidGeometryError, ValidationError } from './errors.js';
 
 function describeType(value: unknown): string {
   if (typeof value === 'object' && value !== null && 'type' in value) {
@@ -79,20 +79,39 @@ export function validateOptionalRoute(value: unknown): LineString | undefined {
 }
 
 /**
- * Remaining-area geometry: application input is restricted to a single
- * Polygon (consistent with territory geometry being Polygon-only). A2's DB
- * constraint additionally accepts MultiPolygon for defense in depth against
- * any other future writer; this API never emits or requires that.
+ * Covered-area geometry: REQUIRED on every new progress session (2026-09-26
+ * product decision — the administrator draws what was covered that session;
+ * the server derives the remaining area from it). Application input is
+ * restricted to a single Polygon, consistent with territory geometry being
+ * Polygon-only; the DB constraint (0007) additionally accepts MultiPolygon
+ * for defense in depth. Validity, zero area, and containment are decided by
+ * PostGIS inside the recording transaction, never here.
  */
-export function validateOptionalRemainingArea(value: unknown): Polygon | undefined {
+export function validateCoveredArea(value: unknown): Polygon {
   if (value === undefined || value === null) {
-    return undefined;
+    throw new ValidationError('coveredArea is required: draw the area covered in this session');
   }
   if (!isPolygon(value)) {
     throw new InvalidGeometryError(
-      `remaining-area geometry must be a GeoJSON Polygon with closed rings of at least 4 positions, got ${describeType(value)}`
+      `covered-area geometry must be a GeoJSON Polygon with closed rings of at least 4 positions, got ${describeType(value)}`
     );
   }
-  assertWgs84(value.coordinates.flat(), 'remaining-area geometry');
+  assertWgs84(value.coordinates.flat(), 'covered-area geometry');
+  return value;
+}
+
+export type CoverageBaseline = 'whole_territory';
+
+/**
+ * The explicit baseline an administrator confirms for the first coverage
+ * session of a cycle. Absent means "no baseline confirmed" — never a default.
+ */
+export function validateOptionalBaseline(value: unknown): CoverageBaseline | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (value !== 'whole_territory') {
+    throw new ValidationError(`baseline must be 'whole_territory' when provided, got ${JSON.stringify(value)}`);
+  }
   return value;
 }

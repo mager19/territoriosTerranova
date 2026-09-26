@@ -23,6 +23,8 @@ export function statusForDomainError(error: DomainError): number {
     case 'zero_area_geometry':
     case 'out_of_bounds':
     case 'invalid_request':
+    case 'baseline_required':
+    case 'covered_area_not_remaining':
       return 400;
     case 'territory_not_found':
       return 404;

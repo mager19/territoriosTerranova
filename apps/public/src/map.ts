@@ -13,7 +13,7 @@
  */
 
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
-import type { Feature, FeatureCollection, Geometry, LineString, Polygon, Position } from '@territorios/geo';
+import type { Feature, FeatureCollection, Geometry, LineString, MultiPolygon, Polygon, Position } from '@territorios/geo';
 
 export const BELLO_CENTER: [number, number] = [-75.5636, 6.3373];
 export const BELLO_ZOOM = 13;
@@ -188,11 +188,12 @@ function setSource(map: MapLibreMap, sourceId: string, geometry: Geometry | null
 export function renderTerritory(
   map: MapLibreMap,
   boundary: Polygon,
-  remainingArea: Polygon | null,
+  remainingArea: Polygon | MultiPolygon | null,
   route: LineString | null
 ): void {
   setSource(map, 'territory-boundary', boundary);
-  setSource(map, 'remaining-area', remainingArea);
+  // An explicit empty polygon ("nothing left") has nothing to draw.
+  setSource(map, 'remaining-area', remainingArea !== null && remainingArea.coordinates.length === 0 ? null : remainingArea);
   setSource(map, 'progress-route', route);
 }
 

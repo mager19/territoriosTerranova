@@ -38,6 +38,12 @@ const OTHER_SQUARE = {
   coordinates: [[[-75.59, 6.34], [-75.585, 6.34], [-75.585, 6.345], [-75.59, 6.345], [-75.59, 6.34]]]
 };
 
+// West half of VALID_SQUARE — a coverage session that leaves the east half.
+const WEST_HALF = {
+  type: 'Polygon',
+  coordinates: [[[-75.574, 6.357], [-75.573, 6.357], [-75.573, 6.359], [-75.574, 6.359], [-75.574, 6.357]]]
+};
+
 const FIXTURE_BOUNDARY_SQL = `
   INSERT INTO reference_municipal_boundary (id, name, geom, source_url, retrieved_at, attribution)
   VALUES (1, 'Bello (test fixture envelope)',
@@ -201,22 +207,61 @@ describe('GET /public/territories/:token — response shape', () => {
     expect(body.remainingAreaStatus).toBe('unknown');
   });
 
-  it('shows the remaining area when progress recorded one', async () => {
+  it('shows the server-derived remaining area when a coverage session recorded one', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
-    const remainingArea = {
+    const coveredArea = {
       type: 'Polygon',
-      coordinates: [[[-75.5735, 6.358], [-75.5725, 6.358], [-75.5725, 6.3585], [-75.5735, 6.3585], [-75.5735, 6.358]]]
+      coordinates: [[[-75.574, 6.357], [-75.573, 6.357], [-75.573, 6.359], [-75.574, 6.359], [-75.574, 6.357]]]
     };
-    await app.inject({
+    const session = await app.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
-      payload: { recordedBy: 'worker-1', remainingArea }
+      payload: { recordedBy: 'worker-1', coveredArea, baseline: 'whole_territory' }
     });
+    expect(session.statusCode).toBe(201);
 
     const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
     const body = response.json();
     expect(body.remainingAreaStatus).toBe('recorded');
-    expect(body.remainingArea).toEqual(remainingArea);
+    expect(body.remainingArea).toEqual(session.json().remainingArea);
+  });
+
+  it('never exposes a session covered area — the public allowlist is unchanged by coverage sessions', async () => {
+    const { token, territoryId } = await createTerritoryAndShare();
+    const coveredArea = {
+      type: 'Polygon',
+      coordinates: [[[-75.574, 6.357], [-75.5731, 6.357], [-75.5731, 6.3589], [-75.574, 6.3589], [-75.574, 6.357]]]
+    };
+    const session = await app.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/progress`,
+      payload: { recordedBy: 'worker-1', coveredArea, baseline: 'whole_territory' }
+    });
+    expect(session.statusCode).toBe(201);
+    // Precondition: the admin DTO does carry it, so its absence below is meaningful.
+    expect(session.json().coveredArea).toEqual(coveredArea);
+
+    const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
+    const body = response.json();
+    expect(Object.keys(body).sort()).toEqual(['boundary', 'remainingArea', 'remainingAreaStatus', 'route', 'territoryName']);
+    const raw = JSON.stringify(body);
+    expect(raw).not.toMatch(/covered/i);
+    expect(raw).not.toContain('baseline');
+  });
+
+  it('reports an explicit empty remaining area — not unknown — once a cycle is fully covered', async () => {
+    const { token, territoryId } = await createTerritoryAndShare();
+    await app.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/progress`,
+      payload: { recordedBy: 'worker-1', coveredArea: VALID_SQUARE, baseline: 'whole_territory' }
+    });
+
+    const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
+    expect(response.json()).toMatchObject({
+      remainingArea: { type: 'Polygon', coordinates: [] },
+      remainingAreaStatus: 'recorded'
+    });
   });
 
   it('does not reuse a prior cycle’s pending-area snapshot after an administrator reopens work', async () => {
@@ -225,7 +270,7 @@ describe('GET /public/territories/:token — response shape', () => {
       method: 'POST', url: `/admin/territories/${territoryId}/operational-state`, payload: { action: 'in_progress', actor: 'admin-1' }
     });
     await app.inject({
-      method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload: { recordedBy: 'admin-1', remainingArea: VALID_SQUARE }
+      method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload: { recordedBy: 'admin-1', coveredArea: WEST_HALF, baseline: 'whole_territory' }
     });
     await app.inject({
       method: 'POST',
@@ -252,6 +297,8 @@ describe('GET /public/territories/:token — response shape', () => {
       payload: {
         recordedBy: 'worker-1',
         note: 'a secret note the public must never see',
+        coveredArea: WEST_HALF,
+        baseline: 'whole_territory',
         pausePoint: { type: 'Point', coordinates: [-75.573, 6.358] },
         route: { type: 'LineString', coordinates: [[-75.5738, 6.3575], [-75.5732, 6.3585]] }
       }
@@ -273,7 +320,7 @@ describe('GET /public/territories/:token — response shape', () => {
     await app.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
-      payload: { recordedBy: 'worker-1', route }
+      payload: { recordedBy: 'worker-1', route, coveredArea: WEST_HALF, baseline: 'whole_territory' }
     });
 
     const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
@@ -453,7 +500,7 @@ describe('a share token cannot invoke any administrative action', () => {
     const progressResponse = await app.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
-      payload: { recordedBy: token, note: 'ordinary text, not a credential' }
+      payload: { recordedBy: token, note: 'ordinary text, not a credential', coveredArea: OTHER_SQUARE, baseline: 'whole_territory' }
     });
     expect(progressResponse.statusCode).toBe(201);
     expect(progressResponse.json().recordedBy).toBe(token); // stored verbatim as text, not interpreted

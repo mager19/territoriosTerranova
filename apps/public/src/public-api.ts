@@ -5,15 +5,21 @@
  * endpoint").
  */
 
-import type { LineString, Polygon } from '@territorios/geo';
-import { isLineString, isPolygon } from '@territorios/geo';
+import type { LineString, MultiPolygon, Polygon } from '@territorios/geo';
+import { isLineString, isMultiPolygon, isPolygon } from '@territorios/geo';
 
 export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3000';
 
 export interface PublicTerritoryView {
   readonly territoryName: string;
   readonly boundary: Polygon;
-  readonly remainingArea: Polygon | null;
+  /**
+   * Server-derived since coverage sessions (db/migrations/0007): subtracting
+   * a covered area can split it into a MultiPolygon, and a fully covered
+   * cycle is an explicit EMPTY polygon (`coordinates: []`, "nothing left")
+   * — distinct from null, which means unknown.
+   */
+  readonly remainingArea: Polygon | MultiPolygon | null;
   readonly remainingAreaStatus: 'recorded' | 'unknown';
   /**
    * The latest progress entry's route — the one deliberate exception to
@@ -41,6 +47,21 @@ export type PublicTerritoryResult =
  * the test that proves an unexpected field never reaches the returned
  * view.
  */
+/** An explicit empty polygon — the API's "nothing left" marker, never a missing value. */
+export function isEmptyPolygon(value: unknown): value is Polygon {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { type?: unknown }).type === 'Polygon' &&
+    Array.isArray((value as { coordinates?: unknown }).coordinates) &&
+    (value as { coordinates: unknown[] }).coordinates.length === 0
+  );
+}
+
+function isRemainingArea(value: unknown): value is Polygon | MultiPolygon {
+  return isPolygon(value) || isMultiPolygon(value) || isEmptyPolygon(value);
+}
+
 function parseView(raw: unknown): PublicTerritoryView | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const record = raw as Record<string, unknown>;
@@ -53,7 +74,7 @@ function parseView(raw: unknown): PublicTerritoryView | null {
 
   if (typeof territoryName !== 'string' || territoryName.trim() === '') return null;
   if (!isPolygon(boundary)) return null;
-  if (remainingArea !== null && !isPolygon(remainingArea)) return null;
+  if (remainingArea !== null && !isRemainingArea(remainingArea)) return null;
   if (remainingAreaStatus !== 'recorded' && remainingAreaStatus !== 'unknown') return null;
   if (route !== null && !isLineString(route)) return null;
 

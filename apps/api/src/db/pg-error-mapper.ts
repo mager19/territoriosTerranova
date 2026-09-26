@@ -87,7 +87,8 @@ export function rethrowAsTerritoryGeometryError(error: unknown): never {
 const PROGRESS_GEOMETRY_CONSTRAINTS: Record<string, string> = {
   progress_entries_pause_point_valid: 'pause point',
   progress_entries_route_valid: 'route',
-  progress_entries_remaining_area_valid: 'remaining-area geometry'
+  progress_entries_remaining_area_valid: 'remaining-area geometry',
+  progress_entries_covered_area_valid: 'covered-area geometry'
 };
 
 /**
