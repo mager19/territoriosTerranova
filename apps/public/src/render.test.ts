@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Polygon } from '@territorios/geo';
+import type { LineString, Point, Polygon } from '@territorios/geo';
 
 import { mountPage, renderStatus } from './render.js';
 import { UNAVAILABLE_MESSAGE } from './status.js';
@@ -46,6 +46,74 @@ describe('mountPage', () => {
   });
 });
 
+const WEST_HALF: Polygon = {
+  type: 'Polygon',
+  coordinates: [[[-75.574, 6.357], [-75.573, 6.357], [-75.573, 6.359], [-75.574, 6.359], [-75.574, 6.357]]]
+};
+const ROUTE: LineString = { type: 'LineString', coordinates: [[-75.5738, 6.3575], [-75.5732, 6.3585]] };
+const PAUSE: Point = { type: 'Point', coordinates: [-75.5735, 6.358] };
+
+function baseView(overrides: Partial<PublicTerritoryView> = {}): PublicTerritoryView {
+  return {
+    territoryName: 'Navarra Norte',
+    boundary: BOUNDARY,
+    remainingArea: null,
+    remainingAreaStatus: 'unknown',
+    route: null,
+    pausePoint: null,
+    coveredArea: null,
+    ...overrides
+  };
+}
+
+function legendLabels(legend: HTMLUListElement): string[] {
+  return Array.from(legend.querySelectorAll('li')).map((item) => item.textContent ?? '');
+}
+
+describe('renderStatus — legend', () => {
+  it('lists every layer, in stacking order, when all of them are present', () => {
+    const elements = mountPage(document.createElement('div'));
+
+    renderStatus(elements, {
+      status: 'ok',
+      view: baseView({ coveredArea: WEST_HALF, remainingArea: WEST_HALF, remainingAreaStatus: 'recorded', route: ROUTE, pausePoint: PAUSE })
+    });
+
+    expect(elements.legend.hidden).toBe(false);
+    expect(legendLabels(elements.legend)).toEqual(['Hecho', 'Pendiente', 'Recorrido', 'Aquí quedamos']);
+  });
+
+  it('lists only the layers present — no "Pendiente" once nothing is left', () => {
+    const elements = mountPage(document.createElement('div'));
+
+    renderStatus(elements, {
+      status: 'ok',
+      view: baseView({ coveredArea: BOUNDARY, remainingArea: { type: 'Polygon', coordinates: [] }, remainingAreaStatus: 'recorded' })
+    });
+
+    expect(legendLabels(elements.legend)).toEqual(['Hecho']);
+  });
+
+  it('hides the legend when the territory has no recorded layer at all', () => {
+    const elements = mountPage(document.createElement('div'));
+
+    renderStatus(elements, { status: 'ok', view: baseView() });
+
+    expect(elements.legend.hidden).toBe(true);
+    expect(elements.legend.children).toHaveLength(0);
+  });
+
+  it('clears and hides the legend for a non-ok state', () => {
+    const elements = mountPage(document.createElement('div'));
+    renderStatus(elements, { status: 'ok', view: baseView({ pausePoint: PAUSE }) });
+
+    renderStatus(elements, { status: 'unavailable' });
+
+    expect(elements.legend.hidden).toBe(true);
+    expect(elements.legend.children).toHaveLength(0);
+  });
+});
+
 describe('renderStatus', () => {
   it('shows the territory name and reveals the map on a resolved territory', () => {
     const root = document.createElement('div');
@@ -53,7 +121,7 @@ describe('renderStatus', () => {
 
     renderStatus(elements, {
       status: 'ok',
-      view: { territoryName: 'Navarra Norte', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null }
+      view: { territoryName: 'Navarra Norte', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null, pausePoint: null, coveredArea: null }
     });
 
     expect(elements.heading.textContent).toBe('Navarra Norte');

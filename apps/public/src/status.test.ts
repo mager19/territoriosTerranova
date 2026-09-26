@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { LineString, Polygon } from '@territorios/geo';
 
 import {
+  COMPLETE_COVERAGE_MESSAGE,
   describeState,
   ERROR_MESSAGE,
   LOADING_MESSAGE,
@@ -40,7 +41,7 @@ describe('describeState', () => {
   it('renders "unknown" coverage text when no progress has been recorded — never an inferred amount', () => {
     const state = describeState({
       status: 'ok',
-      view: { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null }
+      view: { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null, pausePoint: null, coveredArea: null }
     });
     expect(state.body).toBe(UNKNOWN_COVERAGE_MESSAGE);
   });
@@ -48,7 +49,7 @@ describe('describeState', () => {
   it('renders recorded coverage text when a remaining area was captured', () => {
     const state = describeState({
       status: 'ok',
-      view: { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: BOUNDARY, remainingAreaStatus: 'recorded', route: null }
+      view: { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: BOUNDARY, remainingAreaStatus: 'recorded', route: null, pausePoint: null, coveredArea: null }
     });
     expect(state.body).toBe(RECORDED_COVERAGE_MESSAGE);
   });
@@ -57,7 +58,7 @@ describe('describeState', () => {
     const route: LineString = { type: 'LineString', coordinates: [[-75.574, 6.357], [-75.572, 6.359]] };
     const state = describeState({
       status: 'ok',
-      view: { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route }
+      view: { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route, pausePoint: null, coveredArea: null }
     });
     expect(state.body).toBe(ROUTE_COVERAGE_MESSAGE);
   });
@@ -66,15 +67,33 @@ describe('describeState', () => {
     const route: LineString = { type: 'LineString', coordinates: [[-75.574, 6.357], [-75.572, 6.359]] };
     const state = describeState({
       status: 'ok',
-      view: { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: BOUNDARY, remainingAreaStatus: 'recorded', route }
+      view: { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: BOUNDARY, remainingAreaStatus: 'recorded', route, pausePoint: null, coveredArea: null }
     });
     expect(state.body).toBe(ROUTE_COVERAGE_MESSAGE);
+  });
+
+  it('says the territory is complete — never "partial" — when the remaining area is explicitly empty', () => {
+    const route: LineString = { type: 'LineString', coordinates: [[-75.574, 6.357], [-75.572, 6.359]] };
+    const state = describeState({
+      status: 'ok',
+      view: {
+        territoryName: 'T-01',
+        boundary: BOUNDARY,
+        remainingArea: { type: 'Polygon', coordinates: [] },
+        remainingAreaStatus: 'recorded',
+        route,
+        pausePoint: null,
+        coveredArea: BOUNDARY
+      }
+    });
+    expect(state.body).toBe(COMPLETE_COVERAGE_MESSAGE);
+    expect(state.body).not.toBe(RECORDED_COVERAGE_MESSAGE);
   });
 
   it('uses the territory name as the heading only for a resolved territory', () => {
     const state = describeState({
       status: 'ok',
-      view: { territoryName: 'Navarra Norte', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null }
+      view: { territoryName: 'Navarra Norte', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null, pausePoint: null, coveredArea: null }
     });
     expect(state.heading).toBe('Navarra Norte');
   });

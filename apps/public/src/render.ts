@@ -1,3 +1,4 @@
+import { legendItems } from './layers.js';
 import { describeState, type ViewState } from './status.js';
 
 export interface PageElements {
@@ -12,6 +13,8 @@ export interface PageElements {
   /** Feedback for the locate button: searching / distance readout / permission-denied — separate from `status` so it never overwrites the territory's own coverage message. */
   readonly locationStatus: HTMLParagraphElement;
   readonly mapContainer: HTMLDivElement;
+  /** Map key listing ONLY the layers the resolved territory actually draws; hidden otherwise. */
+  readonly legend: HTMLUListElement;
 }
 
 /**
@@ -56,15 +59,20 @@ export function mountPage(root: HTMLElement): PageElements {
   const mapContainer = document.createElement('div');
   mapContainer.id = 'map';
   mapContainer.setAttribute('role', 'img');
-  mapContainer.setAttribute('aria-label', 'Territory map');
+  mapContainer.setAttribute('aria-label', 'Mapa del territorio');
   mapContainer.hidden = true;
+
+  const legend = document.createElement('ul');
+  legend.className = 'legend';
+  legend.setAttribute('aria-label', 'Leyenda del mapa');
+  legend.hidden = true;
 
   const attribution = document.createElement('p');
   attribution.className = 'attribution';
   attribution.textContent = '© OpenStreetMap contributors';
 
-  root.replaceChildren(heading, status, actions, locationStatus, mapContainer, attribution);
-  return { heading, status, actions, directionsLink, locateButton, locationStatus, mapContainer };
+  root.replaceChildren(heading, status, actions, locationStatus, mapContainer, legend, attribution);
+  return { heading, status, actions, directionsLink, locateButton, locationStatus, mapContainer, legend };
 }
 
 export function renderStatus(elements: PageElements, state: ViewState): void {
@@ -73,4 +81,28 @@ export function renderStatus(elements: PageElements, state: ViewState): void {
   elements.status.textContent = described.body;
   elements.actions.hidden = state.status !== 'ok';
   elements.mapContainer.hidden = state.status !== 'ok';
+  renderLegend(elements.legend, state);
+}
+
+function renderLegend(legend: HTMLUListElement, state: ViewState): void {
+  const items = state.status === 'ok' ? legendItems(state.view) : [];
+  legend.replaceChildren(
+    ...items.map((item) => {
+      const entry = document.createElement('li');
+      entry.className = `legend-item legend-${item.shape}`;
+      entry.dataset.layer = item.key;
+
+      const swatch = document.createElement('span');
+      swatch.className = 'legend-swatch';
+      swatch.style.background = item.color;
+      swatch.setAttribute('aria-hidden', 'true');
+
+      const label = document.createElement('span');
+      label.textContent = item.label;
+
+      entry.append(swatch, label);
+      return entry;
+    })
+  );
+  legend.hidden = items.length === 0;
 }

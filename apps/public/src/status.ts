@@ -1,11 +1,12 @@
-import type { PublicTerritoryResult } from './public-api.js';
+import { isEmptyPolygon, type PublicTerritoryResult } from './public-api.js';
 
-export const UNAVAILABLE_MESSAGE = 'This link is no longer available.';
-export const ERROR_MESSAGE = "We couldn't load this territory right now. Check your connection and try again.";
-export const LOADING_MESSAGE = 'Loading territory…';
-export const ROUTE_COVERAGE_MESSAGE = 'Progress recorded — the covered stretch is marked on the map.';
-export const RECORDED_COVERAGE_MESSAGE = 'Partial coverage recorded — the remaining area is marked on the map.';
-export const UNKNOWN_COVERAGE_MESSAGE = 'Remaining coverage: unknown. No progress has been recorded for this assignment yet.';
+export const UNAVAILABLE_MESSAGE = 'Este enlace ya no está disponible.';
+export const ERROR_MESSAGE = 'No pudimos cargar este territorio. Revisa tu conexión e inténtalo de nuevo.';
+export const LOADING_MESSAGE = 'Cargando territorio…';
+export const COMPLETE_COVERAGE_MESSAGE = 'Territorio completo: ya se cubrió toda el área en este ciclo.';
+export const ROUTE_COVERAGE_MESSAGE = 'Avance registrado: lo recorrido está marcado en el mapa.';
+export const RECORDED_COVERAGE_MESSAGE = 'Avance parcial registrado: lo hecho y lo pendiente están marcados en el mapa.';
+export const UNKNOWN_COVERAGE_MESSAGE = 'Área pendiente: desconocida. Todavía no se ha registrado avance en este territorio.';
 
 export type ViewState = PublicTerritoryResult | { readonly status: 'loading' };
 
@@ -24,18 +25,22 @@ export interface RenderedStatus {
 export function describeState(state: ViewState): RenderedStatus {
   switch (state.status) {
     case 'loading':
-      return { heading: 'Territory Management', body: LOADING_MESSAGE };
+      return { heading: 'Territorios', body: LOADING_MESSAGE };
     case 'unavailable':
-      return { heading: 'Link unavailable', body: UNAVAILABLE_MESSAGE };
+      return { heading: 'Enlace no disponible', body: UNAVAILABLE_MESSAGE };
     case 'error':
-      return { heading: 'Connection problem', body: ERROR_MESSAGE };
+      return { heading: 'Problema de conexión', body: ERROR_MESSAGE };
     case 'ok': {
+      // An explicit empty remaining area is the server's "nothing left"
+      // marker — the territory is complete, never "partial". Otherwise
       // route and remainingArea are independent, optionally-recorded
       // fields (AGENTS.md: coverage is never inferred) — check route
       // first since it is the common manzana/perimeter case; fall back
       // to the area-based message when only remainingArea was recorded.
       let body: string;
-      if (state.view.route !== null) {
+      if (state.view.remainingAreaStatus === 'recorded' && isEmptyPolygon(state.view.remainingArea)) {
+        body = COMPLETE_COVERAGE_MESSAGE;
+      } else if (state.view.route !== null) {
         body = ROUTE_COVERAGE_MESSAGE;
       } else if (state.view.remainingAreaStatus === 'recorded') {
         body = RECORDED_COVERAGE_MESSAGE;

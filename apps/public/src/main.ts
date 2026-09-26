@@ -13,6 +13,7 @@ import {
   installTerritoryLayers,
   renderTerritory
 } from './map.js';
+import { createPausePointMarkerElement } from './layers.js';
 
 const container = document.getElementById('root');
 if (container === null) {
@@ -43,9 +44,19 @@ void runApp(container, {
     });
     map.on('load', () => {
       installTerritoryLayers(map);
-      renderTerritory(map, result.view.boundary, result.view.remainingArea, result.view.route);
+      renderTerritory(map, result.view);
       fitToBoundingBox(map, box);
     });
+
+    // Where the work stopped (2026-09-26 product decision): a labeled DOM
+    // marker anchored at its dot, so the "Aquí quedamos" text always shows.
+    const pausePoint = result.view.pausePoint;
+    if (pausePoint !== null) {
+      const [lon, lat] = pausePoint.coordinates;
+      new Marker({ element: createPausePointMarkerElement(), anchor: 'left', offset: [-8, 0] })
+        .setLngLat([lon, lat])
+        .addTo(map);
+    }
 
     // Geolocation needs an explicit tap, not an automatic prompt on load —
     // a permission dialog firing before the field worker has even read the

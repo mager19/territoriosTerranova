@@ -66,7 +66,9 @@ describe('fetchPublicTerritory', () => {
         boundary: BOUNDARY,
         remainingArea: BOUNDARY,
         remainingAreaStatus: 'recorded',
-        route: null
+        route: null,
+        pausePoint: null,
+        coveredArea: null
       }
     });
   });
@@ -112,7 +114,9 @@ describe('fetchPublicTerritory', () => {
     expect(result).toMatchObject({ status: 'ok', view: { remainingArea: empty, remainingAreaStatus: 'recorded' } });
   });
 
-  it('never carries a covered area into the view even if the API mistakenly sent one', async () => {
+  it('carries the pause point and the merged covered area — the 2026-09-26 allowlist additions', async () => {
+    const pausePoint = { type: 'Point', coordinates: [-75.5735, 6.358] };
+    const coveredArea = { type: 'MultiPolygon', coordinates: [BOUNDARY.coordinates, BOUNDARY.coordinates] };
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse(200, {
         territoryName: 'T-01',
@@ -120,14 +124,52 @@ describe('fetchPublicTerritory', () => {
         remainingArea: null,
         remainingAreaStatus: 'unknown',
         route: null,
-        coveredArea: BOUNDARY
+        pausePoint,
+        coveredArea
       })
     );
 
     const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
 
-    expect(result.status).toBe('ok');
-    expect(JSON.stringify(result)).not.toContain('coveredArea');
+    expect(result).toMatchObject({ status: 'ok', view: { pausePoint, coveredArea } });
+  });
+
+  it('accepts a Polygon or an explicit empty polygon as the covered area', async () => {
+    for (const coveredArea of [BOUNDARY, { type: 'Polygon', coordinates: [] }]) {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        jsonResponse(200, { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null, pausePoint: null, coveredArea })
+      );
+
+      const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+
+      expect(result).toMatchObject({ status: 'ok', view: { coveredArea } });
+    }
+  });
+
+  it('reads a missing pause point / covered area (an API from before 2026-09-26) as null, not as an error', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(200, { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null })
+    );
+
+    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+
+    expect(result).toMatchObject({ status: 'ok', view: { pausePoint: null, coveredArea: null } });
+  });
+
+  it('treats an invalid pause point or covered area shape as "error", never a fabricated view', async () => {
+    const invalid = [
+      { pausePoint: ROUTE, coveredArea: null },
+      { pausePoint: { type: 'Point', coordinates: 'nope' }, coveredArea: null },
+      { pausePoint: null, coveredArea: ROUTE },
+      { pausePoint: null, coveredArea: { type: 'Point', coordinates: [0, 0] } }
+    ];
+    for (const fields of invalid) {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        jsonResponse(200, { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null, ...fields })
+      );
+
+      expect(await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test')).toEqual({ status: 'error' });
+    }
   });
 
   it('treats an invalid route shape as "error", never a fabricated view', async () => {
@@ -146,7 +188,7 @@ describe('fetchPublicTerritory', () => {
     expect(result).toEqual({ status: 'error' });
   });
 
-  it('drops any field beyond the five-key allowlist — an unexpected field never reaches the returned view', async () => {
+  it('drops any field beyond the seven-key allowlist — an unexpected field never reaches the returned view', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse(200, {
         territoryName: 'Navarra Norte',
@@ -154,7 +196,13 @@ describe('fetchPublicTerritory', () => {
         remainingArea: null,
         remainingAreaStatus: 'unknown',
         route: null,
+        pausePoint: null,
+        coveredArea: null,
         assignedTo: 'field-worker-1',
+        note: 'private admin note',
+        recordedBy: 'worker-1',
+        recordedAt: '2026-09-26T10:00:00Z',
+        sessions: [BOUNDARY],
         notes: 'private admin note',
         id: 42
       })
@@ -165,7 +213,7 @@ describe('fetchPublicTerritory', () => {
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
       expect(Object.keys(result.view).sort()).toEqual(
-        ['boundary', 'remainingArea', 'remainingAreaStatus', 'route', 'territoryName'].sort()
+        ['boundary', 'coveredArea', 'pausePoint', 'remainingArea', 'remainingAreaStatus', 'route', 'territoryName'].sort()
       );
     }
   });

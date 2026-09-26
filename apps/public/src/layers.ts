@@ -1,0 +1,88 @@
+/**
+ * Pure, WebGL-free description of what the public map draws: layer colors,
+ * which layers a given view actually has, the legend derived from that,
+ * and the pause-point marker element. Kept out of map.ts (which drives a
+ * real MapLibre instance) so all of it is unit-testable in happy-dom — the
+ * same separation map.ts already keeps for computeBoundingBox.
+ */
+
+import type { MultiPolygon, Polygon } from '@territorios/geo';
+
+import type { PublicTerritoryView } from './public-api.js';
+
+/** One palette shared by the map layers and the legend swatches, so they can never drift apart. */
+export const LAYER_COLORS = {
+  /** Muted green: the area already done in the current cycle. */
+  covered: '#5f9e6e',
+  /** Neutral gray: what is still pending. */
+  remaining: '#c9c9c9',
+  /** Near-black: the recorded route line, the darkest element on the map. */
+  route: '#161616',
+  /** Strong orange: where the work stopped — must stand out from every other layer. */
+  pausePoint: '#e4572e'
+} as const;
+
+export const PAUSE_POINT_LABEL = 'Aquí quedamos';
+
+/**
+ * An area worth drawing: present and not the API's explicit empty polygon
+ * ("nothing left" / "nothing done"), which has nothing to draw.
+ */
+export function hasDrawableArea(area: Polygon | MultiPolygon | null): area is Polygon | MultiPolygon {
+  // Truthiness, not `!== null`: a defensive read that also tolerates a
+  // field missing from a view object built outside public-api.ts parsing.
+  if (!area) return false;
+  return area.coordinates.length > 0;
+}
+
+export type LegendKey = 'covered' | 'remaining' | 'route' | 'pausePoint';
+
+export interface LegendItem {
+  readonly key: LegendKey;
+  readonly label: string;
+  readonly color: string;
+  readonly shape: 'area' | 'line' | 'point';
+}
+
+type LegendView = Pick<PublicTerritoryView, 'coveredArea' | 'remainingArea' | 'route' | 'pausePoint'>;
+
+/** Legend entries for ONLY the layers this view actually draws, in map stacking order (bottom to top). */
+export function legendItems(view: LegendView): LegendItem[] {
+  const items: LegendItem[] = [];
+  if (hasDrawableArea(view.coveredArea)) {
+    items.push({ key: 'covered', label: 'Hecho', color: LAYER_COLORS.covered, shape: 'area' });
+  }
+  if (hasDrawableArea(view.remainingArea)) {
+    items.push({ key: 'remaining', label: 'Pendiente', color: LAYER_COLORS.remaining, shape: 'area' });
+  }
+  if (view.route) {
+    items.push({ key: 'route', label: 'Recorrido', color: LAYER_COLORS.route, shape: 'line' });
+  }
+  if (view.pausePoint) {
+    items.push({ key: 'pausePoint', label: PAUSE_POINT_LABEL, color: LAYER_COLORS.pausePoint, shape: 'point' });
+  }
+  return items;
+}
+
+/**
+ * The pause-point marker: a dot plus an always-visible text label. A DOM
+ * marker rather than a MapLibre symbol layer because the basemap style has
+ * no glyphs source, so symbol text would never render.
+ */
+export function createPausePointMarkerElement(): HTMLDivElement {
+  const marker = document.createElement('div');
+  marker.className = 'pause-point-marker';
+  marker.setAttribute('role', 'img');
+  marker.setAttribute('aria-label', PAUSE_POINT_LABEL);
+
+  const dot = document.createElement('span');
+  dot.className = 'pause-point-dot';
+  dot.style.background = LAYER_COLORS.pausePoint;
+
+  const label = document.createElement('span');
+  label.className = 'pause-point-label';
+  label.textContent = PAUSE_POINT_LABEL;
+
+  marker.append(dot, label);
+  return marker;
+}
