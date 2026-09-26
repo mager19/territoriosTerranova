@@ -36,14 +36,26 @@ The response is built by an **explicit allowlist**. Never serialize a domain
 object and remove fields — that pattern leaks the moment someone adds a column.
 
 Excluded by default, without exception: assignee identity, notes, timestamps,
-pause points, history, other territories, AMVA attributes, internal ids.
+history, other territories, AMVA attributes, internal ids.
 
-The one deliberate inclusion beyond territoryName/boundary/remainingArea/
-remainingAreaStatus: the latest progress entry's **route** (a LineString), added
-2026-09-08 by explicit product decision — the assigned worker needs to see their
-own coverage line to resume the next day (the original product intent). This is
-still the one active assignment's own data, still behind the same token; it does
-not relax the identity/notes/timestamps/pause-point/history exclusions above.
+Exact public allowlist (pinned by `apps/api/src/integration/sharing.test.ts`):
+`territoryName`, `boundary`, `remainingArea`, `remainingAreaStatus`, `route`,
+`pausePoint`, `coveredArea`. The deliberate inclusions beyond the original four,
+each by explicit product decision because volunteers need them to resume work:
+
+- **route** (2026-09-08): the current cycle's latest *recorded* route (a
+  LineString) — a later entry without a route does not hide it.
+- **pausePoint** (2026-09-26): the current cycle's latest non-null pause point
+  ("where the work stopped"), or null.
+- **coveredArea** (2026-09-26): the `ST_Union` of every covered area in the
+  current cycle, returned as ONE Polygon/MultiPolygon, or null. Per-session
+  geometries, session count, timestamps, recordedBy, notes, cycle number,
+  baseline, and progress percentage are never exposed, so the session history
+  cannot be reconstructed from it.
+
+All three are resolved inside the same single query with the same joins for
+every token outcome (timing side-channel protection), and none relaxes the
+identity/notes/timestamps/history exclusions above.
 
 ### Transport and headers
 

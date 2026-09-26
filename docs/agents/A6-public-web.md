@@ -55,13 +55,19 @@ bundle, smaller attack surface, less to audit.
   Design as if the viewer is a stranger, because eventually they are.
 - **Never fetch from an admin endpoint.** Not even for convenience during
   development. The bundle must contain no admin URL.
-- Do not render assignee identity, notes, timestamps, pause points, history,
-  other territories, or AMVA attributes — even if the API mistakenly returns
-  them. **Report an unexpected field to the orchestrator immediately**: that is
-  an A4 defect and it is severe.
-- The one exception is the progress **route** line (2026-09-08 product decision,
-  see AGENTS.md "Privacy rules"): render it as a distinct, bold progress line,
-  never confused with the territory boundary or the remaining-area fill.
+- Do not render assignee identity, notes, timestamps, history, other
+  territories, or AMVA attributes — even if the API mistakenly returns them.
+  **Report an unexpected field to the orchestrator immediately**: that is an A4
+  defect and it is severe.
+- Deliberate exceptions (see AGENTS.md "Privacy rules"), the only fields read
+  beyond territoryName/boundary/remainingArea/remainingAreaStatus:
+  - the progress **route** line (2026-09-08): a distinct, bold progress line,
+    never confused with the territory boundary or the remaining-area fill;
+  - the **pausePoint** (2026-09-26): a clearly labeled "Aquí quedamos" marker;
+  - the merged current-cycle **coveredArea** (2026-09-26): a distinct muted
+    green "done" fill drawn under the remaining area and the route.
+  A legend (Hecho / Pendiente / Recorrido / Aquí quedamos) lists only the
+  layers present.
 - No client-side storage of the token beyond the session.
 - Coordinate order is `[longitude, latitude]`.
 
