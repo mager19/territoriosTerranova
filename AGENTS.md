@@ -40,9 +40,12 @@ exist; if you cite a file here, create it in the same change.
 ## Map provider policy
 
 The provider-approval gate is a **production** requirement, not a development
-blocker. Development proceeds on MapLibre GL JS with OpenStreetMap raster tiles
-(see `docs/map-references.md`). A production tile-service decision — traffic,
-availability, terms, cost — remains open and must be recorded before launch.
+blocker. Development proceeds on MapLibre GL JS with MapTiler Streets v2 when
+`VITE_MAPTILER_KEY` is set, and OpenStreetMap raster tiles otherwise (see
+`docs/map-references.md` "Basemap"). The production tile-service candidate is
+MapTiler, pending written confirmation of its terms (non-commercial free plan)
+and verification of Origin-based key restriction; that decision must be
+recorded before launch.
 
 AMVA `sim.metropol.gov.co` layers are an administrator-only drafting reference,
 verified reachable and usable as WGS84 GeoJSON. Never expose those layers, their
