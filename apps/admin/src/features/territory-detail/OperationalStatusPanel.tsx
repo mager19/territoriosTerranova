@@ -9,6 +9,7 @@ import {
   type OperationalState,
   type TerritoryOperationalStatus
 } from '../../api/client.js';
+import { formatProgressPercent, isNothingRemaining } from './sessions.js';
 
 const STATUS_LABELS: Record<OperationalState, string> = {
   no_record: 'Sin registro operativo',
@@ -23,6 +24,32 @@ export interface OperationalStatusPanelProps {
   readonly refreshToken: number;
   readonly onChanged: () => void;
   readonly onRemainingAreaChange: (status: TerritoryOperationalStatus) => void;
+}
+
+/**
+ * Approximate progress of the current cycle (server-derived from geodesic
+ * areas). Unknown is shown as "desconocido" with an empty, dashed track —
+ * never as 0 %, which would claim that nothing was covered.
+ */
+export function ProgressMeter({ percent }: { readonly percent: number | null }): JSX.Element {
+  const label = formatProgressPercent(percent);
+  const width = percent === null ? 0 : Math.min(100, Math.max(0, percent));
+  return (
+    <div className="progress-meter">
+      <div
+        role="progressbar"
+        aria-label="Avance aproximado del ciclo"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent === null ? undefined : Math.floor(width)}
+        aria-valuetext={label}
+        className={`progress-meter-track${percent === null ? ' progress-meter-track--unknown' : ''}`}
+      >
+        <div className="progress-meter-fill" style={{ width: `${width}%` }} />
+      </div>
+      <span className="progress-meter-label">Avance aproximado: {label}</span>
+    </div>
+  );
 }
 
 /** The primary administrative workflow: current cycle state and pending coverage. */
@@ -83,8 +110,16 @@ export function OperationalStatusPanel({
       {status && (
         <>
           <p><strong>{STATUS_LABELS[state]}</strong>{status.cycleNumber === null ? '' : ` · ciclo ${status.cycleNumber}`}</p>
+          <ProgressMeter percent={status.progressPercent} />
           <p>
-            Área pendiente: {status.remainingAreaStatus === 'recorded' ? 'registrada y visible en el mapa.' : <strong>desconocida.</strong>}
+            Área pendiente:{' '}
+            {status.remainingAreaStatus === 'unknown' ? (
+              <strong>desconocida.</strong>
+            ) : isNothingRemaining(status.remainingArea) ? (
+              'no queda nada pendiente en este ciclo.'
+            ) : (
+              'registrada y visible en el mapa.'
+            )}
           </p>
           {status.effectiveCompletionDate && <p>Fecha efectiva de finalización: {status.effectiveCompletionDate}.</p>}
         </>

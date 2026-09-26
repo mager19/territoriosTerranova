@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from 'react';
 
-import { listProgress, type ProgressEntry, type TerritoryOperationalStatus } from '../../api/client.js';
+import { ApiError, describeApiError, listProgress, type ProgressEntry, type TerritoryOperationalStatus } from '../../api/client.js';
 import { AuditHistory } from './AuditHistory.js';
 import { ProgressList } from './ProgressList.js';
 import { ProgressRecorder } from './ProgressRecorder.js';
@@ -35,17 +35,29 @@ export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemaini
   const combinedRefreshToken = refreshToken + progressVersion;
   const [status, setStatus] = useState<TerritoryOperationalStatus | null>(null);
   const [entries, setEntries] = useState<readonly ProgressEntry[]>([]);
+  const [entriesLoading, setEntriesLoading] = useState(false);
+  const [entriesError, setEntriesError] = useState<string | null>(null);
+  // Hover previews a session on the map; a click pins it until clicked again.
+  const [hoveredSessionId, setHoveredSessionId] = useState<number | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
 
-  // Sessions feed the recorder map; a failed load only hides earlier
-  // sessions there (ProgressList reports its own load errors).
+  // One load feeds both the session list and the recorder map, so the
+  // colors and numbers in the list always match the map.
   useEffect(() => {
     let cancelled = false;
+    setEntriesLoading(true);
+    setEntriesError(null);
     listProgress(territoryId)
       .then((result) => {
         if (!cancelled) setEntries(result.entries);
       })
-      .catch(() => {
-        if (!cancelled) setEntries([]);
+      .catch((caught) => {
+        if (cancelled) return;
+        setEntries([]);
+        setEntriesError(caught instanceof ApiError ? describeApiError(caught) : 'No se pudieron cargar las sesiones.');
+      })
+      .finally(() => {
+        if (!cancelled) setEntriesLoading(false);
       });
     return () => {
       cancelled = true;
@@ -87,9 +99,19 @@ export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemaini
         boundary={boundary}
         remainingArea={status?.remainingArea ?? null}
         sessions={sessions}
+        highlightedSessionId={hoveredSessionId ?? selectedSessionId}
         onRecorded={() => setProgressVersion((version) => version + 1)}
       />
-      <ProgressList territoryId={territoryId} refreshToken={combinedRefreshToken} />
+      <ProgressList
+        entries={entries}
+        sessions={sessions}
+        loading={entriesLoading}
+        error={entriesError}
+        highlightedSessionId={hoveredSessionId ?? selectedSessionId}
+        selectedSessionId={selectedSessionId}
+        onHover={setHoveredSessionId}
+        onSelect={setSelectedSessionId}
+      />
       <SharePanel territoryId={territoryId} />
       <AuditHistory territoryId={territoryId} refreshToken={combinedRefreshToken} />
     </section>
