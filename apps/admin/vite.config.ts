@@ -1,7 +1,12 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
+  // One repo-root .env / .env.local serves both apps (VITE_MAPTILER_KEY,
+  // docs/map-references.md "Basemap"). Only VITE_-prefixed variables are
+  // exposed to client code.
+  envDir: fileURLToPath(new URL('../..', import.meta.url)),
   plugins: [react()],
   server: {
     host: '127.0.0.1',
