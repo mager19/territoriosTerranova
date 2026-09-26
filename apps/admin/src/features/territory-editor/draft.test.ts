@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addVertex,
   closeDraft,
+  coordinateToPointGeoJSON,
   createDraft,
   draftFromPolygon,
   draftToLineStringGeoJSON,
@@ -270,5 +271,11 @@ describe('draftToLineStringGeoJSON', () => {
     state = addVertex(state, V2);
     expect(state.isClosed).toBe(false);
     expect(draftToLineStringGeoJSON(state)).not.toBeNull();
+  });
+});
+
+describe('coordinateToPointGeoJSON', () => {
+  it('preserves GeoJSON longitude-latitude order for a pause marker', () => {
+    expect(coordinateToPointGeoJSON(V1)).toEqual({ type: 'Point', coordinates: V1 });
   });
 });

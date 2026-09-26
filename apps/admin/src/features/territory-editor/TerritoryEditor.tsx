@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX } from 'react';
+import { useEffect, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Map as MapLibreMap, NavigationControl, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -42,6 +42,7 @@ import {
   screenPointToCoordinate
 } from './map-editor.js';
 import type { Polygon } from '@territorios/geo';
+import { formatKm2, nextActiveIndex } from './barrio.js';
 
 export interface TerritoryEditorProps {
   /** The territory to draw a new revision for, or null to draw a brand-new territory. */
@@ -88,15 +89,26 @@ export function TerritoryEditor({
     draftRef.current = draft;
   }, [draft]);
 
-  // AMVA barrio reference search (2026-09-08: an admin expected one
-  // territory to cover a whole barrio — Guasimalito — and found only a
-  // small fraction of it, since a territory is one manzana/block by
-  // design). Purely a visual guide drawn under the real layers; never
-  // saved, never sent anywhere.
+  // AMVA barrio reference (2026-09-08: an admin expected one territory to
+  // cover a whole barrio — Guasimalito — and found only a small fraction of
+  // it, since a territory is one manzana/block by design). Purely a visual
+  // guide drawn under the real layers; never saved, never sent anywhere.
+  // The autocomplete keeps ONE selected barrio (not a result list): the
+  // input is the search box, `barrioOptions` is the live dropdown, and
+  // `selectedBarrio` is the single barrio rendered on the map.
   const [barrioQuery, setBarrioQuery] = useState('');
-  const [referenceBarrios, setReferenceBarrios] = useState<readonly ReferenceBarrio[]>([]);
-  const [barrioSearchMessage, setBarrioSearchMessage] = useState<string | null>(null);
+  const [barrioOptions, setBarrioOptions] = useState<readonly ReferenceBarrio[]>([]);
+  const [selectedBarrio, setSelectedBarrio] = useState<ReferenceBarrio | null>(null);
+  const [barrioOpen, setBarrioOpen] = useState(false);
+  const [barrioActiveIndex, setBarrioActiveIndex] = useState(-1);
   const [searchingBarrio, setSearchingBarrio] = useState(false);
+  const [barrioMessage, setBarrioMessage] = useState<string | null>(null);
+  // Monotonic sequence id so a slow earlier search can never overwrite a
+  // newer one: every effect run bumps it, and a stale response (whose id no
+  // longer matches) is discarded.
+  const barrioRequestSeqRef = useRef(0);
+  // Wraps the combobox so a click elsewhere on the page closes the dropdown.
+  const barrioComboboxRef = useRef<HTMLDivElement | null>(null);
 
   // Map lifecycle: created once. React's StrictMode (development only)
   // deliberately mounts every effect twice — mount, synthetic cleanup,
@@ -238,12 +250,75 @@ export function TerritoryEditor({
     renderDraft(map, draft);
   }, [draft, mapReady]);
 
-  // Re-render the AMVA reference-barrio overlay whenever a search result changes.
+  // Re-render the AMVA reference-barrio overlay: the single selected barrio
+  // (or nothing once cleared). Fitting is done here too, so selection and
+  // camera move together from one state source.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    renderReferenceBarrios(map, referenceBarrios);
-  }, [referenceBarrios, mapReady]);
+    renderReferenceBarrios(
+      map,
+      selectedBarrio === null ? [] : [{ name: selectedBarrio.name, geometry: selectedBarrio.geometry }]
+    );
+    if (selectedBarrio !== null) {
+      fitToMultiPolygon(map, selectedBarrio.geometry);
+    }
+  }, [selectedBarrio, mapReady]);
+
+  // Debounced barrio search: fires ~250ms after typing stops, never on
+  // Enter/click. An empty query (or one that already equals the selected
+  // barrio's name) clears the dropdown without a request. The monotonic
+  // sequence id discards any slow earlier response so it can never overwrite
+  // a newer query's results.
+  useEffect(() => {
+    const query = barrioQuery.trim();
+    barrioRequestSeqRef.current += 1; // invalidate any in-flight search
+    setSearchingBarrio(false);
+
+    if (query === '' || (selectedBarrio !== null && query === selectedBarrio.name)) {
+      setBarrioOptions([]);
+      setBarrioOpen(false);
+      setBarrioMessage(null);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      const seq = barrioRequestSeqRef.current;
+      setSearchingBarrio(true);
+      setBarrioMessage(null);
+      void searchReferenceBarrios(query)
+        .then(({ barrios }) => {
+          if (seq !== barrioRequestSeqRef.current) return;
+          setSearchingBarrio(false);
+          setBarrioOptions(barrios);
+          setBarrioActiveIndex(barrios.length > 0 ? 0 : -1);
+          setBarrioOpen(barrios.length > 0);
+          setBarrioMessage(barrios.length === 0 ? 'No se encontró ningún barrio.' : null);
+        })
+        .catch((caught: unknown) => {
+          if (seq !== barrioRequestSeqRef.current) return;
+          setSearchingBarrio(false);
+          setBarrioOptions([]);
+          setBarrioOpen(false);
+          setBarrioMessage(caught instanceof ApiError ? describeApiError(caught) : 'No se pudo buscar el barrio.');
+        });
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [barrioQuery, selectedBarrio]);
+
+  // Close the dropdown when a click lands outside the combobox — the map is
+  // a canvas that never emits clicks into this subtree, so without this the
+  // options list would hang open after the admin starts drawing.
+  useEffect(() => {
+    function handleDocumentMouseDown(event: MouseEvent): void {
+      if (barrioComboboxRef.current && !barrioComboboxRef.current.contains(event.target as Node)) {
+        setBarrioOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleDocumentMouseDown);
+    return () => document.removeEventListener('mousedown', handleDocumentMouseDown);
+  }, []);
 
   // The latest progress entry's remaining area — TerritoryDetail (slice 2)
   // owns fetching it. Absent means unknown; the layer is simply empty then,
@@ -282,36 +357,55 @@ export function TerritoryEditor({
     setError(null);
   }
 
-  async function handleBarrioSearch(): Promise<void> {
-    const query = barrioQuery.trim();
-    if (query === '') return;
-    setSearchingBarrio(true);
-    setBarrioSearchMessage(null);
-    try {
-      const { barrios } = await searchReferenceBarrios(query);
-      setReferenceBarrios(barrios);
-      setBarrioSearchMessage(
-        barrios.length === 0 ? 'No se encontró ningún barrio con ese nombre.' : `${barrios.length} barrio(s) encontrado(s).`
-      );
-    } catch (caught) {
-      setReferenceBarrios([]);
-      setBarrioSearchMessage(caught instanceof ApiError ? describeApiError(caught) : 'No se pudo buscar el barrio.');
-    } finally {
-      setSearchingBarrio(false);
+  function handleBarrioInputChange(value: string): void {
+    setBarrioQuery(value);
+    // Editing away from the selected name abandons the selection — the input
+    // no longer reflects it, so keeping it would be visually ambiguous.
+    if (selectedBarrio !== null && value !== selectedBarrio.name) {
+      setSelectedBarrio(null);
+    }
+  }
+
+  function handleBarrioSelect(barrio: ReferenceBarrio): void {
+    setSelectedBarrio(barrio);
+    setBarrioQuery(barrio.name);
+    setBarrioOptions([]);
+    setBarrioOpen(false);
+    setBarrioActiveIndex(-1);
+    setBarrioMessage(null);
+  }
+
+  function handleBarrioKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      if (barrioOptions.length > 0) {
+        setBarrioActiveIndex((current) => nextActiveIndex(current, 'down', barrioOptions.length));
+        setBarrioOpen(true);
+      }
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (barrioOptions.length > 0) {
+        setBarrioActiveIndex((current) => nextActiveIndex(current, 'up', barrioOptions.length));
+        setBarrioOpen(true);
+      }
+    } else if (event.key === 'Enter') {
+      if (barrioOpen && barrioActiveIndex >= 0 && barrioOptions[barrioActiveIndex]) {
+        event.preventDefault();
+        handleBarrioSelect(barrioOptions[barrioActiveIndex]);
+      }
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      setBarrioOpen(false);
     }
   }
 
   function handleBarrioClear(): void {
+    setSelectedBarrio(null);
     setBarrioQuery('');
-    setReferenceBarrios([]);
-    setBarrioSearchMessage(null);
-  }
-
-  function handleBarrioCenter(): void {
-    const map = mapRef.current;
-    const first = referenceBarrios[0];
-    if (!map || !first) return;
-    fitToMultiPolygon(map, first.geometry);
+    setBarrioOptions([]);
+    setBarrioOpen(false);
+    setBarrioActiveIndex(-1);
+    setBarrioMessage(null);
   }
 
   async function handleSave(): Promise<void> {
@@ -361,45 +455,91 @@ export function TerritoryEditor({
       />
       <p className="map-attribution">{OSM_ATTRIBUTION}</p>
 
-      <div role="group" aria-label="Barrio de referencia (AMVA)" style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-        <label htmlFor="barrio-search" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          Barrio de referencia
-          <input
-            id="barrio-search"
-            value={barrioQuery}
-            onChange={(event) => setBarrioQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                void handleBarrioSearch();
-              }
-            }}
-            placeholder="ej. Guasimalito"
-          />
-        </label>
-        <button type="button" onClick={() => void handleBarrioSearch()} disabled={barrioQuery.trim() === '' || searchingBarrio}>
-          {searchingBarrio ? 'Buscando…' : 'Buscar'}
-        </button>
-        {referenceBarrios.length > 0 && (
-          <>
-            <button type="button" onClick={handleBarrioCenter}>
-              Centrar
-            </button>
-            <button type="button" onClick={handleBarrioClear}>
-              Quitar
-            </button>
-          </>
+      <div className="barrio-combobox" ref={barrioComboboxRef}>
+        <label htmlFor="barrio-search">Barrio de referencia</label>
+        <input
+          id="barrio-search"
+          type="text"
+          role="combobox"
+          aria-expanded={barrioOpen}
+          aria-controls="barrio-listbox"
+          aria-autocomplete="list"
+          aria-activedescendant={barrioOpen && barrioActiveIndex >= 0 ? `barrio-option-${barrioActiveIndex}` : undefined}
+          autoComplete="off"
+          value={barrioQuery}
+          onChange={(event) => handleBarrioInputChange(event.target.value)}
+          onKeyDown={handleBarrioKeyDown}
+          placeholder="ej. Guasimalito"
+        />
+        {barrioOpen && (
+          <div id="barrio-listbox" role="listbox" aria-label="Barrios que coinciden" className="barrio-options">
+            {barrioOptions.map((barrio, index) => (
+              <button
+                key={barrio.id}
+                type="button"
+                id={`barrio-option-${index}`}
+                role="option"
+                aria-selected={index === barrioActiveIndex}
+                tabIndex={-1}
+                className="barrio-option"
+                onClick={() => handleBarrioSelect(barrio)}
+                onMouseMove={() => {
+                  if (index !== barrioActiveIndex) setBarrioActiveIndex(index);
+                }}
+              >
+                <span className="barrio-option-name">{barrio.name}</span>
+                {barrio.extensionKm2 !== null && (
+                  <span className="barrio-option-extension">{formatKm2(barrio.extensionKm2)}</span>
+                )}
+              </button>
+            ))}
+          </div>
         )}
       </div>
-      {barrioSearchMessage && <p role="status">{barrioSearchMessage}</p>}
+      {searchingBarrio && <p role="status" className="barrio-status">Buscando…</p>}
+      {!searchingBarrio && barrioMessage && (
+        <p role="status" className="barrio-status">{barrioMessage}</p>
+      )}
+      {selectedBarrio !== null && (
+        <div className="barrio-selected">
+          <span>
+            Referencia: <strong>{selectedBarrio.name}</strong>
+          </span>
+          <button type="button" className="barrio-clear" onClick={handleBarrioClear}>
+            Quitar
+          </button>
+        </div>
+      )}
 
-      <div role="group" aria-label="Controles de dibujo" style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+      <div role="toolbar" aria-label="Herramientas de geometría" className="map-toolbar">
+        {editingVertices && (
+          <button type="button" onClick={() => setEditingVertices(false)} aria-pressed>
+            Terminar edición de vértices
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(createDraft());
+            setEditingVertices(false);
+          }}
+        >
+          Reemplazar borrador
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditingVertices(true)}
+          disabled={!draft.isClosed || editingVertices}
+          aria-pressed={editingVertices}
+        >
+          Editar vértices
+        </button>
         <button
           type="button"
           onClick={() => setDraft((current) => undoVertex(current))}
           disabled={!canUndo || editingVertices}
         >
-          Deshacer punto
+          Deshacer vértice
         </button>
         <button
           type="button"
@@ -416,20 +556,11 @@ export function TerritoryEditor({
           }}
           disabled={draft.vertices.length === 0}
         >
-          Reiniciar
+          Descartar borrador
         </button>
         {currentRevisionGeometry && (
           <button type="button" onClick={handleEditCurrentShape}>
             Editar forma actual
-          </button>
-        )}
-        {draft.isClosed && (
-          <button
-            type="button"
-            onClick={() => setEditingVertices((current) => !current)}
-            aria-pressed={editingVertices}
-          >
-            {editingVertices ? 'Dejar de editar puntos' : 'Editar puntos'}
           </button>
         )}
       </div>
@@ -467,14 +598,14 @@ export function TerritoryEditor({
         {draft.isClosed && editingVertices && (
           <p role="status">
             Arrastrá un punto para moverlo, hacé clic en un borde para agregar uno, doble clic en un punto para
-            borrarlo. Dejá de editar puntos cuando termines, y guardá.
+            borrarlo. Usá “Terminar edición de vértices” para conservar los cambios y guardar.
           </p>
         )}
         {draft.isClosed && !editingVertices && (
           <p role="status">
             {canSave
-              ? `${draft.vertices.length} puntos. Listo para guardar, o Editar puntos para ajustar uno.`
-              : `${draft.vertices.length} puntos. Editá puntos para ajustar uno, o completá los campos requeridos abajo para guardar.`}
+              ? `${draft.vertices.length} puntos. Listo para guardar, o Editar vértices para ajustar el contorno.`
+              : `${draft.vertices.length} puntos. Editá vértices para ajustar el contorno, o completá los campos requeridos abajo para guardar.`}
           </p>
         )}
 

@@ -51,6 +51,12 @@ export interface Territory {
   readonly number: string | null;
 }
 
+/** A territory as returned by the list endpoint: `Territory` plus the current revision's geometry for a static SVG thumbnail (null when it has no revisions). */
+export interface TerritoryListItem extends Territory {
+  readonly geometry: Polygon | null;
+  readonly operationalState: OperationalState;
+}
+
 export interface TerritoryWithRevisions extends Omit<Territory, 'currentRevisionNumber'> {
   readonly revisions: readonly TerritoryRevision[];
 }
@@ -76,6 +82,17 @@ export interface ProgressEntry {
   readonly route: LineString | null;
   readonly remainingArea: Polygon | null;
   /** Explicit, never-inferred: 'unknown' means not recorded, never "fully covered" (AGENTS.md). */
+  readonly remainingAreaStatus: 'recorded' | 'unknown';
+}
+
+export type OperationalState = 'no_record' | 'in_progress' | 'paused' | 'cycle_completed' | 'reopened';
+
+/** Administrative work-cycle state only. This is never returned from public endpoints. */
+export interface TerritoryOperationalStatus {
+  readonly state: OperationalState;
+  readonly cycleNumber: number | null;
+  readonly effectiveCompletionDate: string | null;
+  readonly remainingArea: Polygon | null;
   readonly remainingAreaStatus: 'recorded' | 'unknown';
 }
 
@@ -127,7 +144,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-export function listTerritories(): Promise<{ territories: readonly Territory[] }> {
+export function listTerritories(): Promise<{ territories: readonly TerritoryListItem[] }> {
   return request('/admin/territories');
 }
 
@@ -164,9 +181,20 @@ export function listProgress(territoryId: number): Promise<{ entries: readonly P
 
 export function recordProgress(
   territoryId: number,
-  input: { recordedBy: string; note?: string; route?: LineString }
+  input: { recordedBy: string; note?: string; pausePoint?: Point; route?: LineString; remainingArea?: Polygon }
 ): Promise<ProgressEntry> {
   return request(`/admin/territories/${territoryId}/progress`, { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function getTerritoryOperationalStatus(territoryId: number): Promise<TerritoryOperationalStatus> {
+  return request(`/admin/territories/${territoryId}/operational-state`);
+}
+
+export function changeTerritoryOperationalState(
+  territoryId: number,
+  input: { action: Exclude<OperationalState, 'no_record'>; actor: string; reason?: string; effectiveCompletionDate?: string }
+): Promise<TerritoryOperationalStatus> {
+  return request(`/admin/territories/${territoryId}/operational-state`, { method: 'POST', body: JSON.stringify(input) });
 }
 
 export function createShareToken(

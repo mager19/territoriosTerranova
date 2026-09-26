@@ -4,6 +4,7 @@ import type { ProgressEntry } from '../../api/client.js';
 import { AuditHistory } from './AuditHistory.js';
 import { ProgressList } from './ProgressList.js';
 import { ProgressRecorder } from './ProgressRecorder.js';
+import { OperationalStatusPanel } from './OperationalStatusPanel.js';
 import { SharePanel } from './SharePanel.js';
 import type { Polygon } from '@territorios/geo';
 
@@ -13,6 +14,8 @@ export interface TerritoryDetailProps {
   readonly refreshToken: number;
   /** Forwarded up to App so the map (TerritoryEditor) can render it as an overlay. */
   readonly onRemainingAreaChange: (geometry: ProgressEntry['remainingArea']) => void;
+  /** Navigate to this territory's editor route (`/territorios/:id/editar`). */
+  readonly onEdit: () => void;
 }
 
 /**
@@ -26,20 +29,36 @@ export interface TerritoryDetailProps {
  * counter to thread through — the equivalent A5-original plumbing this
  * replaces).
  */
-export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemainingAreaChange }: TerritoryDetailProps): JSX.Element {
+export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemainingAreaChange, onEdit }: TerritoryDetailProps): JSX.Element {
   const [progressVersion, setProgressVersion] = useState(0);
   const combinedRefreshToken = refreshToken + progressVersion;
 
   return (
     <section aria-labelledby="territory-detail-heading">
-      <h2 id="territory-detail-heading">Compartir, progreso e historial</h2>
-      <SharePanel territoryId={territoryId} />
+      <h2 id="territory-detail-heading">Territorio</h2>
+      <a
+        className="detail-edit-link"
+        href={`/territorios/${territoryId}/editar`}
+        onClick={(event) => {
+          event.preventDefault();
+          onEdit();
+        }}
+      >
+        Editar mapa
+      </a>
+      <OperationalStatusPanel
+        territoryId={territoryId}
+        refreshToken={combinedRefreshToken}
+        onChanged={() => setProgressVersion((version) => version + 1)}
+        onRemainingAreaChange={(status) => onRemainingAreaChange(status.remainingArea)}
+      />
       <ProgressRecorder
         territoryId={territoryId}
         boundary={boundary}
         onRecorded={() => setProgressVersion((version) => version + 1)}
       />
-      <ProgressList territoryId={territoryId} refreshToken={combinedRefreshToken} onLatestRemainingArea={onRemainingAreaChange} />
+      <ProgressList territoryId={territoryId} refreshToken={combinedRefreshToken} />
+      <SharePanel territoryId={territoryId} />
       <AuditHistory territoryId={territoryId} refreshToken={combinedRefreshToken} />
     </section>
   );

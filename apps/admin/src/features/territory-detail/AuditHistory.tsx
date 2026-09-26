@@ -12,7 +12,11 @@ const ACTION_LABELS: Record<string, string> = {
   revision_submitted: 'Nueva revisión de geometría',
   shared: 'Compartido con el grupo de voluntarios',
   share_revoked: 'Link de compartir revocado',
-  progress_recorded: 'Progreso registrado'
+  progress_recorded: 'Progreso registrado',
+  operational_in_progress: 'Ciclo de trabajo abierto o reanudado',
+  operational_paused: 'Trabajo pausado',
+  operational_cycle_completed: 'Ciclo marcado como completado',
+  operational_reopened: 'Ciclo reabierto'
 };
 
 /**

@@ -16,7 +16,7 @@
  */
 
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
-import type { Feature, FeatureCollection, Geometry, MultiPolygon, Polygon, Position } from '@territorios/geo';
+import type { Feature, FeatureCollection, Geometry, MultiPolygon, Point, Polygon, Position } from '@territorios/geo';
 
 import type { Coordinate, DraftState } from './draft.js';
 
@@ -158,6 +158,22 @@ export function installEditorLayers(map: MapLibreMap): void {
     paint: { 'line-color': '#8a5a2e', 'line-width': 2, 'line-dasharray': [3, 2] }
   });
 
+  // A single pause marker belongs to the in-progress progress entry. It is
+  // deliberately separate from the route draft source so clearing the route
+  // never silently clears the marker (or vice versa).
+  map.addSource('progress-pause-point', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer({
+    id: 'progress-pause-point-circle',
+    type: 'circle',
+    source: 'progress-pause-point',
+    paint: {
+      'circle-radius': 8,
+      'circle-color': '#7c3aed',
+      'circle-stroke-width': 2,
+      'circle-stroke-color': '#ffffff'
+    }
+  });
+
   map.addSource('saved-territory', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
   map.addLayer({
     id: 'saved-territory-fill',
@@ -280,6 +296,17 @@ export function renderReferenceBarrios(map: MapLibreMap, barrios: readonly Refer
  */
 export function renderRemainingArea(map: MapLibreMap, geometry: Polygon | null): void {
   const source = asGeoJsonSource(map.getSource('remaining-area'));
+  if (!source) return;
+  source.setData(
+    geometry === null
+      ? { type: 'FeatureCollection', features: [] }
+      : { type: 'FeatureCollection', features: [{ type: 'Feature', properties: null, geometry }] }
+  );
+}
+
+/** Renders one in-progress pause point for the admin-only progress recorder. */
+export function renderPausePoint(map: MapLibreMap, geometry: Point | null): void {
+  const source = asGeoJsonSource(map.getSource('progress-pause-point'));
   if (!source) return;
   source.setData(
     geometry === null
