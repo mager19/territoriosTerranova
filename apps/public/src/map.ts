@@ -142,13 +142,15 @@ export function installTerritoryLayers(map: MapLibreMap): void {
     id: 'territory-boundary-fill',
     type: 'fill',
     source: 'territory-boundary',
-    paint: { 'fill-color': '#8e5ec9', 'fill-opacity': 0.1 }
+    paint: { 'fill-color': '#8e5ec9', 'fill-opacity': 0.22 }
   });
   map.addLayer({
     id: 'territory-boundary-line',
     type: 'line',
     source: 'territory-boundary',
-    paint: { 'line-color': '#9a9a9a', 'line-width': 2, 'line-dasharray': [2, 2] }
+    // Solid, dark and 3 px: a faint grey dashed edge was hard to tell apart
+    // from the grey OSM basemap on a phone outdoors (2026-10-03).
+    paint: { 'line-color': '#5b3a8a', 'line-width': 3 }
   });
 
   // The area already done in the current cycle (2026-09-26 product
