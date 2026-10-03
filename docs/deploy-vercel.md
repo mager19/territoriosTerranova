@@ -57,19 +57,22 @@ backend to a framework project:
 | Framework Preset | Vite |
 | Root Directory | `apps/admin` |
 | Include files outside the Root Directory | Enabled (the default) |
-| Install Command | default (`pnpm install`) |
-| Build Command | `pnpm --filter @territorios/api build && vite build` |
+| Install Command | `pnpm install && pnpm --filter @territorios/geo build && pnpm --filter @territorios/admin bundle:api` |
+| Build Command | `vite build` |
 | Output Directory | `dist` |
 | Node.js Version | 22.x |
 
-The Build Command must build the API. `tsc -b` in `apps/api` also builds
-`packages/geo`, and the function imports the compiled
-`apps/api/dist/vercel.js`.
+The API is bundled into one self-contained file, `apps/admin/api/_api.mjs`
+(`scripts/bundle-api.mjs`, esbuild), which `api/index.js` imports by relative
+path. It runs in the Install Command because that is guaranteed to finish
+before Vercel packages the function.
 
-> **Changed:** the earlier Build Command was
-> `pnpm --filter @territorios/geo build && vite build`. That command does not
-> build the API, so the function would fail with
-> `Cannot find module .../apps/api/dist/vercel.js`.
+> **Why a bundle (2026-10-03):** the first production deploy imported
+> `@territorios/api/vercel` by package name. In this pnpm workspace that name
+> is a `node_modules` symlink, which Vercel's function packaging did not keep:
+> every `/api/*` request failed with `ERR_MODULE_NOT_FOUND: Cannot find package
+> '@territorios/api' imported from /var/task/apps/admin/api/index.js`. The
+> bundle needs no `node_modules` at runtime.
 
 ### `publico-territorios`
 
@@ -222,7 +225,7 @@ still has to be applied by hand first.
 1. Apply the migrations to Neon with the direct URL, as in
    [Migrations](#migrations).
 2. In `admin-territorios`:
-   - set the Build Command as in [Project settings](#project-settings);
+   - set the Install and Build Commands as in [Project settings](#project-settings);
    - set every variable from the admin table;
    - set the Ignored Build Step;
    - redeploy.

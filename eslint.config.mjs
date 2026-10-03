@@ -8,7 +8,8 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/coverage/**',
       'playwright-report/**',
-      'test-results/**'
+      'test-results/**',
+      'apps/admin/api/_api.mjs'
     ]
   },
   eslint.configs.recommended,
