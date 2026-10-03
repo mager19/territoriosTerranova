@@ -4,10 +4,11 @@
  * the two apps deliberately do not share a runtime package for map glue
  * (same duplication as createBelloMapStyle in map-editor.ts).
  *
- * MapTiler Streets v2 (vector) is used when VITE_MAPTILER_KEY is set. With
- * no key, the OSM raster style from map-editor.ts is returned untouched — the
- * automatic fallback, and the rollback path (docs/map-references.md
- * "Basemap").
+ * OSM raster (the style from map-editor.ts, untouched) is the default. MapTiler
+ * Streets v2 (vector) is returned only when it is explicitly chosen AND a
+ * MapTiler key is present; with no key every choice falls back to OSM
+ * (docs/map-references.md "Basemap"). Only the admin app offers the choice;
+ * the public volunteer view always uses OSM.
  */
 
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification, TransformStyleFunction } from 'maplibre-gl';
@@ -31,16 +32,28 @@ export type Basemap =
 
 export type BasemapKind = Basemap['kind'];
 
-export function selectBasemap(maptilerKey: string | undefined): Basemap {
-  const key = maptilerKey?.trim() ?? '';
-  if (key === '') {
-    return { kind: 'osm', style: createBelloMapStyle() };
-  }
+export function hasMapTilerKey(maptilerKey: string | undefined): boolean {
+  return (maptilerKey?.trim() ?? '') !== '';
+}
+
+export function createOsmBasemap(): Basemap {
+  return { kind: 'osm', style: createBelloMapStyle() };
+}
+
+export function createMapTilerBasemap(maptilerKey: string): Basemap {
   return {
     kind: 'maptiler',
-    style: `${MAPTILER_STYLE_BASE_URL}?key=${encodeURIComponent(key)}`,
+    style: `${MAPTILER_STYLE_BASE_URL}?key=${encodeURIComponent(maptilerKey.trim())}`,
     transformStyle: (_previous, next) => withMapTilerAttribution(reinforcePedestrianPaths(next))
   };
+}
+
+/** OSM unless MapTiler is explicitly preferred and a key is present. */
+export function selectBasemap(maptilerKey: string | undefined, preferred: BasemapKind = 'osm'): Basemap {
+  if (preferred !== 'maptiler' || maptilerKey === undefined || !hasMapTilerKey(maptilerKey)) {
+    return createOsmBasemap();
+  }
+  return createMapTilerBasemap(maptilerKey);
 }
 
 // --- Pedestrian path reinforcement -------------------------------------

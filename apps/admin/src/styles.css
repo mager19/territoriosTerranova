@@ -437,6 +437,50 @@ textarea {
   color: var(--color-fog);
 }
 
+/* Wraps a drawing map so the basemap switch can sit over its top-left
+   corner — the NavigationControl owns top-right and the MapTiler logo
+   bottom-left, so nothing covers a map control, also at phone width. */
+.map-frame {
+  position: relative;
+}
+
+/* "Calles" / "Construcciones": a compact segmented control. White surface
+   with the hairline border; the pressed option takes the soft blue
+   "selected" fill (same surface as aria-current list items). */
+.basemap-switcher[role='group'] {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 0;
+  margin: 0;
+  background: #ffffff;
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-buttons);
+  padding: 2px;
+}
+
+.basemap-switcher button {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 13px;
+  border-color: transparent;
+  border-radius: 6px;
+}
+
+.basemap-switcher button[aria-pressed='true'] {
+  background: #dbeaff;
+  border-color: transparent;
+  color: var(--color-deep-sapphire);
+}
+
+.basemap-switcher button:focus-visible {
+  outline: 2px solid var(--color-electric-blue);
+  outline-offset: 1px;
+}
+
 .map-attribution {
   font-size: 12px;
   color: var(--color-fog);

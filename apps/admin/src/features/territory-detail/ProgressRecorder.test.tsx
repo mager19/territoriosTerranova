@@ -25,7 +25,11 @@ type Handler = (event: { point: { x: number; y: number }; preventDefault: () => 
 const mapState = vi.hoisted(() => ({
   handlers: new Map<string, Set<Handler>>(),
   setData: [] as { source: string; data: unknown }[],
-  renderedFeatures: [] as { properties: Record<string, unknown> }[]
+  renderedFeatures: [] as { properties: Record<string, unknown> }[],
+  setStyle: [] as unknown[][],
+  addedSources: [] as string[],
+  controls: [] as unknown[],
+  fitCalls: 0
 }));
 
 vi.mock('maplibre-gl', () => ({
@@ -42,13 +46,22 @@ vi.mock('maplibre-gl', () => ({
     off(type: string, handler: Handler): void {
       mapState.handlers.get(type)?.delete(handler);
     }
-    addSource(): void {}
+    addSource(id: string): void {
+      mapState.addedSources.push(id);
+    }
     addLayer(): void {}
-    addControl(): void {}
+    addControl(control: unknown): void {
+      mapState.controls.push(control);
+    }
+    removeControl(control: unknown): void {
+      mapState.controls = mapState.controls.filter((candidate) => candidate !== control);
+    }
     getSource(source: string) {
       return { setData: (data: unknown) => mapState.setData.push({ source, data }) };
     }
-    fitBounds(): void {}
+    fitBounds(): void {
+      mapState.fitCalls += 1;
+    }
     unproject([x, y]: [number, number]) {
       return { lng: x / 1000 - 75.6, lat: y / 1000 + 6.3 };
     }
@@ -63,7 +76,9 @@ vi.mock('maplibre-gl', () => ({
     getCanvas() {
       return { style: { cursor: '' } };
     }
-    setStyle(): void {}
+    setStyle(...args: unknown[]): void {
+      mapState.setStyle.push(args);
+    }
   },
   NavigationControl: class {}
 }));
@@ -82,10 +97,16 @@ beforeEach(() => {
   mapState.handlers.clear();
   mapState.setData.length = 0;
   mapState.renderedFeatures = [];
+  mapState.setStyle.length = 0;
+  mapState.addedSources.length = 0;
+  mapState.controls = [];
+  mapState.fitCalls = 0;
+  window.localStorage.clear();
   recordProgress.mockReset();
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   if (root !== null) {
     await act(async () => root?.unmount());
   }
@@ -538,6 +559,68 @@ describe('ProgressRecorder', () => {
       await clickMap(257, 107);
       const vertices = lastData('draft-territory').features.filter((feature) => feature.geometry.type === 'Point');
       expect(vertices.map((feature) => feature.geometry.coordinates)).toEqual([at(260, 110)]);
+    });
+  });
+
+  describe('basemap switch (2026-10-03)', () => {
+    function hasMapTilerLogo(): boolean {
+      return mapState.controls.some((control) => control instanceof Object && 'onAdd' in control);
+    }
+
+    function attributionText(): string {
+      return host?.querySelector('.map-attribution')?.textContent ?? '';
+    }
+
+    it('shows no switch without a MapTiler key', async () => {
+      vi.stubEnv('VITE_MAPTILER_KEY', '');
+      await renderRecorder();
+
+      expect(host?.querySelector('[role="group"][aria-label="Mapa base"]')).toBeNull();
+      expect(hasButton('Construcciones')).toBe(false);
+      expect(attributionText()).toBe('© OpenStreetMap contributors');
+    });
+
+    it('defaults to OSM and switches to MapTiler keeping the covered area, territory, remaining area and sessions', async () => {
+      vi.stubEnv('VITE_MAPTILER_KEY', 'test-key');
+      await renderRecorder(() => undefined, { boundary: BOUNDARY, remainingArea: BOUNDARY });
+      expect(buttonByText('Calles').getAttribute('aria-pressed')).toBe('true');
+      expect(typeof mapState.setStyle[0]![0]).toBe('object');
+      await clickMap(50, 80);
+      await clickMap(56, 80);
+      const fitsBefore = mapState.fitCalls;
+
+      await click('Construcciones');
+
+      expect(mapState.setStyle.at(-1)).toEqual([
+        'https://api.maptiler.com/maps/streets-v2/style.json?key=test-key',
+        { diff: false, transformStyle: expect.any(Function) }
+      ]);
+      expect(hasMapTilerLogo()).toBe(true);
+      expect(attributionText()).toBe('© MapTiler © OpenStreetMap contributors');
+      expect(window.localStorage.getItem('territorios.admin.basemap')).toBe('maptiler');
+
+      mapState.setData.length = 0;
+      mapState.addedSources.length = 0;
+      await fireMap('style.load', 0, 0);
+
+      expect(mapState.addedSources).toEqual(
+        expect.arrayContaining(['saved-territory', 'remaining-area', 'draft-territory', 'progress-sessions', 'snap-indicator'])
+      );
+      const vertices = lastData('draft-territory').features.filter((feature) => feature.geometry.type === 'Point');
+      expect(vertices.map((feature) => feature.geometry.coordinates)).toEqual([at(50, 80), at(56, 80)]);
+      expect(lastData('saved-territory').features[0]?.geometry).toEqual(BOUNDARY);
+      expect(lastData('remaining-area').features).toHaveLength(1);
+      expect(lastData('progress-sessions').features).toEqual([]);
+      expect(mapState.fitCalls).toBe(fitsBefore);
+    });
+
+    it('restores the remembered MapTiler choice', async () => {
+      vi.stubEnv('VITE_MAPTILER_KEY', 'test-key');
+      window.localStorage.setItem('territorios.admin.basemap', 'maptiler');
+      await renderRecorder();
+
+      expect(mapState.setStyle[0]![0]).toBe('https://api.maptiler.com/maps/streets-v2/style.json?key=test-key');
+      expect(buttonByText('Construcciones').getAttribute('aria-pressed')).toBe('true');
     });
   });
 });

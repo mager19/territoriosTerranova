@@ -24,7 +24,11 @@ type Handler = (event: { point: { x: number; y: number }; preventDefault: () => 
 const mapState = vi.hoisted(() => ({
   handlers: new Map<string, Set<Handler>>(),
   setData: [] as { source: string; data: unknown }[],
-  renderedFeatures: [] as { properties: Record<string, unknown> }[]
+  renderedFeatures: [] as { properties: Record<string, unknown> }[],
+  setStyle: [] as unknown[][],
+  addedSources: [] as string[],
+  controls: [] as unknown[],
+  fitCalls: 0
 }));
 
 vi.mock('maplibre-gl', () => ({
@@ -41,13 +45,22 @@ vi.mock('maplibre-gl', () => ({
     off(type: string, handler: Handler): void {
       mapState.handlers.get(type)?.delete(handler);
     }
-    addSource(): void {}
+    addSource(id: string): void {
+      mapState.addedSources.push(id);
+    }
     addLayer(): void {}
-    addControl(): void {}
+    addControl(control: unknown): void {
+      mapState.controls.push(control);
+    }
+    removeControl(control: unknown): void {
+      mapState.controls = mapState.controls.filter((candidate) => candidate !== control);
+    }
     getSource(source: string) {
       return { setData: (data: unknown) => mapState.setData.push({ source, data }) };
     }
-    fitBounds(): void {}
+    fitBounds(): void {
+      mapState.fitCalls += 1;
+    }
     unproject([x, y]: [number, number]) {
       return { lng: x / 1000 - 75.6, lat: y / 1000 + 6.3 };
     }
@@ -62,7 +75,9 @@ vi.mock('maplibre-gl', () => ({
     getCanvas() {
       return { style: { cursor: '' } };
     }
-    setStyle(): void {}
+    setStyle(...args: unknown[]): void {
+      mapState.setStyle.push(args);
+    }
   },
   NavigationControl: class {}
 }));
@@ -147,6 +162,11 @@ beforeEach(() => {
   mapState.handlers.clear();
   mapState.setData.length = 0;
   mapState.renderedFeatures = [];
+  mapState.setStyle.length = 0;
+  mapState.addedSources.length = 0;
+  mapState.controls = [];
+  mapState.fitCalls = 0;
+  window.localStorage.clear();
   listTerritories.mockReset();
   listTerritories.mockResolvedValue({ territories: [listItem(1, EDITED_GEOMETRY), listItem(2, NEIGHBOR_GEOMETRY)] });
   searchReferenceBarrios.mockReset();
@@ -162,6 +182,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   if (root !== null) {
     await act(async () => root?.unmount());
   }
@@ -450,6 +471,135 @@ describe('TerritoryEditor', () => {
       await act(async () => buttonByText('Terminar edición de vértices').click());
       await act(async () => buttonByText('Guardar nueva revisión').click());
       expect(submitRevision).toHaveBeenCalledWith(1, { geometry: multi });
+    });
+  });
+
+  describe('basemap switch (2026-10-03)', () => {
+    const MAPTILER_URL = 'https://api.maptiler.com/maps/streets-v2/style.json?key=test-key';
+
+    function basemapGroup(): Element | null {
+      return host?.querySelector('[role="group"][aria-label="Mapa base"]') ?? null;
+    }
+
+    function attributionText(): string {
+      return host?.querySelector('.map-attribution')?.textContent ?? '';
+    }
+
+    function isOsmStyle(style: unknown): boolean {
+      return typeof style === 'object' && style !== null && 'osm-raster' in (style as { sources: object }).sources;
+    }
+
+    async function fireStyleLoad(): Promise<void> {
+      await act(async () => {
+        for (const handler of [...(mapState.handlers.get('style.load') ?? [])]) {
+          handler({ point: { x: 0, y: 0 }, preventDefault: () => undefined });
+        }
+      });
+    }
+
+    it('shows no switch and uses OSM when no MapTiler key is configured', async () => {
+      vi.stubEnv('VITE_MAPTILER_KEY', '');
+      window.localStorage.setItem('territorios.admin.basemap', 'maptiler');
+      await renderEditor(null);
+
+      expect(basemapGroup()).toBeNull();
+      expect(mapState.setStyle).toHaveLength(1);
+      expect(isOsmStyle(mapState.setStyle[0]![0])).toBe(true);
+      expect(attributionText()).toBe('© OpenStreetMap contributors');
+    });
+
+    it('offers "Calles" / "Construcciones" with a key, defaulting to OSM', async () => {
+      vi.stubEnv('VITE_MAPTILER_KEY', 'test-key');
+      await renderEditor(null);
+
+      expect(basemapGroup()).not.toBeNull();
+      expect(buttonByText('Calles').getAttribute('aria-pressed')).toBe('true');
+      expect(buttonByText('Construcciones').getAttribute('aria-pressed')).toBe('false');
+      expect(buttonByText('Calles').type).toBe('button');
+      expect(mapState.setStyle).toHaveLength(1);
+      expect(isOsmStyle(mapState.setStyle[0]![0])).toBe(true);
+      expect(mapState.controls.some((control) => control instanceof Object && 'onAdd' in control)).toBe(false);
+      expect(attributionText()).toBe('© OpenStreetMap contributors');
+    });
+
+    it('switches to MapTiler without losing the draft, saved territory, neighbours or barrio', async () => {
+      vi.stubEnv('VITE_MAPTILER_KEY', 'test-key');
+      await renderEditor(selectedTerritory);
+      await selectBarrio();
+      await fireMap('click', 600, 200);
+      await fireMap('click', 650, 200);
+      const verticesBefore = draftVertices();
+      const fitsBefore = mapState.fitCalls;
+
+      await act(async () => buttonByText('Construcciones').click());
+
+      const [style, options] = mapState.setStyle.at(-1)!;
+      expect(style).toBe(MAPTILER_URL);
+      expect(options).toMatchObject({ diff: false, transformStyle: expect.any(Function) });
+      expect(buttonByText('Construcciones').getAttribute('aria-pressed')).toBe('true');
+      expect(attributionText()).toBe('© MapTiler © OpenStreetMap contributors');
+      expect(mapState.controls.some((control) => control instanceof Object && 'onAdd' in control)).toBe(true);
+
+      // The new style drops every app source; they come back on style.load.
+      mapState.setData.length = 0;
+      mapState.addedSources.length = 0;
+      await fireStyleLoad();
+
+      expect(mapState.addedSources).toEqual(
+        expect.arrayContaining([
+          'reference-barrios',
+          'saved-territory',
+          'remaining-area',
+          'draft-territory',
+          'draft-other-parts',
+          'neighbor-territories',
+          'snap-indicator'
+        ])
+      );
+      expect(draftVertices()).toEqual(verticesBefore);
+      expect(lastData('saved-territory').features[0]?.geometry).toEqual(EDITED_GEOMETRY);
+      expect(lastData('neighbor-territories').features.map((feature) => feature.geometry)).toEqual([NEIGHBOR_GEOMETRY]);
+      expect(lastData('reference-barrios').features[0]?.geometry).toEqual(BARRIO_GEOMETRY);
+      // Same camera: a style switch never re-fits the view.
+      expect(mapState.fitCalls).toBe(fitsBefore);
+      // The one-shot listener is gone, and drawing still works afterwards.
+      expect(mapState.handlers.get('style.load')?.size ?? 0).toBe(0);
+      await fireMap('click', 650, 250);
+      expect(draftVertices()).toHaveLength(verticesBefore.length + 1);
+    });
+
+    it('re-installs the layers only once when a second switch supersedes a style still loading', async () => {
+      vi.stubEnv('VITE_MAPTILER_KEY', 'test-key');
+      await renderEditor(null);
+
+      await act(async () => buttonByText('Construcciones').click());
+      await act(async () => buttonByText('Calles').click());
+      mapState.addedSources.length = 0;
+      await fireStyleLoad();
+
+      expect(mapState.addedSources.filter((id) => id === 'draft-territory')).toHaveLength(1);
+      expect(isOsmStyle(mapState.setStyle.at(-1)![0])).toBe(true);
+      expect(mapState.setStyle.at(-1)![1]).toEqual({ diff: false });
+      // Back on OSM: the MapTiler logo is removed again.
+      expect(mapState.controls.some((control) => control instanceof Object && 'onAdd' in control)).toBe(false);
+      expect(attributionText()).toBe('© OpenStreetMap contributors');
+    });
+
+    it('remembers the choice per browser and restores it on the next map', async () => {
+      vi.stubEnv('VITE_MAPTILER_KEY', 'test-key');
+      await renderEditor(null);
+      await act(async () => buttonByText('Construcciones').click());
+      expect(window.localStorage.getItem('territorios.admin.basemap')).toBe('maptiler');
+
+      await act(async () => root?.unmount());
+      host?.remove();
+      root = null;
+      mapState.setStyle.length = 0;
+      await renderEditor(null);
+
+      expect(mapState.setStyle[0]).toEqual([MAPTILER_URL, { transformStyle: expect.any(Function) }]);
+      expect(buttonByText('Construcciones').getAttribute('aria-pressed')).toBe('true');
+      expect(attributionText()).toBe('© MapTiler © OpenStreetMap contributors');
     });
   });
 });
