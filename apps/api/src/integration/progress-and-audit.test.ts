@@ -326,6 +326,52 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
     expect(response.json().remainingArea.coordinates).toHaveLength(2);
   });
 
+  it('covers a multi-part territory part by part: remaining = territory minus covered, across parts', async () => {
+    // Two disjoint parts with a ~200 m gap (the creek).
+    const west = rectangle(-75.546, 6.33, -75.544, 6.332);
+    const east = rectangle(-75.542, 6.33, -75.54, 6.332);
+    const territoryId = await createOpenTerritory('T-coverage-multipart', {
+      type: 'MultiPolygon',
+      coordinates: [west.coordinates, east.coordinates]
+    });
+
+    // A covered area spanning the gap does NOT lie within the territory.
+    const acrossGap = await recordSession(territoryId, {
+      coveredArea: rectangle(-75.545, 6.3305, -75.541, 6.3315),
+      baseline: 'whole_territory'
+    });
+    expect(acrossGap.statusCode).toBe(400);
+    expect(acrossGap.json()).toMatchObject({ error: 'out_of_bounds' });
+
+    // Covering the whole WEST part leaves exactly the east part.
+    const first = await recordSession(territoryId, { coveredArea: west, baseline: 'whole_territory' });
+    expect(first.statusCode).toBe(201);
+    expect(await remainingEquals(first.json().id, east)).toBe(true);
+    expect((await operationalState(territoryId)).json().progressPercent).toBeCloseTo(50, 0);
+
+    // Half of the east part: remaining is the other half of the east part.
+    const second = await recordSession(territoryId, { coveredArea: rectangle(-75.542, 6.33, -75.541, 6.332) });
+    expect(second.statusCode).toBe(201);
+    expect(await remainingEquals(second.json().id, rectangle(-75.541, 6.33, -75.54, 6.332))).toBe(true);
+    expect((await operationalState(territoryId)).json().progressPercent).toBeCloseTo(75, 0);
+  });
+
+  it('keeps remaining area as a MultiPolygon when a session covers part of one part of a two-part territory', async () => {
+    const west = rectangle(-75.536, 6.33, -75.534, 6.332);
+    const east = rectangle(-75.532, 6.33, -75.53, 6.332);
+    const territoryId = await createOpenTerritory('T-coverage-multipart-remaining', {
+      type: 'MultiPolygon',
+      coordinates: [west.coordinates, east.coordinates]
+    });
+    const response = await recordSession(territoryId, {
+      coveredArea: rectangle(-75.536, 6.33, -75.535, 6.332),
+      baseline: 'whole_territory'
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json().remainingArea.type).toBe('MultiPolygon');
+    expect(response.json().remainingArea.coordinates).toHaveLength(2);
+  });
+
   it('requires an explicit baseline for the first session of a cycle and records nothing without it', async () => {
     const territoryId = await createOpenTerritory('T-coverage-baseline');
 

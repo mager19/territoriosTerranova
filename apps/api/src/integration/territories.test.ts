@@ -345,6 +345,143 @@ describe('POST /admin/territories/:id/revisions', () => {
   });
 });
 
+describe('multi-part territories (0012)', () => {
+  // Two disjoint squares with a gap between them (e.g. a creek).
+  const WEST_PART = [
+    [
+      [-75.53, 6.32],
+      [-75.528, 6.32],
+      [-75.528, 6.322],
+      [-75.53, 6.322],
+      [-75.53, 6.32]
+    ]
+  ];
+  const EAST_PART = [
+    [
+      [-75.526, 6.32],
+      [-75.524, 6.32],
+      [-75.524, 6.322],
+      [-75.526, 6.322],
+      [-75.526, 6.32]
+    ]
+  ];
+  const TWO_PARTS = { type: 'MultiPolygon', coordinates: [WEST_PART, EAST_PART] };
+
+  it('creates a two-part territory and returns it as a MultiPolygon in detail and list', async () => {
+    const created = await admin.inject({
+      method: 'POST',
+      url: '/admin/territories',
+      payload: { name: 'T-two-parts', geometry: TWO_PARTS }
+    });
+    expect(created.statusCode).toBe(201);
+    const body = created.json();
+    expect(body.revisions[0].geometry).toEqual(TWO_PARTS);
+
+    const list = await admin.inject({ method: 'GET', url: '/admin/territories' });
+    const listed = list.json().territories.find((t: { id: number }) => t.id === body.id);
+    expect(listed.geometry).toEqual(TWO_PARTS);
+  });
+
+  it('returns a one-part MultiPolygon input as a Polygon (one canonical shape)', async () => {
+    const created = await admin.inject({
+      method: 'POST',
+      url: '/admin/territories',
+      payload: { name: 'T-one-part-multi', geometry: { type: 'MultiPolygon', coordinates: [WEST_PART] } }
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().revisions[0].geometry).toEqual({ type: 'Polygon', coordinates: WEST_PART });
+  });
+
+  it('rejects parts that overlap each other as invalid_geometry — never unions them', async () => {
+    const overlapping = [
+      [
+        [-75.529, 6.321],
+        [-75.527, 6.321],
+        [-75.527, 6.323],
+        [-75.529, 6.323],
+        [-75.529, 6.321]
+      ]
+    ];
+    const response = await admin.inject({
+      method: 'POST',
+      url: '/admin/territories',
+      payload: { name: 'T-parts-overlap', geometry: { type: 'MultiPolygon', coordinates: [WEST_PART, overlapping] } }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'invalid_geometry' });
+  });
+
+  it('rejects a zero-area part as zero_area_geometry', async () => {
+    const response = await admin.inject({
+      method: 'POST',
+      url: '/admin/territories',
+      payload: {
+        name: 'T-parts-degenerate',
+        geometry: { type: 'MultiPolygon', coordinates: [WEST_PART, COLLINEAR.coordinates] }
+      }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'zero_area_geometry' });
+  });
+
+  it('rejects a part outside Bello as out_of_bounds', async () => {
+    const response = await admin.inject({
+      method: 'POST',
+      url: '/admin/territories',
+      payload: {
+        name: 'T-parts-outside',
+        geometry: { type: 'MultiPolygon', coordinates: [WEST_PART, OUTSIDE_BELLO.coordinates] }
+      }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'out_of_bounds' });
+  });
+
+  it('rejects a revision whose second part overlaps another active territory (409)', async () => {
+    const neighbour = await admin.inject({
+      method: 'POST',
+      url: '/admin/territories',
+      payload: { name: 'T-parts-neighbour', geometry: { type: 'Polygon', coordinates: EAST_PART } }
+    });
+    expect(neighbour.statusCode).toBe(201);
+
+    const created = await admin.inject({
+      method: 'POST',
+      url: '/admin/territories',
+      payload: { name: 'T-parts-grows', geometry: { type: 'Polygon', coordinates: WEST_PART } }
+    });
+    expect(created.statusCode).toBe(201);
+
+    const revised = await admin.inject({
+      method: 'POST',
+      url: `/admin/territories/${created.json().id}/revisions`,
+      payload: { geometry: TWO_PARTS }
+    });
+    expect(revised.statusCode).toBe(409);
+    expect(revised.json()).toMatchObject({ error: 'unauthorized_overlap' });
+  });
+
+  it('adds a second part through a new revision, keeping revision 1 single-part', async () => {
+    const created = await admin.inject({
+      method: 'POST',
+      url: '/admin/territories',
+      payload: { name: 'T-parts-revised', geometry: { type: 'Polygon', coordinates: WEST_PART } }
+    });
+    const { id } = created.json();
+    const revised = await admin.inject({
+      method: 'POST',
+      url: `/admin/territories/${id}/revisions`,
+      payload: { geometry: TWO_PARTS }
+    });
+    expect(revised.statusCode).toBe(201);
+    const read = await admin.inject({ method: 'GET', url: `/admin/territories/${id}` });
+    expect(read.json().revisions.map((r: { geometry: { type: string } }) => r.geometry.type)).toEqual([
+      'Polygon',
+      'MultiPolygon'
+    ]);
+  });
+});
+
 describe('territory numbering', () => {
   it('creates with a number, then changes it', async () => {
     const created = await admin.inject({

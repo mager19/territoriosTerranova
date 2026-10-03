@@ -297,7 +297,7 @@ async function computeRemaining(
     `WITH base AS (
        SELECT CASE
          WHEN $2::bigint IS NULL THEN (
-           SELECT geom FROM territory_revisions WHERE territory_id = $1 ORDER BY revision_number DESC LIMIT 1
+           SELECT territory_geometry_unwrap(geom) FROM territory_revisions WHERE territory_id = $1 ORDER BY revision_number DESC LIMIT 1
          )
          ELSE (SELECT remaining_area FROM progress_entries WHERE id = $2::bigint)
        END AS geom

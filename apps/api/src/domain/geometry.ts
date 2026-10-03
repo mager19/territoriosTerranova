@@ -2,7 +2,7 @@
  * Structural, client-side validation for territory geometry — the first of
  * two defense layers (AGENTS.md: "the database is the last line of
  * defense", not the only one). This layer catches what PostGIS cannot check
- * as precisely as WGS84 coordinate range, and rejects non-Polygon types
+ * as precisely as WGS84 coordinate range, and rejects non-polygonal types
  * before a wasted round trip.
  *
  * Validity (self-intersection) and area are left to PostGIS: A2's migration
@@ -10,7 +10,19 @@
  * duplicate and risk drifting out of sync with.
  */
 
-import { isLineString, isPoint, isPolygon, isWgs84Position, type LineString, type Point, type Polygon } from '@territorios/geo';
+import {
+  combineParts,
+  isLineString,
+  isMultiPolygon,
+  isPoint,
+  isPolygon,
+  isWgs84Position,
+  polygonParts,
+  type LineString,
+  type Point,
+  type Polygon,
+  type TerritoryGeometry
+} from '@territorios/geo';
 
 import { InvalidGeometryError, ValidationError } from './errors.js';
 
@@ -34,19 +46,29 @@ function assertWgs84(positions: Iterable<readonly number[]>, context: string): v
 }
 
 /**
- * Validates that `value` is a structurally well-formed RFC 7946 Polygon
- * (closed rings, >= 4 positions each) with every position inside WGS84
- * coordinate ranges. Throws InvalidGeometryError otherwise — never repairs,
- * never guesses.
+ * Validates that `value` is a structurally well-formed RFC 7946 Polygon or
+ * MultiPolygon (closed rings, >= 4 positions each, in every part) with every
+ * position inside WGS84 coordinate ranges. Throws InvalidGeometryError
+ * otherwise — never repairs, never guesses.
+ *
+ * Multi-part territories (db/migrations/0012): the result is canonical — a
+ * Polygon for one part, a MultiPolygon for two or more — so a one-part
+ * MultiPolygon comes back as its Polygon. That is a change of wrapper only,
+ * never of coordinates. Whether parts overlap or touch each other, have
+ * area, or sit inside Bello is decided by PostGIS, never here.
  */
-export function validateTerritoryGeometry(value: unknown): Polygon {
-  if (!isPolygon(value)) {
+export function validateTerritoryGeometry(value: unknown): TerritoryGeometry {
+  if (!isPolygon(value) && !isMultiPolygon(value)) {
     throw new InvalidGeometryError(
-      `geometry must be a GeoJSON Polygon with closed rings of at least 4 positions, got ${describeType(value)}`
+      `geometry must be a GeoJSON Polygon or MultiPolygon with closed rings of at least 4 positions, got ${describeType(value)}`
     );
   }
-  assertWgs84(value.coordinates.flat(), 'geometry');
-  return value;
+  const parts = polygonParts(value);
+  assertWgs84(
+    parts.flatMap((part) => part.coordinates.flat()),
+    'geometry'
+  );
+  return combineParts(parts);
 }
 
 /**
@@ -82,9 +104,9 @@ export function validateOptionalRoute(value: unknown): LineString | undefined {
  * Covered-area geometry: REQUIRED on every new progress session (2026-09-26
  * product decision — the administrator draws what was covered that session;
  * the server derives the remaining area from it). Application input is
- * restricted to a single Polygon, consistent with territory geometry being
- * Polygon-only; the DB constraint (0007) additionally accepts MultiPolygon
- * for defense in depth. Validity, zero area, and containment are decided by
+ * restricted to a single Polygon: one session draws one covered shape (a
+ * multi-part territory records one session per part); the DB constraint
+ * (0007) additionally accepts MultiPolygon for defense in depth. Validity, zero area, and containment are decided by
  * PostGIS inside the recording transaction, never here.
  */
 export function validateCoveredArea(value: unknown): Polygon {

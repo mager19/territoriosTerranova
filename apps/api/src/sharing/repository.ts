@@ -127,7 +127,7 @@ export async function revokeShareToken(pool: TransactionalPool, tokenId: number,
 
 export interface PublicTerritoryView {
   readonly territoryName: string;
-  readonly boundary: Polygon;
+  readonly boundary: Polygon | MultiPolygon;
   /** Polygon or MultiPolygon since coverage sessions (0007); an empty polygon means nothing is left, null means unknown. */
   readonly remainingArea: Polygon | MultiPolygon | null;
   readonly remainingAreaStatus: 'recorded' | 'unknown';
@@ -158,7 +158,7 @@ export interface PublicTerritoryView {
 
 interface PublicViewRow {
   readonly territory_name: string;
-  readonly boundary: Polygon;
+  readonly boundary: Polygon | MultiPolygon;
   readonly remaining_area: Polygon | MultiPolygon | null;
   readonly route: LineString | null;
   readonly note: string | null;
@@ -172,7 +172,7 @@ interface PublicViewRow {
  */
 const PUBLIC_VIEW_COLUMNS = `
          t.name AS territory_name,
-         ST_AsGeoJSON(tr.geom)::json AS boundary,
+         ST_AsGeoJSON(territory_geometry_unwrap(tr.geom))::json AS boundary,
          ST_AsGeoJSON(coverage.remaining_area)::json AS remaining_area,
          ST_AsGeoJSON(pe.route)::json AS route,
          latest.note,
