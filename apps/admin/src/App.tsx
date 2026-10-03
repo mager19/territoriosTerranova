@@ -256,6 +256,7 @@ export function AdminShell({ email, onLogout }: AdminShellProps): JSX.Element {
         {route.view === 'detalle' && selected !== null && (
           <TerritoryDetail
             territoryId={selected.id}
+            slug={selected.slug}
             boundary={selected.revisions.at(-1)?.geometry ?? null}
             refreshToken={refreshToken}
             onRemainingAreaChange={setRemainingAreaGeometry}

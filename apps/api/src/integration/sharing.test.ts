@@ -127,13 +127,14 @@ interface ShareTokenBody {
 async function createTerritoryAndShare(
   geometry: unknown = VALID_SQUARE,
   name = `T-share-${Math.random().toString(36).slice(2)}`
-): Promise<{ territoryId: number; token: string; tokenId: number }> {
+): Promise<{ territoryId: number; slug: string; token: string; tokenId: number }> {
   const territoryResponse = await admin.inject({
     method: 'POST',
     url: '/admin/territories',
     payload: { name, geometry, author: 'admin-1' }
   });
   const territoryId = territoryResponse.json().id;
+  const slug = territoryResponse.json().slug as string;
   // Recording progress requires an open territory (2026-10-03): every shared
   // territory in this file starts with its first cycle explicitly opened.
   const openResponse = await admin.inject({
@@ -151,7 +152,7 @@ async function createTerritoryAndShare(
   expect(tokenResponse.statusCode).toBe(201);
   const tokenBody = tokenResponse.json() as ShareTokenBody;
 
-  return { territoryId, token: tokenBody.token, tokenId: tokenBody.id };
+  return { territoryId, slug, token: tokenBody.token, tokenId: tokenBody.id };
 }
 
 describe('POST /admin/territories/:id/share-tokens', () => {
@@ -659,6 +660,130 @@ describe('a share token cannot invoke any administrative action', () => {
     const response = await admin.inject({ method: 'GET', url: `/admin/territories/${token}` });
     expect(response.statusCode).toBe(400); // fails the positive-integer id check, exactly like any other garbage id
   });
+});
+
+/**
+ * The fixed, readable public URL (2026-10-03 product decision, AGENTS.md
+ * "Privacy rules"): `/public/t/:slug` answers with EXACTLY the token route's
+ * allowlisted view — same builder, same keys, same exclusions, same headers.
+ * An isolated app keeps this block's requests out of the file-wide app's
+ * per-IP rate-limit bucket (see 'rate limiting' below).
+ */
+describe('GET /public/t/:slug', () => {
+  let slugApp: FastifyInstance;
+
+  beforeAll(async () => {
+    slugApp = await buildApp(
+      { queryPostgisVersion: async () => '3.4.3', pool, auth: { config: testAuthConfig(), sessions } },
+      { logger: false }
+    );
+  });
+
+  afterAll(async () => {
+    await slugApp.close();
+  });
+
+  it('returns the very same allowlisted body as the token route, and never a sensitive field', async () => {
+    const { territoryId, slug, token } = await createTerritoryAndShare();
+    const first = await admin.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/progress`,
+      payload: {
+        recordedBy: 'worker-1',
+        note: 'an older note the public must never see',
+        coveredArea: WEST_HALF,
+        baseline: 'whole_territory',
+        pausePoint: { type: 'Point', coordinates: [-75.573, 6.358] },
+        route: { type: 'LineString', coordinates: [[-75.5738, 6.3575], [-75.5732, 6.3585]] }
+      }
+    });
+    expect(first.statusCode).toBe(201);
+    const second = await admin.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/progress`,
+      payload: { recordedBy: 'worker-2', note: 'Quedamos en la esquina', coveredArea: EAST_STRIP }
+    });
+    expect(second.statusCode).toBe(201);
+
+    const bySlug = await slugApp.inject({ method: 'GET', url: `/public/t/${slug}` });
+    const byToken = await slugApp.inject({ method: 'GET', url: `/public/territories/${token}` });
+    expect(bySlug.statusCode).toBe(200);
+    const body = bySlug.json();
+    expect(body).toEqual(byToken.json());
+    expect(Object.keys(body).sort()).toEqual(PUBLIC_KEYS);
+    expect(body.note).toBe('Quedamos en la esquina');
+    expect(body.coveredArea.type).toBe('MultiPolygon');
+
+    const raw = JSON.stringify(body);
+    expect(raw).not.toContain('older note');
+    expect(raw).not.toMatch(/worker-[12]/);
+    expect(raw).not.toContain('@');
+    expect(raw).not.toMatch(/"id"\s*:/);
+    expect(raw).not.toMatch(/recorded(By|At)|notes|baseline|cycle|createdAt|history|sessions|pause/i);
+    expect(body).not.toHaveProperty('slug');
+    expect(body).not.toHaveProperty('status');
+    expect(body).not.toHaveProperty('number');
+  });
+
+  it('sets every required security header on a valid response and on a 404', async () => {
+    const { slug } = await createTerritoryAndShare();
+    for (const url of [`/public/t/${slug}`, '/public/t/no-such-territory']) {
+      const response = await slugApp.inject({ method: 'GET', url });
+      expect(response.headers['cache-control'], url).toBe('no-store');
+      expect(response.headers['x-robots-tag'], url).toBe('noindex, nofollow');
+      expect(response.headers['referrer-policy'], url).toBe('no-referrer');
+    }
+  });
+
+  it.each(['no-such-territory', 'NV-01', 'a'.repeat(81), 'nv_01', '%20', 'nv-01%2F..'])(
+    'answers an unknown or malformed slug %j with the same neutral 404',
+    async (slug) => {
+      const response = await slugApp.inject({ method: 'GET', url: `/public/t/${slug}` });
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toEqual({ error: 'not_found' });
+    }
+  );
+
+  it('mirrors the token route for an archived territory — the slug view does not hide what the token view shows', async () => {
+    const { territoryId, slug, token } = await createTerritoryAndShare();
+    await withClient((client) => client.query(`UPDATE territories SET status = 'archived' WHERE id = $1`, [territoryId]));
+
+    const bySlug = await slugApp.inject({ method: 'GET', url: `/public/t/${slug}` });
+    const byToken = await slugApp.inject({ method: 'GET', url: `/public/territories/${token}` });
+    expect(bySlug.statusCode).toBe(byToken.statusCode);
+    expect(bySlug.json()).toEqual(byToken.json());
+  });
+
+  it('keeps working after every share token of the territory is revoked — the fixed URL needs no token', async () => {
+    const { slug, tokenId } = await createTerritoryAndShare();
+    await admin.inject({ method: 'POST', url: `/admin/share-tokens/${tokenId}/revoke`, payload: {} });
+    const response = await slugApp.inject({ method: 'GET', url: `/public/t/${slug}` });
+    expect(response.statusCode).toBe(200);
+  });
+
+  it('a slug is never accepted on the token route, nor a token on the slug route', async () => {
+    const { slug, token } = await createTerritoryAndShare();
+    expect((await slugApp.inject({ method: 'GET', url: `/public/territories/${slug}` })).statusCode).toBe(404);
+    expect((await slugApp.inject({ method: 'GET', url: `/public/t/${token}` })).statusCode).toBe(404);
+  });
+
+  it('enforces the per-IP limit — the 31st request within the window is rejected', async () => {
+    const isolatedApp = await buildApp(
+      { queryPostgisVersion: async () => '3.4.3', pool, auth: { config: testAuthConfig(), sessions } },
+      { logger: false }
+    );
+    try {
+      const statuses: number[] = [];
+      for (let i = 0; i < 31; i += 1) {
+        // A different unknown slug each time: the per-IP limit, not a per-slug one, is what trips.
+        statuses.push((await isolatedApp.inject({ method: 'GET', url: `/public/t/unknown-${i}` })).statusCode);
+      }
+      expect(statuses.slice(0, 30).every((s) => s === 404)).toBe(true);
+      expect(statuses.at(-1)).toBe(429);
+    } finally {
+      await isolatedApp.close();
+    }
+  }, 30_000);
 });
 
 describe('rate limiting', () => {

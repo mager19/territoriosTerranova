@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { PUBLIC_APP_BASE_URL } from '../../api/client.js';
 import { SharePanel } from './SharePanel.js';
 
 declare global {
@@ -12,21 +13,13 @@ declare global {
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const api = vi.hoisted(() => ({
-  createShareToken: vi.fn(),
-  revokeShareToken: vi.fn()
-}));
-
-vi.mock('../../api/client.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../../api/client.js')>();
-  return { ...original, ...api };
-});
-
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+const writeText = vi.fn<(text: string) => Promise<void>>();
 
 beforeEach(() => {
-  api.createShareToken.mockResolvedValue({ id: 7, token: 'tok-abc', createdAt: '2026-10-03T15:00:00.000Z' });
+  writeText.mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -40,41 +33,59 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-async function renderAndShare(): Promise<void> {
+async function render(slug = 'nv-01'): Promise<void> {
   await act(async () => {
-    root?.render(<SharePanel territoryId={1} />);
-  });
-  const shareButton = [...(host?.querySelectorAll('button') ?? [])].find(
-    (button) => button.textContent === 'Compartir este territorio'
-  );
-  await act(async () => {
-    shareButton?.click();
+    root?.render(<SharePanel slug={slug} />);
   });
 }
 
-describe('SharePanel', () => {
-  it('says the link only lets volunteers see the territory — recording progress is admin-only', async () => {
-    await renderAndShare();
+function actionLabels(): (string | null)[] {
+  return [...(host?.querySelector('.share-link-actions')?.children ?? [])].map((child) => child.textContent);
+}
 
-    const intro = host?.querySelector('section > p')?.textContent ?? '';
-    expect(intro).toContain('ver el territorio');
-    expect(intro).not.toContain('registrar progreso');
+describe('SharePanel', () => {
+  it('tells the admin to send the link to the volunteer group, who can only see the territory', async () => {
+    await render();
+
+    expect(host?.querySelector('section > p')?.textContent).toBe(
+      'Envía este link al grupo de voluntarios. Cualquiera que lo tenga puede ver el territorio en el mapa.'
+    );
   });
 
-  it('lays out the issued link as a full-width field above its own group of action buttons', async () => {
-    await renderAndShare();
+  it('shows the fixed public URL for the territory slug in a full-width read-only field', async () => {
+    await render('barrio-niquia-3');
 
-    const item = host?.querySelector('li.share-link');
-    expect(item?.querySelector('input.share-link-url')).not.toBeNull();
-    const actions = item?.querySelector('.share-link-actions');
-    expect([...(actions?.children ?? [])].map((child) => child.textContent)).toEqual([
-      'Copiar link',
-      'Abrir link',
-      'Revocar'
-    ]);
-    // "Abrir link" is a real link styled as a button, opening the public view in a new tab.
-    const open = actions?.querySelector('a.button-link');
-    expect(open?.getAttribute('href')).toMatch(/#tok-abc$/);
+    const field = host?.querySelector<HTMLInputElement>('li.share-link input.share-link-url');
+    expect(field?.value).toBe(`${PUBLIC_APP_BASE_URL}/t/barrio-niquia-3`);
+    expect(field?.readOnly).toBe(true);
+  });
+
+  it('offers "Copiar link" (primary) and "Abrir link" — and nothing to issue or revoke', async () => {
+    await render();
+
+    expect(actionLabels()).toEqual(['Copiar link', 'Abrir link']);
+    expect(host?.querySelector('.share-link-actions button.primary')?.textContent).toBe('Copiar link');
+    const text = host?.textContent ?? '';
+    expect(text).not.toContain('Compartir este territorio');
+    expect(text).not.toContain('Revocar');
+  });
+
+  it('opens the public view in a new tab without leaking the admin page as referrer', async () => {
+    await render();
+
+    const open = host?.querySelector('.share-link-actions a.button-link');
+    expect(open?.getAttribute('href')).toBe(`${PUBLIC_APP_BASE_URL}/t/nv-01`);
     expect(open?.getAttribute('target')).toBe('_blank');
+    expect(open?.getAttribute('rel')).toContain('noreferrer');
+  });
+
+  it('copies the fixed URL and confirms it', async () => {
+    await render();
+
+    const copy = host?.querySelector<HTMLButtonElement>('.share-link-actions button.primary');
+    await act(async () => copy?.click());
+
+    expect(writeText).toHaveBeenCalledWith(`${PUBLIC_APP_BASE_URL}/t/nv-01`);
+    expect(copy?.textContent).toBe('Copiado');
   });
 });

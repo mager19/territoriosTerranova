@@ -75,7 +75,7 @@ async function renderDetail(initial: TerritoryOperationalStatus, cycles: readonl
   root = createRoot(host);
   await act(async () => {
     root?.render(
-      <TerritoryDetail territoryId={1} boundary={null} refreshToken={0} onRemainingAreaChange={() => undefined} onEdit={() => undefined} />
+      <TerritoryDetail territoryId={1} slug="nv-01" boundary={null} refreshToken={0} onRemainingAreaChange={() => undefined} onEdit={() => undefined} />
     );
   });
 }

@@ -13,6 +13,8 @@ import { SharePanel } from './SharePanel.js';
 
 export interface TerritoryTopBarProps {
   readonly territoryId: number;
+  /** The territory's fixed public slug — the share panel's `/t/<slug>` link. */
+  readonly slug: string;
   readonly refreshToken: number;
   /** Newest first; the current cycle's opening date comes from here. */
   readonly cycles: readonly TerritoryCycle[];
@@ -32,14 +34,11 @@ const SHARE_REGION_ID = 'territory-share-region';
  * and closes it ("Cerrar territorio": cycle_completed with today's local date).
  * A legacy paused cycle is shown and handled as open.
  */
-export function TerritoryTopBar({ territoryId, refreshToken, cycles, onChanged, onStatus }: TerritoryTopBarProps): JSX.Element {
+export function TerritoryTopBar({ territoryId, slug, refreshToken, cycles, onChanged, onStatus }: TerritoryTopBarProps): JSX.Element {
   const [status, setStatus] = useState<TerritoryOperationalStatus | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
-  // Mounted on first open and then only hidden, so links issued this session
-  // (shown once, never fetchable again) survive collapsing the panel.
-  const [shareMounted, setShareMounted] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,10 +99,7 @@ export function TerritoryTopBar({ territoryId, refreshToken, cycles, onChanged, 
             type="button"
             aria-expanded={shareOpen}
             aria-controls={SHARE_REGION_ID}
-            onClick={() => {
-              setShareMounted(true);
-              setShareOpen((current) => !current);
-            }}
+            onClick={() => setShareOpen((current) => !current)}
           >
             Compartir
           </button>
@@ -121,7 +117,7 @@ export function TerritoryTopBar({ territoryId, refreshToken, cycles, onChanged, 
       </div>
       {error && <p role="alert" className="editor-error">{error}</p>}
       <div id={SHARE_REGION_ID} hidden={!shareOpen}>
-        {shareMounted && <SharePanel territoryId={territoryId} />}
+        {shareOpen && <SharePanel slug={slug} />}
       </div>
     </div>
   );

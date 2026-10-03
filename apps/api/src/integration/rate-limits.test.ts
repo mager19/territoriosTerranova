@@ -135,6 +135,18 @@ describe('limits shared across instances', () => {
     expect((await share(a)).statusCode).toBe(429);
   }, 60_000);
 
+  it('counts the fixed-URL view (/public/t/:slug) in the same per-IP public bucket as the token view', async () => {
+    const a = await instance();
+    const b = await instance();
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 30; i++) statuses.push((await share(i % 2 === 0 ? a : b)).statusCode);
+    expect(statuses.every((status) => status === 404)).toBe(true);
+
+    const bySlug = await a.inject({ method: 'GET', url: '/public/t/no-such-territory', remoteAddress: '127.0.0.1' });
+    expect(bySlug.statusCode).toBe(429);
+  }, 60_000);
+
   it('keeps every limit in its own bucket: exhausting sign-in does not limit the share view', async () => {
     const app = await instance();
     for (let attempt = 0; attempt < 6; attempt++) await login(app);

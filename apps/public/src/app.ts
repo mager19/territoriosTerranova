@@ -1,9 +1,12 @@
 import type { BasemapKind } from './basemap.js';
-import { extractToken } from './token.js';
 import { fetchPublicTerritory, type PublicTerritoryResult } from './public-api.js';
 import { mountPage, renderStatus, type PageElements } from './render.js';
+import { parseShareLink } from './share-link.js';
 
 export interface RunAppDeps {
+  /** `window.location.pathname`: a fixed `/t/<slug>` link (2026-10-03). Defaults to the root. */
+  readonly locationPathname?: string;
+  /** `window.location.hash`: a legacy `#<token>` link. */
   readonly locationHash: string;
   readonly fetchImpl?: typeof fetch;
   /** Which basemap main.ts selected — drives the attribution line. Defaults to the OSM fallback. */
@@ -24,16 +27,16 @@ export async function runApp(root: HTMLElement, deps: RunAppDeps): Promise<void>
   const elements = mountPage(root, deps.basemap);
   renderStatus(elements, { status: 'loading' });
 
-  const token = extractToken(deps.locationHash);
-  if (token === null) {
-    // No token in the URL is not distinguished from a revoked/expired/
-    // unknown one — same neutral message, same as a genuinely invalid
-    // share link (A6 brief DoD).
+  const link = parseShareLink(deps.locationPathname ?? '/', deps.locationHash);
+  if (link === null) {
+    // No slug or token in the URL (or a malformed slug) is not
+    // distinguished from an unknown/revoked/expired one — same neutral
+    // message, same as a genuinely invalid share link (A6 brief DoD).
     renderStatus(elements, { status: 'unavailable' });
     return;
   }
 
-  const result = await fetchPublicTerritory(token, deps.fetchImpl);
+  const result = await fetchPublicTerritory(link, deps.fetchImpl);
   renderStatus(elements, result);
 
   if (result.status === 'ok') {

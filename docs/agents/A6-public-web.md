@@ -19,8 +19,23 @@ else visible.
 
 ## Scope
 
-A single page, opened by share-token URL, showing one assigned territory over the
-Bello basemap:
+A single page, opened by a share URL, showing one territory over the Bello
+basemap.
+
+Share URLs (2026-10-03 product decision, AGENTS.md "Privacy rules"; contract in
+`docs/agents/A4-sharing.md` "Fixed public URLs"):
+
+- **Fixed, readable**: `/t/<slug>`, e.g. `/t/nv-01`. `src/share-link.ts` reads
+  the slug from `location.pathname`, validates it against `^[a-z0-9-]{1,80}$`
+  before any request, and fetches `${VITE_API_BASE_URL}/public/t/<slug>`. A
+  malformed slug renders the neutral "Enlace no disponible" message without a
+  request and is never reinterpreted as a token. Slugs are guessable by
+  design — the accepted trade-off of this decision.
+- **Legacy**: `/#<token>` links keep working (`src/token.ts`).
+- `apps/public/vercel.json` rewrites `/t/(.*)` to `/index.html`; built assets
+  keep normal static serving (`src/vercel-config.test.ts`).
+
+The page shows:
 
 - The territory boundary
 - Approved coverage status, using the vocabulary the API returns
@@ -36,15 +51,17 @@ bundle, smaller attack surface, less to audit.
 
 - [ ] Renders only fields present in the A4 public response — a test asserts the
       page reads no other key
-- [ ] Revoked, expired, and invalid tokens all render the **same** neutral message
+- [ ] Revoked, expired, and invalid tokens, and unknown or malformed slugs, all
+      render the **same** neutral message
 - [ ] No analytics, no third-party scripts, no external font or asset loading
       beyond the basemap provider. With OSM raster (no `VITE_MAPTILER_KEY`) that
       is the tiles only; with MapTiler it is the style JSON, its tiles, glyphs and
       sprites, and the required MapTiler logo, all from `api.maptiler.com`
       (2026-10-03, see docs/map-references.md "Basemap"). App fonts are
       self-hosted.
-- [ ] The share token never appears in a referrer, an outbound request, or a
-      logged URL beyond the initial load
+- [ ] A legacy share token never appears in a referrer, an outbound request, or
+      a logged URL beyond the initial load. (A slug is in the path by design;
+      `no-referrer` still keeps it out of outbound requests.)
 - [ ] `noindex` respected; no sitemap; no crawlable link to this app
 - [ ] Nothing in the bundle or DOM reveals admin endpoints, internal ids, other
       territories, or AMVA sources — grep the built output and show it

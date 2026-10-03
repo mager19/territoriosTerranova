@@ -15,6 +15,7 @@ import type { PoolClient } from 'pg';
 import { getTerritoryAuditHistory as queryTerritoryAuditHistory, recordAuditEvent, type AuditEvent } from './audit.js';
 import { TerritoryNotFoundError, ValidationError } from './errors.js';
 import { validateTerritoryGeometry } from './geometry.js';
+import { territorySlugBase } from './slug.js';
 import { rethrowAsTerritoryGeometryError, rethrowAsTerritoryNumberError } from '../db/pg-error-mapper.js';
 import { withTransaction, type TransactionalPool } from '../db/transaction.js';
 
@@ -23,6 +24,8 @@ export type TerritoryStatus = 'active' | 'archived';
 export interface Territory {
   readonly id: number;
   readonly name: string;
+  /** Fixed public URL slug (`/t/<slug>`), assigned once at creation and never changed (db/migrations/0011). */
+  readonly slug: string;
   readonly number: string | null;
   readonly status: TerritoryStatus;
   readonly createdAt: string;
@@ -52,6 +55,7 @@ export interface TerritoryRevision {
 export interface TerritoryWithRevisions {
   readonly id: number;
   readonly name: string;
+  readonly slug: string;
   readonly number: string | null;
   readonly status: TerritoryStatus;
   readonly createdAt: string;
@@ -61,6 +65,7 @@ export interface TerritoryWithRevisions {
 interface TerritoryRow {
   readonly id: string;
   readonly name: string;
+  readonly slug: string;
   readonly number: string | null;
   readonly status: TerritoryStatus;
   readonly created_at: string;
@@ -85,6 +90,7 @@ function toTerritory(row: TerritoryRow): Territory {
   return {
     id: Number(row.id),
     name: row.name,
+    slug: row.slug,
     number: row.number,
     status: row.status,
     createdAt: row.created_at,
@@ -157,9 +163,13 @@ export async function createTerritory(
     const trimmedNumber = input.number?.trim();
     const { rows } = await (async () => {
       try {
-        return await client.query<{ id: string; status: TerritoryStatus; created_at: string }>(
-          `INSERT INTO territories (name, number) VALUES ($1, $2) RETURNING id, status, created_at`,
-          [name, trimmedNumber === undefined || trimmedNumber === '' ? null : trimmedNumber]
+        // The slug base is normalized here (domain/slug.ts); the database
+        // picks the first free -2, -3 … suffix under an advisory lock held
+        // until this transaction commits (db/migrations/0011).
+        return await client.query<{ id: string; slug: string; status: TerritoryStatus; created_at: string }>(
+          `INSERT INTO territories (name, number, slug) VALUES ($1, $2, territory_next_free_slug($3))
+           RETURNING id, slug, status, created_at`,
+          [name, trimmedNumber === undefined || trimmedNumber === '' ? null : trimmedNumber, territorySlugBase(name)]
         );
       } catch (error) {
         rethrowAsTerritoryNumberError(error);
@@ -185,6 +195,7 @@ export async function createTerritory(
     return {
       id: territoryId,
       name,
+      slug: territoryRow.slug,
       number: trimmedNumber === undefined || trimmedNumber === '' ? null : trimmedNumber,
       status: territoryRow.status,
       createdAt: territoryRow.created_at,
@@ -196,7 +207,7 @@ export async function createTerritory(
 export async function listTerritories(pool: TransactionalPool): Promise<readonly TerritoryListItem[]> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<TerritoryListItemRow>(
-      `SELECT t.id, t.name, t.number, t.status, t.created_at,
+      `SELECT t.id, t.name, t.slug, t.number, t.status, t.created_at,
               (SELECT max(r.revision_number) FROM territory_revisions r WHERE r.territory_id = t.id)
                 AS current_revision_number,
                latest.geometry,
@@ -230,10 +241,11 @@ export async function getTerritoryWithRevisions(
     const { rows: territoryRows } = await client.query<{
       id: string;
       name: string;
+      slug: string;
       number: string | null;
       status: TerritoryStatus;
       created_at: string;
-    }>(`SELECT id, name, number, status, created_at FROM territories WHERE id = $1`, [territoryId]);
+    }>(`SELECT id, name, slug, number, status, created_at FROM territories WHERE id = $1`, [territoryId]);
     const territoryRow = territoryRows[0];
     if (!territoryRow) {
       throw new TerritoryNotFoundError(territoryId);
@@ -250,6 +262,7 @@ export async function getTerritoryWithRevisions(
     return {
       id: Number(territoryRow.id),
       name: territoryRow.name,
+      slug: territoryRow.slug,
       number: territoryRow.number,
       status: territoryRow.status,
       createdAt: territoryRow.created_at,
@@ -354,7 +367,7 @@ export async function setTerritoryNumber(
       const { rows } = await client.query<TerritoryRow>(
         `UPDATE territories SET number = $2
          WHERE id = $1
-         RETURNING id, name, number, status, created_at,
+         RETURNING id, name, slug, number, status, created_at,
                    (SELECT max(r.revision_number) FROM territory_revisions r WHERE r.territory_id = territories.id)
                      AS current_revision_number`,
         [territoryId, trimmed]

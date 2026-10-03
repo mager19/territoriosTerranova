@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { fetchPublicTerritory } from './public-api.js';
+import type { ShareLink } from './share-link.js';
+
+const TOKEN_LINK: ShareLink = { kind: 'token', token: 'tok-abc' };
 
 const BOUNDARY = {
   type: 'Polygon',
@@ -40,7 +43,7 @@ describe('fetchPublicTerritory', () => {
       })
     );
 
-    await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(fetchImpl).toHaveBeenCalledWith('https://api.example.test/public/territories/tok-abc');
@@ -49,11 +52,20 @@ describe('fetchPublicTerritory', () => {
   it('keeps a path prefix in the base URL, with or without a trailing slash (production: the admin domain + /api)', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(404, { error: 'not_found' }));
 
-    await fetchPublicTerritory('tok-abc', fetchImpl, 'https://admin.example.test/api');
-    await fetchPublicTerritory('tok-abc', fetchImpl, 'https://admin.example.test/api/');
+    await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://admin.example.test/api');
+    await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://admin.example.test/api/');
 
     expect(fetchImpl).toHaveBeenNthCalledWith(1, 'https://admin.example.test/api/public/territories/tok-abc');
     expect(fetchImpl).toHaveBeenNthCalledWith(2, 'https://admin.example.test/api/public/territories/tok-abc');
+  });
+
+  it('fetches a fixed slug link from the slug endpoint', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(404, { error: 'not_found' }));
+
+    const result = await fetchPublicTerritory({ kind: 'slug', slug: 'nv-01' }, fetchImpl, 'https://admin.example.test/api/');
+
+    expect(fetchImpl).toHaveBeenCalledWith('https://admin.example.test/api/public/t/nv-01');
+    expect(result).toEqual({ status: 'unavailable' });
   });
 
   it('returns the allowlisted view on a valid, recorded response', async () => {
@@ -67,7 +79,7 @@ describe('fetchPublicTerritory', () => {
       })
     );
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result).toEqual({
       status: 'ok',
@@ -94,7 +106,7 @@ describe('fetchPublicTerritory', () => {
       })
     );
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
@@ -108,7 +120,7 @@ describe('fetchPublicTerritory', () => {
       jsonResponse(200, { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: multi, remainingAreaStatus: 'recorded', route: null })
     );
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result).toMatchObject({ status: 'ok', view: { remainingArea: multi, remainingAreaStatus: 'recorded' } });
   });
@@ -119,7 +131,7 @@ describe('fetchPublicTerritory', () => {
       jsonResponse(200, { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: empty, remainingAreaStatus: 'recorded', route: null })
     );
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result).toMatchObject({ status: 'ok', view: { remainingArea: empty, remainingAreaStatus: 'recorded' } });
   });
@@ -139,7 +151,7 @@ describe('fetchPublicTerritory', () => {
       })
     );
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result).toMatchObject({ status: 'ok', view: { note, coveredArea } });
   });
@@ -150,7 +162,7 @@ describe('fetchPublicTerritory', () => {
         jsonResponse(200, { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null, note: null, coveredArea })
       );
 
-      const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+      const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
       expect(result).toMatchObject({ status: 'ok', view: { coveredArea } });
     }
@@ -161,7 +173,7 @@ describe('fetchPublicTerritory', () => {
       jsonResponse(200, { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null })
     );
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result).toMatchObject({ status: 'ok', view: { note: null, coveredArea: null } });
   });
@@ -171,7 +183,7 @@ describe('fetchPublicTerritory', () => {
       jsonResponse(200, { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null, note: '   ' })
     );
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result).toMatchObject({ status: 'ok', view: { note: null } });
   });
@@ -188,7 +200,7 @@ describe('fetchPublicTerritory', () => {
         jsonResponse(200, { territoryName: 'T-01', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null, ...fields })
       );
 
-      expect(await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test')).toEqual({ status: 'error' });
+      expect(await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test')).toEqual({ status: 'error' });
     }
   });
 
@@ -203,7 +215,7 @@ describe('fetchPublicTerritory', () => {
       })
     );
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result).toEqual({ status: 'error' });
   });
@@ -228,7 +240,7 @@ describe('fetchPublicTerritory', () => {
       })
     );
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
@@ -241,7 +253,7 @@ describe('fetchPublicTerritory', () => {
   it('treats revoked/expired/nonexistent tokens (A4 404) as "unavailable" — a single collapsed outcome', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(404, { error: 'not_found' }));
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result).toEqual({ status: 'unavailable' });
   });
@@ -249,7 +261,7 @@ describe('fetchPublicTerritory', () => {
   it('treats a network failure as "error", distinct from an unavailable token', async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new TypeError('network down'));
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result).toEqual({ status: 'error' });
   });
@@ -257,7 +269,7 @@ describe('fetchPublicTerritory', () => {
   it('treats a malformed response body as "error", never a fabricated view', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200, { territoryName: 'T-01' }));
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result).toEqual({ status: 'error' });
   });
@@ -265,7 +277,7 @@ describe('fetchPublicTerritory', () => {
   it('treats a server error (5xx) as "error"', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response('', { status: 500 }));
 
-    const result = await fetchPublicTerritory('tok-abc', fetchImpl, 'https://api.example.test');
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
 
     expect(result).toEqual({ status: 'error' });
   });

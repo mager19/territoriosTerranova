@@ -28,6 +28,7 @@ if (container === null) {
 const basemap = selectBasemap(import.meta.env.VITE_MAPTILER_KEY);
 
 void runApp(container, {
+  locationPathname: window.location.pathname,
   locationHash: window.location.hash,
   basemap: basemap.kind,
   onTerritoryResolved: async (elements, result) => {

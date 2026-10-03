@@ -47,7 +47,7 @@ describe('AdminShell (signed in)', () => {
 
   it('puts the territory status bar with "Compartir" at the top of a territory detail page, replacing the old status panel', () => {
     const html = renderToStaticMarkup(
-      <TerritoryDetail territoryId={1} boundary={null} refreshToken={0} onRemainingAreaChange={() => undefined} onEdit={() => undefined} />
+      <TerritoryDetail territoryId={1} slug="nv-01" boundary={null} refreshToken={0} onRemainingAreaChange={() => undefined} onEdit={() => undefined} />
     );
     expect(html).not.toContain('Cobertura y estado operativo');
     expect(html).toContain('aria-label="Estado del territorio"');

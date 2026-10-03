@@ -23,9 +23,9 @@ The database is Neon Postgres 16 with PostGIS.
   Vite proxy.
 - The admin app calls `/api` on its own origin. The session cookie stays
   first-party, so `SameSite=Strict` keeps working.
-- The public app calls the same API cross-origin. Only
-  `GET /public/territories/:token` allows that, and only from
-  `PUBLIC_APP_ORIGIN`, never with credentials.
+- The public app calls the same API cross-origin. Only the public routes,
+  `GET /public/t/:slug` and the legacy `GET /public/territories/:token`,
+  allow that, and only from `PUBLIC_APP_ORIGIN`, never with credentials.
 - Region: `cle1` (Cleveland, AWS `us-east-2`), the same AWS region as the
   Neon database in Ohio. On Hobby, functions run in one region. Any region in
   the list can be chosen, and it is set in `vercel.json`.
@@ -88,8 +88,11 @@ before Vercel packages the function.
 | Build Command | `pnpm --filter @territorios/geo build && vite build` |
 | Output Directory | `dist` |
 
-The public app has no `vercel.json`. The share token lives in the URL
-fragment (`/#<token>`), so the app has no client-side routes to rewrite.
+`apps/public/vercel.json` only rewrites `/t/(.*)` to `/index.html`, so fixed
+share links such as `/t/nv-01` load the app. Built assets are served as
+static files. Legacy links keep the token in the URL fragment (`/#<token>`),
+which needs no rewrite. The dashboard settings above stay in charge of the
+build.
 
 ## Environment variables
 
@@ -113,7 +116,7 @@ that is not production, or no API variables at all.
 | `NODEJS_HELPERS` | `0` | Recommended. Turns off Vercel's `req.body`/`req.query` helpers. Fastify parses requests itself. |
 | `PG_POOL_MAX` | unset (3) | Optional. Connections per function instance. |
 | `PG_IDLE_TIMEOUT_MS` | unset (5000) | Optional. Idle time before a connection closes. |
-| `VITE_PUBLIC_APP_BASE_URL` | `https://publico-territorios.vercel.app` | Required. The base of the share links the admin app creates (`<base>/#<token>`). No trailing slash. Read at build time. If it is unset, links point at `http://127.0.0.1:5174`. |
+| `VITE_PUBLIC_APP_BASE_URL` | `https://publico-territorios.vercel.app` | Required. The base of the fixed share links the admin app shows (`<base>/t/<slug>`). No trailing slash. Read at build time. If it is unset, links point at `http://127.0.0.1:5174`. |
 | `VITE_MAPTILER_KEY` | MapTiler key | Optional. Admin basemap, read at build time. |
 
 Notes on `TRUST_PROXY`:
@@ -130,7 +133,7 @@ Notes on `TRUST_PROXY`:
 
 | Variable | Value | Notes |
 | --- | --- | --- |
-| `VITE_API_BASE_URL` | `https://admin-territorios-flame.vercel.app/api` | Read at build time. The client calls `${VITE_API_BASE_URL}/public/territories/<token>`. A trailing slash is fine. |
+| `VITE_API_BASE_URL` | `https://admin-territorios-flame.vercel.app/api` | Read at build time. The client calls `${VITE_API_BASE_URL}/public/t/<slug>` (legacy links: `/public/territories/<token>`). A trailing slash is fine. |
 | `VITE_MAPTILER_KEY` | MapTiler key | Optional. Without it, the app uses the OSM raster basemap. |
 
 ## Database connection
@@ -242,6 +245,7 @@ still has to be applied by hand first.
    - `https://admin-territorios-flame.vercel.app/api/health` answers
      `{"status":"ok","database":{"up":true,...}}`.
    - Sign in at https://admin-territorios-flame.vercel.app.
-   - Create a share link and open it on https://publico-territorios.vercel.app.
+   - Open a territory's "Compartir" panel and open its
+     `https://publico-territorios.vercel.app/t/<slug>` link.
    - In the function logs, incoming requests show the visitor's IP as
      `remoteAddress`, not one fixed proxy address.

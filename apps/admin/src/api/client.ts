@@ -15,7 +15,7 @@ import type { LineString, MultiPolygon, Point, Polygon } from '@territorios/geo'
  * origin — the session cookie would not travel there.
  */
 export const API_BASE_URL = '/api';
-/** apps/public's dev origin — used only to build a share link's display text (token.ts reads the fragment client-side, this app never fetches it). */
+/** apps/public's origin (dev default below) — the base of a territory's fixed share link, `<base>/t/<slug>`. This app never fetches it. */
 export const PUBLIC_APP_BASE_URL = import.meta.env.VITE_PUBLIC_APP_BASE_URL ?? 'http://127.0.0.1:5174';
 
 export class ApiError extends Error {
@@ -41,6 +41,8 @@ export interface TerritoryRevision {
 export interface Territory {
   readonly id: number;
   readonly name: string;
+  /** Fixed public URL slug: the share link is `${PUBLIC_APP_BASE_URL}/t/${slug}` (2026-10-03). Never changes. */
+  readonly slug: string;
   readonly status: 'active' | 'archived';
   readonly createdAt: string;
   readonly currentRevisionNumber: number;
@@ -95,21 +97,6 @@ export interface TerritoryOperationalStatus {
   readonly remainingAreaStatus: 'recorded' | 'unknown';
   /** Approximate progress of the current cycle, 0–100; null means unknown. */
   readonly progressPercent: number | null;
-}
-
-/**
- * A share token scopes to a whole territory, not a per-person claim
- * (2026-09-08: territories are shared to a group of volunteers, not
- * assigned to one named person). `token` is the plaintext link secret,
- * present ONLY in the response to createShareToken — never returned or
- * stored again after that.
- */
-export interface ShareToken {
-  readonly id: number;
-  readonly token: string;
-  readonly territoryId: number;
-  readonly createdAt: string;
-  readonly expiresAt: string | null;
 }
 
 type UnauthorizedListener = () => void;
@@ -272,20 +259,6 @@ export function changeTerritoryOperationalState(
   input: { action: Exclude<OperationalState, 'no_record'>; reason?: string; effectiveCompletionDate?: string }
 ): Promise<TerritoryOperationalStatus> {
   return request(`/admin/territories/${territoryId}/operational-state`, { method: 'POST', body: JSON.stringify(input) });
-}
-
-export function createShareToken(
-  territoryId: number,
-  input: { expiresAt?: string } = {}
-): Promise<ShareToken> {
-  return request(`/admin/territories/${territoryId}/share-tokens`, {
-    method: 'POST',
-    body: JSON.stringify(input)
-  });
-}
-
-export function revokeShareToken(tokenId: number): Promise<void> {
-  return request(`/admin/share-tokens/${tokenId}/revoke`, { method: 'POST', body: JSON.stringify({}) });
 }
 
 export interface TerritoryOverviewMonth {

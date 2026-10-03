@@ -12,6 +12,7 @@ function item(id: number, geometry: Polygon | null): TerritoryListItem {
   return {
     id,
     name: `T${id}`,
+    slug: `t${id}`,
     number: null,
     status: 'active',
     createdAt: '2026-10-03T00:00:00.000Z',

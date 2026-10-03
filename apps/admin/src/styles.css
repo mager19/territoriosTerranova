@@ -743,7 +743,7 @@ form > div {
   margin-top: 8px;
 }
 
-/* Issued share links: the URL on its own full-width line, then its
+/* The share link: the URL on its own full-width line, then its
    actions — stacked full-width on phones, one row on wider screens. */
 .share-links {
   list-style: none;

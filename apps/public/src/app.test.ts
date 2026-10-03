@@ -31,6 +31,46 @@ describe('runApp', () => {
     expect(onTerritoryResolved).not.toHaveBeenCalled();
   });
 
+  it('resolves a fixed /t/<slug> URL through the slug endpoint', async () => {
+    const root = document.createElement('div');
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        territoryName: 'Nv-01',
+        boundary: BOUNDARY,
+        remainingArea: null,
+        remainingAreaStatus: 'unknown',
+        route: null
+      })
+    );
+    const onTerritoryResolved = vi.fn();
+
+    await runApp(root, { locationPathname: '/t/nv-01', locationHash: '', fetchImpl, onTerritoryResolved });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toMatch(/\/public\/t\/nv-01$/);
+    expect(root.querySelector('h1')?.textContent).toBe('Nv-01');
+    expect(onTerritoryResolved).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the neutral unavailable message for a malformed slug and never fetches', async () => {
+    const root = document.createElement('div');
+    const fetchImpl = vi.fn();
+
+    await runApp(root, { locationPathname: '/t/NV%2001', locationHash: '', fetchImpl });
+
+    expect(root.textContent).toContain(UNAVAILABLE_MESSAGE);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('shows the neutral unavailable message for an unknown slug (404)', async () => {
+    const root = document.createElement('div');
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(404, { error: 'not_found' }));
+
+    await runApp(root, { locationPathname: '/t/no-such-territory', locationHash: '', fetchImpl });
+
+    expect(root.textContent).toContain(UNAVAILABLE_MESSAGE);
+  });
+
   it('renders the attribution line for the basemap main.ts selected', async () => {
     const root = document.createElement('div');
 
