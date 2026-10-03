@@ -14,6 +14,14 @@ import { runMigrations } from '@territorios/geo/db/migrate';
 import type { FastifyInstance } from 'fastify';
 
 import { buildApp } from '../app.js';
+import { createPgAdminSessionStore, type AdminSessionStore } from '../auth/session-store.js';
+import {
+  TEST_ADMIN_EMAIL,
+  asAdmin,
+  sessionCookieFor,
+  testAuthConfig,
+  type AuthenticatedClient
+} from '../test-support/admin-auth.js';
 
 const IMAGE = 'postgis/postgis:16-3.4';
 
@@ -29,6 +37,9 @@ let container: StartedPostgreSqlContainer;
 let databaseUrl: string;
 let pool: Pool;
 let app: FastifyInstance;
+let sessions: AdminSessionStore;
+/** Every admin request goes through a real session (admin_sessions in this container) for TEST_ADMIN_EMAIL. */
+let admin: AuthenticatedClient;
 
 async function withClient<T>(run: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: databaseUrl });
@@ -52,7 +63,12 @@ beforeAll(async () => {
   await withClient((client) => client.query(FIXTURE_BARRIO_SQL));
 
   pool = new Pool({ connectionString: databaseUrl, max: 5 });
-  app = await buildApp({ queryPostgisVersion: async () => '3.4.3', pool }, { logger: false });
+  sessions = createPgAdminSessionStore(pool);
+  app = await buildApp(
+    { queryPostgisVersion: async () => '3.4.3', pool, auth: { config: testAuthConfig(), sessions } },
+    { logger: false }
+  );
+  admin = asAdmin(app, await sessionCookieFor(sessions, TEST_ADMIN_EMAIL));
 }, 360_000);
 
 afterAll(async () => {
@@ -63,7 +79,7 @@ afterAll(async () => {
 
 describe('GET /admin/reference/barrios', () => {
   it('finds a barrio by a case-insensitive partial name match', async () => {
-    const response = await app.inject({ method: 'GET', url: '/admin/reference/barrios?name=guasimalito' });
+    const response = await admin.inject({ method: 'GET', url: '/admin/reference/barrios?name=guasimalito' });
 
     expect(response.statusCode).toBe(200);
     const body = response.json();
@@ -73,14 +89,14 @@ describe('GET /admin/reference/barrios', () => {
   });
 
   it('returns an empty list (200, not 404) for a name with no match', async () => {
-    const response = await app.inject({ method: 'GET', url: '/admin/reference/barrios?name=nonexistent-xyz' });
+    const response = await admin.inject({ method: 'GET', url: '/admin/reference/barrios?name=nonexistent-xyz' });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ barrios: [] });
   });
 
   it('rejects a missing name query param', async () => {
-    const response = await app.inject({ method: 'GET', url: '/admin/reference/barrios' });
+    const response = await admin.inject({ method: 'GET', url: '/admin/reference/barrios' });
 
     expect(response.statusCode).toBe(400);
   });

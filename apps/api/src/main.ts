@@ -6,10 +6,14 @@ import { queryPostgisVersion } from './health.js';
 
 const config = readConfig();
 const pool = new Pool({ connectionString: config.databaseUrl, max: 5 });
-const app = await buildApp({
-  queryPostgisVersion: () => queryPostgisVersion(pool),
-  pool
-});
+const app = await buildApp(
+  {
+    queryPostgisVersion: () => queryPostgisVersion(pool),
+    pool,
+    auth: { config: config.auth }
+  },
+  { trustProxy: config.trustProxy }
+);
 
 const shutdown = async (signal: string): Promise<void> => {
   app.log.info({ signal }, 'shutting down');

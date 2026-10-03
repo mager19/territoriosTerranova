@@ -16,6 +16,7 @@
 import type { FastifyInstance } from 'fastify';
 
 import { createShareToken, revokeShareToken } from '../../sharing/repository.js';
+import { sessionEmail } from '../../auth/admin-guard.js';
 import { isRecord, trySendDomainError } from './error-response.js';
 import type { TransactionalPool } from '../../db/transaction.js';
 
@@ -30,10 +31,8 @@ export function registerAdminShareTokenRoutes(app: FastifyInstance, deps: AdminS
       return reply.status(400).send({ error: 'invalid_request', message: 'territory id must be a positive integer' });
     }
     const body = isRecord(request.body) ? request.body : {};
-    const createdBy = typeof body.createdBy === 'string' ? body.createdBy.trim() : '';
-    if (createdBy === '') {
-      return reply.status(400).send({ error: 'invalid_request', message: 'createdBy must not be blank' });
-    }
+    // The creator is the signed-in administrator; a client-sent `createdBy` is ignored.
+    const createdBy = sessionEmail(request);
     let expiresAt: Date | undefined;
     if (typeof body.expiresAt === 'string') {
       const parsed = new Date(body.expiresAt);
@@ -66,11 +65,8 @@ export function registerAdminShareTokenRoutes(app: FastifyInstance, deps: AdminS
     if (!Number.isInteger(tokenId) || tokenId < 1) {
       return reply.status(400).send({ error: 'invalid_request', message: 'token id must be a positive integer' });
     }
-    const body = isRecord(request.body) ? request.body : {};
-    const actor = typeof body.actor === 'string' ? body.actor.trim() : '';
-    if (actor === '') {
-      return reply.status(400).send({ error: 'invalid_request', message: 'actor must not be blank' });
-    }
+    // The actor is the signed-in administrator; a client-sent `actor` is ignored.
+    const actor = sessionEmail(request);
     await revokeShareToken(deps.pool, tokenId, actor);
     return reply.status(204).send();
   });

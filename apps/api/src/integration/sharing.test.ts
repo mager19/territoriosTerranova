@@ -18,6 +18,14 @@ import { runMigrations } from '@territorios/geo/db/migrate';
 import type { FastifyInstance } from 'fastify';
 
 import { buildApp } from '../app.js';
+import { createPgAdminSessionStore, type AdminSessionStore } from '../auth/session-store.js';
+import {
+  TEST_ADMIN_EMAIL,
+  asAdmin,
+  sessionCookieFor,
+  testAuthConfig,
+  type AuthenticatedClient
+} from '../test-support/admin-auth.js';
 
 const IMAGE = 'postgis/postgis:16-3.4';
 
@@ -65,6 +73,9 @@ let container: StartedPostgreSqlContainer;
 let databaseUrl: string;
 let pool: Pool;
 let app: FastifyInstance;
+let sessions: AdminSessionStore;
+/** Every admin request goes through a real session (admin_sessions in this container) for TEST_ADMIN_EMAIL. */
+let admin: AuthenticatedClient;
 
 async function withClient<T>(run: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: databaseUrl });
@@ -88,7 +99,12 @@ beforeAll(async () => {
   await withClient((client) => client.query(FIXTURE_BOUNDARY_SQL));
 
   pool = new Pool({ connectionString: databaseUrl, max: 10 });
-  app = await buildApp({ queryPostgisVersion: async () => '3.4.3', pool }, { logger: false });
+  sessions = createPgAdminSessionStore(pool);
+  app = await buildApp(
+    { queryPostgisVersion: async () => '3.4.3', pool, auth: { config: testAuthConfig(), sessions } },
+    { logger: false }
+  );
+  admin = asAdmin(app, await sessionCookieFor(sessions, TEST_ADMIN_EMAIL));
 }, 360_000);
 
 afterEach(async () => {
@@ -112,7 +128,7 @@ async function createTerritoryAndShare(
   geometry: unknown = VALID_SQUARE,
   name = `T-share-${Math.random().toString(36).slice(2)}`
 ): Promise<{ territoryId: number; token: string; tokenId: number }> {
-  const territoryResponse = await app.inject({
+  const territoryResponse = await admin.inject({
     method: 'POST',
     url: '/admin/territories',
     payload: { name, geometry, author: 'admin-1' }
@@ -120,14 +136,14 @@ async function createTerritoryAndShare(
   const territoryId = territoryResponse.json().id;
   // Recording progress requires an open territory (2026-10-03): every shared
   // territory in this file starts with its first cycle explicitly opened.
-  const openResponse = await app.inject({
+  const openResponse = await admin.inject({
     method: 'POST',
     url: `/admin/territories/${territoryId}/operational-state`,
     payload: { action: 'in_progress', actor: 'admin-1' }
   });
   expect(openResponse.statusCode).toBe(201);
 
-  const tokenResponse = await app.inject({
+  const tokenResponse = await admin.inject({
     method: 'POST',
     url: `/admin/territories/${territoryId}/share-tokens`,
     payload: { createdBy: 'admin-1' }
@@ -160,7 +176,7 @@ describe('POST /admin/territories/:id/share-tokens', () => {
   });
 
   it('returns territory_not_found for a nonexistent territory', async () => {
-    const response = await app.inject({
+    const response = await admin.inject({
       method: 'POST',
       url: '/admin/territories/999999/share-tokens',
       payload: { createdBy: 'admin-1' }
@@ -203,7 +219,7 @@ describe('GET /public/territories/:token — response shape', () => {
       type: 'Polygon',
       coordinates: [[[-75.5745, 6.3571], [-75.5721, 6.3571], [-75.5721, 6.3591], [-75.5745, 6.3591], [-75.5745, 6.3571]]]
     };
-    await app.inject({
+    await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/revisions`,
       payload: { geometry: newGeometry, author: 'admin-2' }
@@ -227,7 +243,7 @@ describe('GET /public/territories/:token — response shape', () => {
       type: 'Polygon',
       coordinates: [[[-75.574, 6.357], [-75.573, 6.357], [-75.573, 6.359], [-75.574, 6.359], [-75.574, 6.357]]]
     };
-    const session = await app.inject({
+    const session = await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', coveredArea, baseline: 'whole_territory' }
@@ -246,7 +262,7 @@ describe('GET /public/territories/:token — response shape', () => {
       type: 'Polygon',
       coordinates: [[[-75.574, 6.357], [-75.5731, 6.357], [-75.5731, 6.3589], [-75.574, 6.3589], [-75.574, 6.357]]]
     };
-    const session = await app.inject({
+    const session = await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', coveredArea, baseline: 'whole_territory' }
@@ -270,7 +286,7 @@ describe('GET /public/territories/:token — response shape', () => {
 
   it('reports an explicit empty remaining area — not unknown — once a cycle is fully covered', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
-    await app.inject({
+    await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', coveredArea: VALID_SQUARE, baseline: 'whole_territory' }
@@ -285,15 +301,15 @@ describe('GET /public/territories/:token — response shape', () => {
 
   it('does not reuse a prior cycle’s pending-area snapshot after an administrator reopens work', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
-    await app.inject({
+    await admin.inject({
       method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload: { recordedBy: 'admin-1', coveredArea: WEST_HALF, baseline: 'whole_territory' }
     });
-    await app.inject({
+    await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/operational-state`,
       payload: { action: 'cycle_completed', actor: 'admin-1', effectiveCompletionDate: '2026-09-21' }
     });
-    await app.inject({
+    await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/operational-state`,
       payload: { action: 'reopened', actor: 'admin-1', reason: 'new work started' }
@@ -313,7 +329,7 @@ describe('GET /public/territories/:token — response shape', () => {
 
   it('never leaks recordedBy identity, older notes, timestamps, baseline, cycle, history, pause point, or internal ids', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
-    const first = await app.inject({
+    const first = await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
       payload: {
@@ -326,7 +342,7 @@ describe('GET /public/territories/:token — response shape', () => {
       }
     });
     expect(first.statusCode).toBe(201);
-    const second = await app.inject({
+    const second = await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-2', note: 'Quedamos en la esquina', coveredArea: EAST_STRIP }
@@ -340,6 +356,8 @@ describe('GET /public/territories/:token — response shape', () => {
     expect(body.note).toBe('Quedamos en la esquina');
     expect(raw).not.toContain('older note');
     expect(raw).not.toMatch(/worker-[12]/);
+    expect(raw).not.toContain(TEST_ADMIN_EMAIL); // the real recorder identity since admin sessions (2026-10-03)
+    expect(raw).not.toContain('@');
     expect(raw).not.toMatch(/"id"\s*:/); // no raw id field anywhere in the payload
     expect(raw).not.toContain('recordedAt');
     expect(raw).not.toMatch(/recorded(By|At)|notes|baseline|cycle|createdAt|history|sessions|pause/i);
@@ -351,7 +369,7 @@ describe('GET /public/territories/:token — response shape', () => {
   it('exposes the route line by deliberate exception — a volunteer resuming their own coverage', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
     const route = { type: 'LineString', coordinates: [[-75.5738, 6.3575], [-75.5732, 6.3585]] };
-    await app.inject({
+    await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', route, coveredArea: WEST_HALF, baseline: 'whole_territory' }
@@ -365,13 +383,13 @@ describe('GET /public/territories/:token — response shape', () => {
   it('shows the latest RECORDED route even when a later session recorded none', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
     const route = { type: 'LineString', coordinates: [[-75.5738, 6.3575], [-75.5732, 6.3585]] };
-    const first = await app.inject({
+    const first = await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', route, coveredArea: WEST_HALF, baseline: 'whole_territory' }
     });
     expect(first.statusCode).toBe(201);
-    const second = await app.inject({
+    const second = await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-2', coveredArea: EAST_STRIP }
@@ -385,7 +403,7 @@ describe('GET /public/territories/:token — response shape', () => {
   it('exposes the note of the latest session of the current cycle — where to resume', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
     const record = (payload: Record<string, unknown>) =>
-      app.inject({ method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload });
+      admin.inject({ method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload });
 
     expect((await record({ recordedBy: 'worker-1', coveredArea: WEST_HALF, baseline: 'whole_territory', note: 'first note' })).statusCode).toBe(201);
     expect((await record({ recordedBy: 'worker-1', coveredArea: EAST_STRIP, note: 'Quedamos en la Diagonal 57' })).statusCode).toBe(201);
@@ -399,7 +417,7 @@ describe('GET /public/territories/:token — response shape', () => {
   it('returns a null note when the latest session has none — never falls back to an older, stale note', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
     const record = (payload: Record<string, unknown>) =>
-      app.inject({ method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload });
+      admin.inject({ method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload });
 
     expect((await record({ recordedBy: 'worker-1', coveredArea: WEST_HALF, baseline: 'whole_territory', note: 'stale note' })).statusCode).toBe(201);
     expect((await record({ recordedBy: 'worker-1', coveredArea: EAST_STRIP, note: '   ' })).statusCode).toBe(201);
@@ -419,12 +437,12 @@ describe('GET /public/territories/:token — response shape', () => {
 
   it('merges every covered area of the current cycle into one shape — two disjoint sessions become one MultiPolygon', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
-    await app.inject({
+    await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', coveredArea: WEST_HALF, baseline: 'whole_territory' }
     });
-    await app.inject({
+    await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: 'worker-1', coveredArea: EAST_STRIP }
@@ -445,9 +463,9 @@ describe('GET /public/territories/:token — response shape', () => {
   it('excludes a previous cycle’s note and covered area after an administrator reopens work', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
     const state = (payload: Record<string, unknown>) =>
-      app.inject({ method: 'POST', url: `/admin/territories/${territoryId}/operational-state`, payload });
+      admin.inject({ method: 'POST', url: `/admin/territories/${territoryId}/operational-state`, payload });
     const record = (payload: Record<string, unknown>) =>
-      app.inject({ method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload });
+      admin.inject({ method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload });
 
     await record({ recordedBy: 'admin-1', coveredArea: WEST_HALF, baseline: 'whole_territory', note: 'previous cycle note' });
     await state({ action: 'cycle_completed', actor: 'admin-1', effectiveCompletionDate: '2026-09-21' });
@@ -504,7 +522,7 @@ describe('GET /public/territories/:token — revocation, expiry, and scope', () 
     const before = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
     expect(before.statusCode).toBe(200);
 
-    const revokeResponse = await app.inject({
+    const revokeResponse = await admin.inject({
       method: 'POST',
       url: `/admin/share-tokens/${tokenId}/revoke`,
       payload: { actor: 'admin-1' }
@@ -518,7 +536,7 @@ describe('GET /public/territories/:token — revocation, expiry, and scope', () 
 
   it('revocation takes effect immediately — no cache window', async () => {
     const { token, tokenId } = await createTerritoryAndShare();
-    await app.inject({ method: 'POST', url: `/admin/share-tokens/${tokenId}/revoke`, payload: { actor: 'admin-1' } });
+    await admin.inject({ method: 'POST', url: `/admin/share-tokens/${tokenId}/revoke`, payload: { actor: 'admin-1' } });
     // Immediately, not "eventually" — the very next request must already reflect it.
     const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
     expect(response.statusCode).toBe(404);
@@ -531,12 +549,12 @@ describe('GET /public/territories/:token — revocation, expiry, and scope', () 
     // creation" row, by design. The only honest way to test this is to
     // create a token that expires in the near future via the real admin
     // route (exercising that input path too) and wait for it to lapse.
-    const territoryResponse = await app.inject({
+    const territoryResponse = await admin.inject({
       method: 'POST',
       url: '/admin/territories',
       payload: { name: `T-expiry-${Math.random().toString(36).slice(2)}`, geometry: VALID_SQUARE, author: 'admin-1' }
     });
-    const tokenResponse = await app.inject({
+    const tokenResponse = await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryResponse.json().id}/share-tokens`,
       payload: { createdBy: 'admin-1', expiresAt: new Date(Date.now() + 800).toISOString() }
@@ -583,30 +601,27 @@ describe('GET /public/territories/:token — revocation, expiry, and scope', () 
 
 describe('a share token cannot invoke any administrative action', () => {
   /**
-   * Real finding surfaced while writing this suite, reported explicitly
-   * rather than quietly worked around: admin routes have NO authentication
-   * layer at all today — every /admin/** route answers any caller, share
-   * token or not. That gap predates A4 (it is a property of A1/A3's
-   * routes, not something A4 introduces or is asked to fix — the brief
-   * scopes A4 to apps/api/src/sharing/** and routes/public/**), but it
-   * means "does a share token grant admin access" cannot be tested as "is
-   * the request rejected" — an unauthenticated request already succeeds
-   * regardless of any token. What CAN be tested, and is the real substance
-   * of this DoD line, is narrower and still meaningful: the sharing
-   * module and the public route never call into any admin/domain mutation
-   * function, and a token's presence changes nothing about how an admin
-   * route behaves — it is never read as a credential anywhere.
+   * Since 2026-10-03 every /admin route requires an admin session
+   * (auth/admin-guard.ts, docs/admin-auth.md). A share token is never an
+   * administrator principal: presented in any form — bearer header, custom
+   * header, or even as the admin_session cookie value — it is rejected.
    */
-  it('documents the real, separate finding: admin routes require no credential at all today', async () => {
-    const response = await app.inject({ method: 'GET', url: '/admin/territories' });
-    expect(response.statusCode).toBe(200); // no Authorization header, no cookie, no token of any kind — and it still succeeds
+  it('rejects a share token presented as a bearer header, a custom header, or the session cookie itself', async () => {
+    const { token } = await createTerritoryAndShare();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/admin/territories',
+      headers: { authorization: `Bearer ${token}`, 'x-share-token': token, cookie: `admin_session=${token}` }
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: 'unauthorized' });
   });
 
   it('a token in an Authorization or custom header changes nothing about an admin route\'s response — it is never read as a credential', async () => {
     const { token } = await createTerritoryAndShare();
 
-    const withoutToken = await app.inject({ method: 'GET', url: '/admin/territories' });
-    const withToken = await app.inject({
+    const withoutToken = await admin.inject({ method: 'GET', url: '/admin/territories' });
+    const withToken = await admin.inject({
       method: 'GET',
       url: '/admin/territories',
       headers: { authorization: `Bearer ${token}`, 'x-share-token': token }
@@ -619,34 +634,29 @@ describe('a share token cannot invoke any administrative action', () => {
     expect(withToken.json().territories.length).toBe(withoutToken.json().territories.length);
   });
 
-  it('a share token string used as ordinary body data (author, recordedBy, createdBy) carries no special privilege — it is just an opaque string', async () => {
+  it('a share token string sent as actor body data (author, recordedBy) is ignored — the actor is always the session email', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
 
-    // These succeed — correctly. The point is what they prove: the value
-    // is stored/used as plain text with no elevated meaning, the same as
-    // any other string would be. A real credential system would need to
-    // exist before "is rejected" is even a meaningful question; today the
-    // right assertion is "is inert", not "is rejected".
-    const revisionResponse = await app.inject({
+    const revisionResponse = await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/revisions`,
       payload: { geometry: OTHER_SQUARE, author: token }
     });
     expect(revisionResponse.statusCode).toBe(201);
-    expect(revisionResponse.json().author).toBe(token); // stored verbatim as text, not interpreted
+    expect(revisionResponse.json().author).toBe(TEST_ADMIN_EMAIL);
 
-    const progressResponse = await app.inject({
+    const progressResponse = await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
       payload: { recordedBy: token, note: 'ordinary text, not a credential', coveredArea: OTHER_SQUARE, baseline: 'whole_territory' }
     });
     expect(progressResponse.statusCode).toBe(201);
-    expect(progressResponse.json().recordedBy).toBe(token); // stored verbatim as text, not interpreted
+    expect(progressResponse.json().recordedBy).toBe(TEST_ADMIN_EMAIL);
   });
 
   it('the share token itself is never a valid territory id on an admin route — no implicit coercion path from token to admin resource', async () => {
     const { token } = await createTerritoryAndShare();
-    const response = await app.inject({ method: 'GET', url: `/admin/territories/${token}` });
+    const response = await admin.inject({ method: 'GET', url: `/admin/territories/${token}` });
     expect(response.statusCode).toBe(400); // fails the positive-integer id check, exactly like any other garbage id
   });
 });
@@ -660,7 +670,10 @@ describe('rate limiting', () => {
     // already-partially-consumed per-IP bucket (`.inject()`'s synthetic
     // requests all share one "IP"), making "the 31st request" meaningless.
     // Same database pool, fresh rate-limit state.
-    const isolatedApp = await buildApp({ queryPostgisVersion: async () => '3.4.3', pool }, { logger: false });
+    const isolatedApp = await buildApp(
+      { queryPostgisVersion: async () => '3.4.3', pool, auth: { config: testAuthConfig(), sessions } },
+      { logger: false }
+    );
     try {
       const { token } = await createTerritoryAndShare();
 
@@ -695,7 +708,10 @@ describe('timing does not leak token existence', () => {
   let timingApp: FastifyInstance;
 
   beforeAll(async () => {
-    timingApp = await buildApp({ queryPostgisVersion: async () => '3.4.3', pool }, { logger: false });
+    timingApp = await buildApp(
+      { queryPostgisVersion: async () => '3.4.3', pool, auth: { config: testAuthConfig(), sessions } },
+      { logger: false }
+    );
   });
 
   afterAll(async () => {
@@ -715,7 +731,7 @@ describe('timing does not leak token existence', () => {
     // expired, and nonexistent are byte-for-byte identical responses,
     // which is only possible if no branch does materially different work.
     const { token, tokenId } = await createTerritoryAndShare();
-    await app.inject({ method: 'POST', url: `/admin/share-tokens/${tokenId}/revoke`, payload: { actor: 'admin-1' } });
+    await admin.inject({ method: 'POST', url: `/admin/share-tokens/${tokenId}/revoke`, payload: { actor: 'admin-1' } });
 
     const revoked = await timingApp.inject({ method: 'GET', url: `/public/territories/${token}` });
     const nonexistent = await timingApp.inject({ method: 'GET', url: '/public/territories/never-issued-token-guess' });

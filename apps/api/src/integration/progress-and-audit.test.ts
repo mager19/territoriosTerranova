@@ -16,6 +16,14 @@ import { runMigrations } from '@territorios/geo/db/migrate';
 import type { FastifyInstance } from 'fastify';
 
 import { buildApp } from '../app.js';
+import { createPgAdminSessionStore, type AdminSessionStore } from '../auth/session-store.js';
+import {
+  TEST_ADMIN_EMAIL,
+  asAdmin,
+  sessionCookieFor,
+  testAuthConfig,
+  type AuthenticatedClient
+} from '../test-support/admin-auth.js';
 
 const IMAGE = 'postgis/postgis:16-3.4';
 
@@ -71,6 +79,9 @@ let container: StartedPostgreSqlContainer;
 let databaseUrl: string;
 let pool: Pool;
 let app: FastifyInstance;
+let sessions: AdminSessionStore;
+/** Every admin request goes through a real session (admin_sessions in this container) for TEST_ADMIN_EMAIL. */
+let admin: AuthenticatedClient;
 
 async function withClient<T>(run: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: databaseUrl });
@@ -94,7 +105,12 @@ beforeAll(async () => {
   await withClient((client) => client.query(FIXTURE_BOUNDARY_SQL));
 
   pool = new Pool({ connectionString: databaseUrl, max: 5 });
-  app = await buildApp({ queryPostgisVersion: async () => '3.4.3', pool }, { logger: false });
+  sessions = createPgAdminSessionStore(pool);
+  app = await buildApp(
+    { queryPostgisVersion: async () => '3.4.3', pool, auth: { config: testAuthConfig(), sessions } },
+    { logger: false }
+  );
+  admin = asAdmin(app, await sessionCookieFor(sessions, TEST_ADMIN_EMAIL));
 }, 360_000);
 
 afterEach(async () => {
@@ -112,7 +128,7 @@ interface CreatedTerritory {
 }
 
 async function createTerritory(name: string, geometry: unknown = VALID_SQUARE): Promise<number> {
-  const response = await app.inject({
+  const response = await admin.inject({
     method: 'POST',
     url: '/admin/territories',
     payload: { name, geometry, author: 'admin-1' }
@@ -132,7 +148,7 @@ interface SessionPayload {
 
 /** Explicitly opens the territory's first cycle — recording progress requires an open territory (2026-10-03). */
 async function openTerritory(territoryId: number): Promise<void> {
-  const response = await app.inject({
+  const response = await admin.inject({
     method: 'POST',
     url: `/admin/territories/${territoryId}/operational-state`,
     payload: { action: 'in_progress', actor: 'admin-1' }
@@ -147,7 +163,7 @@ async function createOpenTerritory(name: string, geometry: unknown = VALID_SQUAR
 }
 
 function recordSession(territoryId: number, payload: SessionPayload) {
-  return app.inject({
+  return admin.inject({
     method: 'POST',
     url: `/admin/territories/${territoryId}/progress`,
     payload: { recordedBy: 'admin-1', ...payload }
@@ -155,11 +171,11 @@ function recordSession(territoryId: number, payload: SessionPayload) {
 }
 
 function operationalState(territoryId: number) {
-  return app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/operational-state` });
+  return admin.inject({ method: 'GET', url: `/admin/territories/${territoryId}/operational-state` });
 }
 
 function changeState(territoryId: number, payload: Record<string, unknown>) {
-  return app.inject({
+  return admin.inject({
     method: 'POST',
     url: `/admin/territories/${territoryId}/operational-state`,
     payload: { actor: 'admin-1', ...payload }
@@ -322,7 +338,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
     const accepted = await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' });
     expect(accepted.statusCode).toBe(201);
 
-    const history = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
+    const history = await admin.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
     const recorded = history.json().events.find((event: { action: string }) => event.action === 'progress_recorded');
     expect(recorded.payload).toMatchObject({ baseline: 'whole_territory', hasCoveredArea: true, cycleNumber: 1 });
   });
@@ -356,7 +372,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
     expect(withBaseline.json().cycleNumber).toBe(2);
     expect(await remainingEquals(withBaseline.json().id, WEST_HALF)).toBe(true);
 
-    const entries = (await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/progress` })).json().entries;
+    const entries = (await admin.inject({ method: 'GET', url: `/admin/territories/${territoryId}/progress` })).json().entries;
     expect(entries.map((entry: { cycleNumber: number }) => entry.cycleNumber)).toEqual([1, 2]);
   });
 
@@ -422,7 +438,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
 
   it('validates containment against the CURRENT revision, not the original one', async () => {
     const territoryId = await createOpenTerritory('T-coverage-revision');
-    const revision = await app.inject({
+    const revision = await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/revisions`,
       payload: { geometry: WEST_HALF, author: 'admin-1' }
@@ -614,7 +630,7 @@ describe('GET /admin/territories/:id/progress', () => {
     await recordSession(territoryId, { note: 'first', coveredArea: WEST_HALF, baseline: 'whole_territory' });
     await recordSession(territoryId, { note: 'second', coveredArea: EAST_HALF });
 
-    const response = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/progress` });
+    const response = await admin.inject({ method: 'GET', url: `/admin/territories/${territoryId}/progress` });
     expect(response.statusCode).toBe(200);
     const { entries } = response.json();
     expect(entries.map((e: { note: string }) => e.note)).toEqual(['first', 'second']);
@@ -622,7 +638,7 @@ describe('GET /admin/territories/:id/progress', () => {
   });
 
   it('returns territory_not_found for a nonexistent territory', async () => {
-    const response = await app.inject({ method: 'GET', url: '/admin/territories/999999/progress' });
+    const response = await admin.inject({ method: 'GET', url: '/admin/territories/999999/progress' });
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ error: 'territory_not_found' });
   });
@@ -659,7 +675,7 @@ describe('administrator-controlled operational cycles', () => {
       withClient((client) => client.query(`UPDATE territory_operational_events SET reason = 'tampered' WHERE territory_id = $1`, [territoryId]))
     ).rejects.toThrow(/append-only/);
 
-    const history = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
+    const history = await admin.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
     expect(history.json().events.map((event: { action: string }) => event.action)).toEqual([
       'created', 'operational_in_progress', 'progress_recorded', 'operational_paused', 'operational_cycle_completed', 'operational_reopened'
     ]);
@@ -684,7 +700,7 @@ describe('administrator-controlled operational cycles', () => {
     expect(await countEntries(territoryId)).toBe(0);
     expect((await operationalState(territoryId)).json()).toMatchObject({ state: 'no_record', cycleNumber: null });
 
-    const history = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
+    const history = await admin.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
     expect(history.json().events.map((event: { action: string }) => event.action)).toEqual(['created']);
   });
 
@@ -714,14 +730,14 @@ describe('administrator-controlled operational cycles', () => {
     });
     expect(stored).toEqual([{ reason: null }]);
 
-    const history = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
+    const history = await admin.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
     expect(history.json().events.map((event: { action: string }) => event.action)).toContain('operational_reopened');
   });
 });
 
 describe('GET /admin/territories/:id/cycles', () => {
   function listCycles(territoryId: number) {
-    return app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/cycles` });
+    return admin.inject({ method: 'GET', url: `/admin/territories/${territoryId}/cycles` });
   }
 
   async function eventTimes(territoryId: number): Promise<Array<{ action: string; created_at: Date }>> {
@@ -825,14 +841,14 @@ describe('GET /admin/territories/:id/cycles', () => {
 describe('GET /admin/territories/:id/audit', () => {
   it('exposes the full chronological history for a territory: creation, sharing, progress, and new revisions', async () => {
     const territoryId = await createTerritory('T-audit-01');
-    await app.inject({
+    await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/share-tokens`,
       payload: { createdBy: 'admin-1' }
     });
     await openTerritory(territoryId);
     await recordSession(territoryId, { recordedBy: 'worker-1', note: 'halfway done', coveredArea: WEST_HALF, baseline: 'whole_territory' });
-    await app.inject({
+    await admin.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/revisions`,
       payload: {
@@ -844,7 +860,7 @@ describe('GET /admin/territories/:id/audit', () => {
       }
     });
 
-    const response = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
+    const response = await admin.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
     expect(response.statusCode).toBe(200);
     const body = response.json();
     expect(body.territoryId).toBe(territoryId);
@@ -863,7 +879,7 @@ describe('GET /admin/territories/:id/audit', () => {
   });
 
   it('returns territory_not_found for a nonexistent territory, not an empty list', async () => {
-    const response = await app.inject({ method: 'GET', url: '/admin/territories/999999/audit' });
+    const response = await admin.inject({ method: 'GET', url: '/admin/territories/999999/audit' });
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ error: 'territory_not_found' });
   });
@@ -887,7 +903,7 @@ describe('GET /admin/territories/:id/audit', () => {
     });
     expect(recorded.statusCode).toBe(201);
 
-    const response = await app.inject({ method: 'GET', url: `/admin/territories/${territoryA}/audit` });
+    const response = await admin.inject({ method: 'GET', url: `/admin/territories/${territoryA}/audit` });
     const events = response.json().events as Array<{ entityId: number; reason: string }>;
 
     expect(events.every((e) => e.entityId === territoryA)).toBe(true);

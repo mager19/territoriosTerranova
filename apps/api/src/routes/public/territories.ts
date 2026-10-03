@@ -6,7 +6,6 @@
  * admin routes").
  */
 
-import rateLimit from '@fastify/rate-limit';
 import type { FastifyInstance } from 'fastify';
 
 import { resolvePublicTerritoryView } from '../../sharing/repository.js';
@@ -31,11 +30,11 @@ export async function registerPublicTerritoryRoutes(
   app: FastifyInstance,
   deps: PublicTerritoryRouteDeps
 ): Promise<void> {
-  // Registered non-global: nothing else on this Fastify instance is rate
-  // limited by this registration. Two independent limits are attached
-  // below directly to the one public route — per IP (default key) and per
-  // token (custom key) — both must pass.
-  await app.register(rateLimit, { global: false });
+  // @fastify/rate-limit is registered once, non-global, in app.ts (the
+  // admin sign-in routes use it too): nothing is rate limited unless a
+  // route attaches a limit. Two independent limits are attached below
+  // directly to the one public route — per IP (default key) and per token
+  // (custom key) — both must pass.
 
   app.get<{ Params: { token: string } }>(
     '/public/territories/:token',
