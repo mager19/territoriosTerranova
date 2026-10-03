@@ -46,6 +46,16 @@ describe('fetchPublicTerritory', () => {
     expect(fetchImpl).toHaveBeenCalledWith('https://api.example.test/public/territories/tok-abc');
   });
 
+  it('keeps a path prefix in the base URL, with or without a trailing slash (production: the admin domain + /api)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(404, { error: 'not_found' }));
+
+    await fetchPublicTerritory('tok-abc', fetchImpl, 'https://admin.example.test/api');
+    await fetchPublicTerritory('tok-abc', fetchImpl, 'https://admin.example.test/api/');
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, 'https://admin.example.test/api/public/territories/tok-abc');
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, 'https://admin.example.test/api/public/territories/tok-abc');
+  });
+
   it('returns the allowlisted view on a valid, recorded response', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse(200, {

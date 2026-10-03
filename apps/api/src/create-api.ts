@@ -38,7 +38,7 @@ export async function createApi(config: ApiConfig, options: CreateApiOptions): P
     ...(idleTimeoutMillis === undefined ? {} : { idleTimeoutMillis })
   });
   try {
-    const app = await buildApp(
+    const app: FastifyInstance = await buildApp(
       {
         queryPostgisVersion: () => queryPostgisVersion(pool),
         pool,
@@ -51,6 +51,12 @@ export async function createApi(config: ApiConfig, options: CreateApiOptions): P
         rateLimitStore: createPgRateLimitStore(pool)
       }
     );
+    // An idle connection can die underneath the pool (Neon suspends idle
+    // computes; its pooler recycles connections). pg reports that as an
+    // 'error' event, which would crash the process if nobody listened.
+    pool.on('error', (error) => {
+      app.log.warn({ err: error }, 'idle database connection lost');
+    });
     return { app, pool };
   } catch (error) {
     await pool.end();

@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@territorios/api": "workspace:*",
     "@territorios/geo": "workspace:*",
     "maplibre-gl": "^6.7.0",
     "react": "^19.2.8",
