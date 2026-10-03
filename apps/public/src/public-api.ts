@@ -8,6 +8,8 @@
 import type { LineString, MultiPolygon, Polygon } from '@territorios/geo';
 import { isLineString, isMultiPolygon, isPolygon } from '@territorios/geo';
 
+import { publicTerritoryPath, type ShareLink } from './share-link.js';
+
 /**
  * Where the API lives. Production: the admin deployment's same-origin API,
  * `https://admin-territorios-flame.vercel.app/api` (docs/deploy-vercel.md);
@@ -122,13 +124,13 @@ function parseView(raw: unknown): PublicTerritoryView | null {
  * answer", which is not a validity signal and is fine to distinguish.
  */
 export async function fetchPublicTerritory(
-  token: string,
+  link: ShareLink,
   fetchImpl: typeof fetch = fetch,
   baseUrl: string = API_BASE_URL
 ): Promise<PublicTerritoryResult> {
   let response: Response;
   try {
-    response = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}/public/territories/${encodeURIComponent(token)}`);
+    response = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}${publicTerritoryPath(link)}`);
   } catch {
     return { status: 'error' };
   }
