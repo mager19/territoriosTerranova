@@ -151,6 +151,13 @@ describe('admin session guard', () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it('rejects a live session whose account was removed from the configuration', async () => {
+    const instance = await buildTestApp({ accounts: [{ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD }] });
+    const removed = await sessionCookieFor(store, SECOND_ADMIN_EMAIL);
+    const response = await instance.inject({ method: 'GET', url: '/admin/me', headers: { cookie: removed } });
+    expect(response.statusCode).toBe(401);
+  });
+
   it('lets a valid session through to the route handler', async () => {
     const instance = await buildTestApp();
     const cookie = await sessionCookieFor(store);

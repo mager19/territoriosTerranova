@@ -107,7 +107,11 @@ export async function buildApp(
     const sessions = auth.sessions ?? createPgAdminSessionStore(deps.pool);
     await app.register(cookie);
     // Before any admin route: the guard attaches itself through onRoute.
-    registerAdminGuard(app, { sessions, allowedOrigins: auth.config.allowedOrigins });
+    registerAdminGuard(app, {
+      sessions,
+      allowedOrigins: auth.config.allowedOrigins,
+      activeEmails: auth.config.accounts.map((account) => account.email)
+    });
     registerAdminAuthRoutes(app, {
       config: auth.config,
       sessions,

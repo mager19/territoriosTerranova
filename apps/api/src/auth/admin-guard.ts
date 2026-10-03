@@ -33,6 +33,12 @@ const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 export interface AdminGuardOptions {
   readonly sessions: AdminSessionStore;
   readonly allowedOrigins: readonly string[];
+  /**
+   * Emails of the currently configured accounts. A session for an email no
+   * longer configured (account removed, API restarted) is refused at once
+   * instead of living on until it expires.
+   */
+  readonly activeEmails: readonly string[];
 }
 
 function isAdminUrl(url: string): boolean {
@@ -59,7 +65,7 @@ export function registerAdminGuard(app: FastifyInstance, options: AdminGuardOpti
   const requireSession: onRequestHookHandler = async (request, reply) => {
     const token = request.cookies[ADMIN_SESSION_COOKIE];
     const session = token ? await options.sessions.resolve(token) : null;
-    if (session === null) {
+    if (session === null || !options.activeEmails.includes(session.email)) {
       return reply.status(401).send({ error: 'unauthorized' });
     }
     request.adminSession = session;
