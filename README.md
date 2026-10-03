@@ -43,10 +43,17 @@ Variables actually read by code (all in `apps/api`):
 | `ADMIN_1_EMAIL` / `ADMIN_1_PASSWORD` | unset (nobody can sign in) | First admin account. Required in production. Password at least 12 characters |
 | `ADMIN_2_EMAIL` / `ADMIN_2_PASSWORD` | unset | Optional second admin account |
 | `ADMIN_APP_ORIGIN` | `http://localhost:5173` | Admin app origin, used for the CSRF Origin check and the `Secure` cookie flag. Required (`https`) in production |
-| `TRUST_PROXY` | `false` | Proxy hops in front of the API, so the sign-in rate limit sees real client IPs |
+| `PUBLIC_APP_ORIGIN` | `http://127.0.0.1:5174`, `http://localhost:5174` | Origin(s) allowed to call the public share endpoint cross-origin. Required (`https`) in production |
+| `TRUST_PROXY` | `false` | Proxy hops in front of the API, so rate limits see real client IPs (`1` on Vercel) |
+| `PG_POOL_MAX` / `PG_IDLE_TIMEOUT_MS` | 5 / pg default (local), 3 / 5000 (Vercel) | Database pool size and idle timeout per API instance |
 
-The admin app calls the API through a same-origin `/api` prefix (a Vite proxy
-locally, a Vercel rewrite in production). Open it at `http://localhost:5173`.
+The admin app calls the API through a same-origin `/api` prefix: a Vite proxy
+locally, and in production a Vercel Function inside the admin project. Open
+it at `http://localhost:5173`. Deployment is described in
+[docs/deploy-vercel.md](docs/deploy-vercel.md).
+
+The API keeps rate-limit counters in PostgreSQL. After pulling new
+migrations, run `pnpm db:migrate` before `pnpm dev`.
 
 ## Commands
 
