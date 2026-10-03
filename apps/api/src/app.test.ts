@@ -64,6 +64,24 @@ describe('GET /health', () => {
   });
 });
 
+describe('client IP behind a proxy (TRUST_PROXY)', () => {
+  async function clientIp(trustProxy: boolean | number, forwardedFor: string): Promise<string> {
+    app = await buildApp({ queryPostgisVersion: async () => '3.4.3' }, { logger: false, trustProxy });
+    app.get('/test-only/ip', async (request) => ({ ip: request.ip }));
+    const response = await app.inject({ method: 'GET', url: '/test-only/ip', headers: { 'x-forwarded-for': forwardedFor } });
+    return response.json<{ ip: string }>().ip;
+  }
+
+  it('takes the address the nearest proxy saw with a hop count of 1, ignoring anything a client prepended', async () => {
+    expect(await clientIp(1, '203.0.113.10')).toBe('203.0.113.10');
+    expect(await clientIp(1, '10.0.0.1, 203.0.113.10')).toBe('203.0.113.10');
+  });
+
+  it('ignores X-Forwarded-For entirely when no proxy is trusted', async () => {
+    expect(await clientIp(false, '203.0.113.10')).toBe('127.0.0.1');
+  });
+});
+
 describe('CORS', () => {
   const PUBLIC_ORIGIN = 'https://public.example.test';
 

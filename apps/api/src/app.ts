@@ -1,6 +1,6 @@
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
-import rateLimit from '@fastify/rate-limit';
+import rateLimit, { type FastifyRateLimitStoreCtor } from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import type { AdminAuthConfig } from './config.js';
@@ -15,6 +15,7 @@ import { registerAdminTerritoryOverviewRoutes } from './routes/admin/territory-o
 import { registerAdminTerritoryRoutes } from './routes/admin/territories.js';
 import { registerPublicTerritoryRoutes } from './routes/public/territories.js';
 import type { TransactionalPool } from './db/transaction.js';
+import { rateLimitKey } from './rate-limit/keys.js';
 
 export interface AppDependencies {
   /**
@@ -48,6 +49,26 @@ export interface BuildAppOptions {
   readonly trustProxy?: boolean | number;
   /** Origins allowed to call the public share endpoint cross-origin (config.publicAppOrigins). */
   readonly publicAppOrigins?: readonly string[];
+  /**
+   * @fastify/rate-limit store. Defaults to the plugin's per-instance memory
+   * store; a deployment with several instances (Vercel) passes the shared
+   * PostgreSQL store (rate-limit/pg-store.ts, wired by create-api.ts).
+   */
+  readonly rateLimitStore?: FastifyRateLimitStoreCtor;
+}
+
+/**
+ * TRUST_PROXY as Fastify's trustProxy. Fastify 5 ignores a bare hop count
+ * (it trusts nothing, so every client behind a proxy shares the proxy's IP
+ * and one rate-limit bucket); a hop count therefore becomes the equivalent
+ * trust function: trust the `hops` addresses nearest to the API — the socket
+ * peer and the rightmost X-Forwarded-For entries — and take the next one as
+ * the client. On Vercel, which overwrites X-Forwarded-For with the client
+ * IP, TRUST_PROXY=1 yields that IP (docs/deploy-vercel.md).
+ */
+function trustProxyOption(trustProxy: boolean | number): boolean | ((address: string, hop: number) => boolean) {
+  if (typeof trustProxy !== 'number') return trustProxy;
+  return (_address, hop) => hop < trustProxy;
 }
 
 /** apps/public's local dev server, the default when no origin is configured. */
@@ -68,9 +89,7 @@ export async function buildApp(
 ): Promise<FastifyInstance> {
   const app = Fastify({
     logger: options.logger ?? true,
-    // Fastify accepts a hop count at runtime ("trust the nth hop"), but its
-    // type declarations omit `number`; the cast only bridges that gap.
-    trustProxy: (options.trustProxy ?? false) as boolean
+    trustProxy: trustProxyOption(options.trustProxy ?? false)
   });
 
   // CORS is granted ONLY to the public share endpoint, ONLY for the public
@@ -89,7 +108,12 @@ export async function buildApp(
 
   // Registered once, non-global: only routes that attach a limit are limited
   // (the public share route and the admin sign-in/out routes).
-  await app.register(rateLimit, { global: false });
+  // Every limiter's keyGenerator names its own bucket (rateLimitKey), so a
+  // shared store never mixes two limits' counters for the same client.
+  await app.register(rateLimit, {
+    global: false,
+    ...(options.rateLimitStore === undefined ? {} : { store: options.rateLimitStore })
+  });
 
   // The health endpoint reflects real database state. It is never a
   // hardcoded {ok:true}: a failing probe answers 503.
@@ -126,8 +150,16 @@ export async function buildApp(
       config: auth.config,
       sessions,
       // Per client IP (behind a proxy this needs TRUST_PROXY, docs/admin-auth.md).
-      loginRateLimit: app.rateLimit({ max: 5, timeWindow: '15 minutes' }),
-      logoutRateLimit: app.rateLimit({ max: 30, timeWindow: '1 minute' })
+      loginRateLimit: app.rateLimit({
+        max: 5,
+        timeWindow: '15 minutes',
+        keyGenerator: (request) => rateLimitKey('admin-login', request.ip)
+      }),
+      logoutRateLimit: app.rateLimit({
+        max: 30,
+        timeWindow: '1 minute',
+        keyGenerator: (request) => rateLimitKey('admin-logout', request.ip)
+      })
     });
     registerAdminTerritoryRoutes(app, { pool: deps.pool });
     registerAdminTerritoryOverviewRoutes(app, { pool: deps.pool });
