@@ -1,6 +1,5 @@
 /// <reference types="vite/client" />
 
-interface ImportMetaEnv {
-  /** MapTiler API key. Unset or empty → OSM raster fallback basemap (docs/map-references.md "Basemap"). */
-  readonly VITE_MAPTILER_KEY?: string;
-}
+// No MapTiler key variable is declared here: the public volunteer view
+// always uses the OSM basemap and never reads a MapTiler key
+// (docs/map-references.md "Basemap").

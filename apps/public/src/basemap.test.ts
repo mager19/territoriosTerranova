@@ -5,6 +5,8 @@ import {
   MAPTILER_ATTRIBUTION_HTML,
   PEDESTRIAN_PATH_COLOR,
   PEDESTRIAN_PATH_WIDTH,
+  createOsmBasemap,
+  hasMapTilerKey,
   isPedestrianPathLayer,
   reinforcePedestrianPaths,
   selectBasemap,
@@ -139,26 +141,39 @@ function styleWith(layers: LayerSpecification[]): StyleSpecification {
 }
 
 describe('selectBasemap', () => {
-  it('uses MapTiler Streets v2 when a key is present', () => {
-    const basemap = selectBasemap('abc123');
+  it('uses MapTiler Streets v2 when a key is present and MapTiler is chosen', () => {
+    const basemap = selectBasemap('abc123', 'maptiler');
 
     expect(basemap.kind).toBe('maptiler');
     expect(basemap.style).toBe('https://api.maptiler.com/maps/streets-v2/style.json?key=abc123');
   });
 
-  it('trims and URL-encodes the key', () => {
-    expect(selectBasemap('  a b&c ').style).toBe('https://api.maptiler.com/maps/streets-v2/style.json?key=a%20b%26c');
+  it('defaults to the OSM raster style even when a key is present', () => {
+    const basemap = selectBasemap('abc123');
+
+    expect(basemap.kind).toBe('osm');
+    expect(basemap.style).toEqual(PREVIOUS_OSM_STYLE);
   });
 
-  it.each([undefined, '', '   '])('falls back to the previous OSM raster style for key %j', (key) => {
-    const basemap = selectBasemap(key);
+  it('keeps OSM when OSM is chosen explicitly', () => {
+    expect(selectBasemap('abc123', 'osm').kind).toBe('osm');
+  });
+
+  it('trims and URL-encodes the key', () => {
+    expect(selectBasemap('  a b&c ', 'maptiler').style).toBe(
+      'https://api.maptiler.com/maps/streets-v2/style.json?key=a%20b%26c'
+    );
+  });
+
+  it.each([undefined, '', '   '])('falls back to the previous OSM raster style for key %j even when MapTiler is chosen', (key) => {
+    const basemap = selectBasemap(key, 'maptiler');
 
     expect(basemap.kind).toBe('osm');
     expect(basemap.style).toEqual(PREVIOUS_OSM_STYLE);
   });
 
   it('transforms the fetched MapTiler style: reinforced paths and explicit attribution', () => {
-    const basemap = selectBasemap('k');
+    const basemap = selectBasemap('k', 'maptiler');
     if (basemap.kind !== 'maptiler') throw new Error('expected maptiler');
 
     const result = basemap.transformStyle(undefined, styleWith([PATH, MINOR_ROAD]));
@@ -166,6 +181,27 @@ describe('selectBasemap', () => {
     expect(result.layers[0]).toMatchObject({ paint: { 'line-color': PEDESTRIAN_PATH_COLOR } });
     expect(result.layers[1]).toBe(MINOR_ROAD);
     expect(result.sources.maptiler_planet).toMatchObject({ attribution: MAPTILER_ATTRIBUTION_HTML });
+  });
+});
+
+describe('hasMapTilerKey', () => {
+  it.each([
+    ['abc', true],
+    ['  abc  ', true],
+    ['', false],
+    ['   ', false],
+    [undefined, false]
+  ] as const)('reports %j as %s', (key, expected) => {
+    expect(hasMapTilerKey(key)).toBe(expected);
+  });
+});
+
+describe('createOsmBasemap', () => {
+  it('returns the previous OSM raster style', () => {
+    const basemap = createOsmBasemap();
+
+    expect(basemap.kind).toBe('osm');
+    expect(basemap.style).toEqual(PREVIOUS_OSM_STYLE);
   });
 });
 
