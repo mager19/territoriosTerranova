@@ -3,7 +3,7 @@ import { Map as MapLibreMap, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 import { ADMIN_BASEMAP, BasemapAttribution, applyBasemap } from '../territory-editor/basemap-ui.js';
-import { ApiError, DEFAULT_ACTOR, describeApiError, recordProgress, type CoverageBaseline } from '../../api/client.js';
+import { ApiError, describeApiError, recordProgress, type CoverageBaseline } from '../../api/client.js';
 import {
   addVertex,
   closeDraft,
@@ -303,7 +303,7 @@ export function ProgressRecorder({
   }
 
   async function save(baseline?: CoverageBaseline): Promise<void> {
-    const request = buildSessionRequest({ recordedBy: DEFAULT_ACTOR, covered, note, baseline });
+    const request = buildSessionRequest({ covered, note, baseline });
     if (request === null) return;
     setSaving(true);
     setError(null);

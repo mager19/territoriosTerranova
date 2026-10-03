@@ -6,7 +6,6 @@ import { ADMIN_BASEMAP, BasemapAttribution, applyBasemap } from './basemap-ui.js
 import {
   ApiError,
   createTerritory,
-  DEFAULT_ACTOR,
   describeApiError,
   listTerritories,
   searchReferenceBarrios,
@@ -495,13 +494,12 @@ export function TerritoryEditor({
       const trimmedNumber = number.trim();
       const saved = selectedTerritory
         ? await (async () => {
-            const revision = await submitRevision(selectedTerritory.id, { geometry, author: DEFAULT_ACTOR });
+            const revision = await submitRevision(selectedTerritory.id, { geometry });
             return { ...selectedTerritory, revisions: [...selectedTerritory.revisions, revision] };
           })()
         : await createTerritory({
             name: name.trim(),
             geometry,
-            author: DEFAULT_ACTOR,
             ...(trimmedNumber === '' ? {} : { number: trimmedNumber })
           });
       setDraft(resetDraft());

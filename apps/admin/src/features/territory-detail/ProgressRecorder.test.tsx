@@ -319,7 +319,8 @@ describe('ProgressRecorder', () => {
     expect(recordProgress).toHaveBeenCalledTimes(1);
     const [territoryId, request] = recordProgress.mock.calls[0] as [number, RecordSessionInput];
     expect(territoryId).toBe(7);
-    expect(Object.keys(request).sort()).toEqual(['coveredArea', 'note', 'recordedBy']);
+    // No recorder: the API attributes the session to the signed-in administrator.
+    expect(Object.keys(request).sort()).toEqual(['coveredArea', 'note']);
     expect(request.coveredArea.type).toBe('Polygon');
     expect(request.note).toBe('Quedamos en la esquina');
     expect(onRecorded).toHaveBeenCalledTimes(1);

@@ -85,7 +85,6 @@ export function isNothingRemaining(geometry: Polygon | MultiPolygon | null): boo
 }
 
 export interface SessionDraftInput {
-  readonly recordedBy: string;
   readonly covered: DraftState;
   readonly note: string;
   readonly baseline?: CoverageBaseline;
@@ -96,14 +95,15 @@ export interface SessionDraftInput {
  * required part — is not a closed polygon yet. Never a remaining area,
  * which only the server computes. The recorder no longer captures a route
  * or a pause point (2026-10-03 product decision); the API still accepts
- * them as optional fields, but this request never sends them.
+ * them as optional fields, but this request never sends them. Nor does it
+ * send a recorder: the API attributes the session to the signed-in
+ * administrator (docs/admin-auth.md).
  */
 export function buildSessionRequest(input: SessionDraftInput): RecordSessionInput | null {
   const coveredArea = draftToPolygonGeoJSON(input.covered);
   if (coveredArea === null) return null;
   const note = input.note.trim();
   return {
-    recordedBy: input.recordedBy,
     coveredArea,
     ...(note === '' ? {} : { note }),
     ...(input.baseline === undefined ? {} : { baseline: input.baseline })

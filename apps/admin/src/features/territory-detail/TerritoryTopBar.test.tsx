@@ -90,7 +90,7 @@ describe('TerritoryTopBar', () => {
     changeTerritoryOperationalState.mockResolvedValue(opened);
     await act(async () => button('Abrir territorio')?.click());
 
-    expect(changeTerritoryOperationalState).toHaveBeenCalledWith(7, { action: 'in_progress', actor: 'admin' });
+    expect(changeTerritoryOperationalState).toHaveBeenCalledWith(7, { action: 'in_progress' });
     expect(onStatus).toHaveBeenLastCalledWith(opened);
     expect(onChanged).toHaveBeenCalledTimes(1);
   });
@@ -105,7 +105,6 @@ describe('TerritoryTopBar', () => {
 
     expect(changeTerritoryOperationalState).toHaveBeenCalledWith(7, {
       action: 'cycle_completed',
-      actor: 'admin',
       effectiveCompletionDate: localCalendarDate(new Date())
     });
     expect(onChanged).toHaveBeenCalledTimes(1);
@@ -126,7 +125,7 @@ describe('TerritoryTopBar', () => {
     changeTerritoryOperationalState.mockResolvedValue(status({ state: 'reopened', cycleNumber: 2 }));
     await act(async () => button('Abrir territorio')?.click());
 
-    expect(changeTerritoryOperationalState).toHaveBeenCalledWith(7, { action: 'reopened', actor: 'admin' });
+    expect(changeTerritoryOperationalState).toHaveBeenCalledWith(7, { action: 'reopened' });
   });
 
   it('no longer shows the progress meter, pause controls, completion date, or reopen reason', async () => {

@@ -11,7 +11,16 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 5173,
-    strictPort: true
+    strictPort: true,
+    // Same-origin API (docs/admin-auth.md): /api/* goes to the local API with
+    // the prefix stripped, so the httpOnly session cookie is first-party.
+    // Production does the same with a Vercel rewrite (vercel.json).
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:3000',
+        rewrite: (path) => path.replace(/^\/api/, '')
+      }
+    }
   },
   build: {
     outDir: 'dist',

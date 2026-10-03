@@ -2,7 +2,6 @@ import { useEffect, useState, type JSX } from 'react';
 
 import {
   ApiError,
-  DEFAULT_ACTOR,
   changeTerritoryOperationalState,
   describeApiError,
   getTerritoryOperationalStatus,
@@ -75,11 +74,11 @@ export function TerritoryTopBar({ territoryId, refreshToken, cycles, onChanged, 
 
   function open(): void {
     if (!status) return;
-    void change({ action: status.state === 'cycle_completed' ? 'reopened' : 'in_progress', actor: DEFAULT_ACTOR });
+    void change({ action: status.state === 'cycle_completed' ? 'reopened' : 'in_progress' });
   }
 
   function close(): void {
-    void change({ action: 'cycle_completed', actor: DEFAULT_ACTOR, effectiveCompletionDate: localCalendarDate(new Date()) });
+    void change({ action: 'cycle_completed', effectiveCompletionDate: localCalendarDate(new Date()) });
   }
 
   const isOpen = status !== null && isOpenState(status.state);

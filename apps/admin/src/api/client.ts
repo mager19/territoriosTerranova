@@ -8,19 +8,15 @@
 
 import type { LineString, MultiPolygon, Point, Polygon } from '@territorios/geo';
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3000';
+/**
+ * Same-origin API prefix (docs/admin-auth.md): Vite's dev server proxies
+ * /api/* to the API, and Vercel rewrites it in production, so the session
+ * cookie is always first-party. Deliberately not configurable to another
+ * origin — the session cookie would not travel there.
+ */
+export const API_BASE_URL = '/api';
 /** apps/public's dev origin — used only to build a share link's display text (token.ts reads the fragment client-side, this app never fetches it). */
 export const PUBLIC_APP_BASE_URL = import.meta.env.VITE_PUBLIC_APP_BASE_URL ?? 'http://127.0.0.1:5174';
-
-/**
- * Placeholder actor for every admin write (revision author, share
- * created-by/revoked-by) until there is a real per-user profile/auth
- * system (2026-09-08 product decision: stop asking for a name on every
- * single action — one admin/volunteer group, no individual accountability
- * yet). The server still requires a non-blank string in each of these
- * fields, so this is what satisfies that until profiles exist.
- */
-export const DEFAULT_ACTOR = 'admin';
 
 export class ApiError extends Error {
   readonly code: string;
@@ -116,11 +112,34 @@ export interface ShareToken {
   readonly expiresAt: string | null;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+type UnauthorizedListener = () => void;
+const unauthorizedListeners = new Set<UnauthorizedListener>();
+
+/**
+ * Subscribes to "the API answered 401": the session is missing, expired, or
+ * revoked, so the app must return to the login screen. Returns the
+ * unsubscribe function.
+ */
+export function onUnauthorized(listener: UnauthorizedListener): () => void {
+  unauthorizedListeners.add(listener);
+  return () => {
+    unauthorizedListeners.delete(listener);
+  };
+}
+
+interface RequestOptions {
+  /** False for the auth calls themselves, where a 401 is an answer, not a lost session. */
+  readonly notifyUnauthorized?: boolean;
+}
+
+async function request<T>(path: string, init?: RequestInit, options: RequestOptions = {}): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
+      // The admin_session cookie (httpOnly) is the only credential; it is
+      // same-origin by construction (see API_BASE_URL).
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', ...init?.headers }
     });
   } catch {
@@ -128,6 +147,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // handled below) from "we could not reach the server at all" — a
     // different failure the UI must not describe the same way.
     throw new ApiError(0, 'network_error', `could not reach the API at ${API_BASE_URL}`);
+  }
+
+  if (response.status === 401 && options.notifyUnauthorized !== false) {
+    for (const listener of unauthorizedListeners) listener();
   }
 
   if (response.status === 204) {
@@ -149,6 +172,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+/** The signed-in administrator, or null when there is no valid session. */
+export async function getMe(): Promise<{ email: string } | null> {
+  try {
+    return await request<{ email: string }>('/admin/me', undefined, { notifyUnauthorized: false });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) return null;
+    throw error;
+  }
+}
+
+/** Rejects with ApiError 401 (wrong credentials) or 429 (too many attempts). */
+export function login(email: string, password: string): Promise<{ email: string }> {
+  return request(
+    '/admin/auth/login',
+    { method: 'POST', body: JSON.stringify({ email, password }) },
+    { notifyUnauthorized: false }
+  );
+}
+
+export function logout(): Promise<void> {
+  return request('/admin/logout', { method: 'POST', body: JSON.stringify({}) }, { notifyUnauthorized: false });
+}
+
 export function listTerritories(): Promise<{ territories: readonly TerritoryListItem[] }> {
   return request('/admin/territories');
 }
@@ -160,7 +206,6 @@ export function getTerritory(id: number): Promise<TerritoryWithRevisions> {
 export function createTerritory(input: {
   name: string;
   geometry: Polygon;
-  author: string;
   number?: string;
 }): Promise<TerritoryWithRevisions> {
   return request('/admin/territories', { method: 'POST', body: JSON.stringify(input) });
@@ -168,7 +213,7 @@ export function createTerritory(input: {
 
 export function submitRevision(
   territoryId: number,
-  input: { geometry: Polygon; author: string }
+  input: { geometry: Polygon }
 ): Promise<TerritoryRevision> {
   return request(`/admin/territories/${territoryId}/revisions`, {
     method: 'POST',
@@ -180,9 +225,11 @@ export function listProgress(territoryId: number): Promise<{ entries: readonly P
   return request(`/admin/territories/${territoryId}/progress`);
 }
 
-/** A new session: the covered area is required; the remaining area is always computed by the server. */
+/**
+ * A new session: the covered area is required; the remaining area is always
+ * computed by the server, and the recorder is the signed-in administrator.
+ */
 export interface RecordSessionInput {
-  readonly recordedBy: string;
   readonly note?: string;
   readonly coveredArea: Polygon;
   readonly baseline?: CoverageBaseline;
@@ -222,14 +269,14 @@ export function listTerritoryCycles(territoryId: number): Promise<{ cycles: read
 
 export function changeTerritoryOperationalState(
   territoryId: number,
-  input: { action: Exclude<OperationalState, 'no_record'>; actor: string; reason?: string; effectiveCompletionDate?: string }
+  input: { action: Exclude<OperationalState, 'no_record'>; reason?: string; effectiveCompletionDate?: string }
 ): Promise<TerritoryOperationalStatus> {
   return request(`/admin/territories/${territoryId}/operational-state`, { method: 'POST', body: JSON.stringify(input) });
 }
 
 export function createShareToken(
   territoryId: number,
-  input: { createdBy: string; expiresAt?: string }
+  input: { expiresAt?: string } = {}
 ): Promise<ShareToken> {
   return request(`/admin/territories/${territoryId}/share-tokens`, {
     method: 'POST',
@@ -237,8 +284,8 @@ export function createShareToken(
   });
 }
 
-export function revokeShareToken(tokenId: number, actor: string): Promise<void> {
-  return request(`/admin/share-tokens/${tokenId}/revoke`, { method: 'POST', body: JSON.stringify({ actor }) });
+export function revokeShareToken(tokenId: number): Promise<void> {
+  return request(`/admin/share-tokens/${tokenId}/revoke`, { method: 'POST', body: JSON.stringify({}) });
 }
 
 export interface TerritoryOverviewMonth {
@@ -311,6 +358,9 @@ const ERROR_MESSAGES_ES: Record<string, string> = {
   territory_not_open: 'El territorio está cerrado. Ábrelo para registrar progreso.',
   baseline_required: 'Este ciclo todavía no tiene un área pendiente registrada; hay que confirmar desde dónde parte.',
   network_error: 'No se pudo conectar con el servidor.',
+  invalid_credentials: 'Correo o contraseña incorrectos.',
+  unauthorized: 'Tu sesión terminó. Vuelve a iniciar sesión.',
+  forbidden_origin: 'La solicitud no viene de la aplicación de administración.',
   unexpected_error: 'Ocurrió un error inesperado; no se guardó nada.'
 };
 
