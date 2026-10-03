@@ -9,7 +9,6 @@ import {
   type TerritoryCycle,
   type TerritoryOperationalStatus
 } from '../../api/client.js';
-import { AuditHistory } from './AuditHistory.js';
 import { CycleHistory } from './CycleHistory.js';
 import { isOpenState } from './cycles.js';
 import { ProgressList } from './ProgressList.js';
@@ -31,10 +30,12 @@ export interface TerritoryDetailProps {
 /**
  * Composes the selected territory: the top bar (open/closed status, the
  * open/close action, and sharing — 2026-10-03), the session recorder (only
- * while the territory is open), recorded sessions, the cycle history, and
- * the full audit trail. Simpler than its
+ * while the territory is open), recorded sessions, and the cycle history.
+ * The audit trail is no longer shown here (2026-10-03: the cycle history
+ * covers what administrators need); it stays stored and served by the API.
+ * Simpler than its
  * A5-original shape (2026-09-08: territories are shared to a group, not
- * assigned to one person) — progress and audit history are always
+ * assigned to one person) — progress and cycle history are always
  * territory-scoped now, so they need only the same `refreshToken` the
  * parent already passes, plus a local `progressVersion` bumped when
  * ProgressRecorder saves (there is no more assignment-derived version
@@ -170,7 +171,6 @@ export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemaini
         onSelect={setSelectedSessionId}
       />
       <CycleHistory cycles={cycles} loading={cyclesLoading} error={cyclesError} />
-      <AuditHistory territoryId={territoryId} refreshToken={combinedRefreshToken} />
     </section>
   );
 }

@@ -61,17 +61,6 @@ export interface TerritoryWithRevisions extends Omit<Territory, 'currentRevision
   readonly revisions: readonly TerritoryRevision[];
 }
 
-export interface AuditEvent {
-  readonly id: number;
-  readonly entityType: string;
-  readonly entityId: number;
-  readonly action: string;
-  readonly actor: string;
-  readonly reason: string;
-  readonly payload: Record<string, unknown>;
-  readonly createdAt: string;
-}
-
 /**
  * One recorded session. Since 2026-09-26 every new session carries the area
  * COVERED in it and the server derives the remaining area; entries from
@@ -185,10 +174,6 @@ export function submitRevision(
     method: 'POST',
     body: JSON.stringify(input)
   });
-}
-
-export function getTerritoryAudit(territoryId: number): Promise<{ territoryId: number; events: readonly AuditEvent[] }> {
-  return request(`/admin/territories/${territoryId}/audit`);
 }
 
 export function listProgress(territoryId: number): Promise<{ entries: readonly ProgressEntry[] }> {

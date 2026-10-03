@@ -9,7 +9,7 @@
  *   /resumen                -> resumen    (overview / statistics)
  *   /territorios            -> territorios (list only, no editor)
  *   /nuevo                  -> nuevo       (draw a brand-new territory)
- *   /territorios/:id        -> detalle     (share + progress + audit)
+ *   /territorios/:id        -> detalle     (share + progress + cycles)
  *   /territorios/:id/editar -> editar      (editor with that territory)
  *
  * The root `/` and any unknown path — including a non-numeric `:id` under

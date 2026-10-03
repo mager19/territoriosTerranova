@@ -49,7 +49,9 @@ visually distinct from the drawn territory, and clearly labelled as reference.
 Territories are shared to the volunteer group, not assigned to one named person —
 there is no lifecycle to manage. What was actually built: a "Share this territory"
 action (SharePanel) that issues/revokes a link. Show the revision timeline and
-audit history. Show recorded progress, including remaining-area geometry when it
+audit history (2026-10-03: the audit history panel was removed from the territory
+detail; the cycle history replaces it in the UI and the audit trail stays stored
+and served by `GET /admin/territories/:id/audit`). Show recorded progress, including remaining-area geometry when it
 exists — this part is unchanged.
 
 ~~Assign, return, complete, and reopen with a reason.~~

@@ -44,7 +44,7 @@ describe('App', () => {
     );
     expect(html).not.toContain('Cobertura y estado operativo');
     expect(html).toContain('aria-label="Estado del territorio"');
-    expect(html.indexOf('Compartir')).toBeLessThan(html.indexOf('Historial de auditoría'));
+    expect(html).not.toContain('Historial de auditoría');
   });
 
   it('renders a sidebar nav with all three view links', () => {

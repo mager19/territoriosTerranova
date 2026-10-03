@@ -10,8 +10,8 @@ import { matchPath, pathForView, type RouteMatch, type View } from './routes.js'
 
 /**
  * A5 brief, both slices: draw a territory over Bello and see its revision
- * history (slice 1); share it with the volunteer group, recorded progress,
- * and the full audit trail (slice 2). The app is URL-routed with the
+ * history (slice 1); share it with the volunteer group, recorded progress
+ * and cycle history (slice 2; the audit trail is API-only since 2026-10-03). The app is URL-routed with the
  * browser History API — five real routes (see routes.ts) replace the old
  * three-state view switcher, so the sidebar links are real `<a>` anchors,
  * card clicks deep-link straight to a territory, and back/forward stay

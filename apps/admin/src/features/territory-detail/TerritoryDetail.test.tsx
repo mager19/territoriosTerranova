@@ -17,8 +17,7 @@ const api = vi.hoisted(() => ({
   getTerritoryOperationalStatus: vi.fn(),
   changeTerritoryOperationalState: vi.fn(),
   listProgress: vi.fn(),
-  listTerritoryCycles: vi.fn(),
-  getTerritoryAudit: vi.fn()
+  listTerritoryCycles: vi.fn()
 }));
 
 vi.mock('../../api/client.js', async (importOriginal) => {
@@ -56,7 +55,6 @@ const OPEN_CYCLE: TerritoryCycle = {
 
 beforeEach(() => {
   api.listProgress.mockResolvedValue({ entries: [] });
-  api.getTerritoryAudit.mockResolvedValue({ territoryId: 1, events: [] });
 });
 
 afterEach(async () => {
@@ -117,13 +115,12 @@ describe('TerritoryDetail', () => {
     const recorderAt = text.indexOf('Registrar sesión');
     const sessionsAt = text.indexOf('Sesiones');
     const cyclesAt = text.indexOf('Historial de ciclos');
-    const auditAt = text.indexOf('Historial de auditoría');
     expect(editLink).toBeGreaterThan(-1);
     expect(bar).toBeGreaterThan(editLink);
     expect(shareButton).toBeGreaterThan(editLink);
     expect(shareButton).toBeLessThan(recorderAt);
     expect(cyclesAt).toBeGreaterThan(sessionsAt);
-    expect(cyclesAt).toBeLessThan(auditAt);
+    expect(text).not.toContain('Historial de auditoría');
     expect(text).toContain('Ciclo 1 · abierto 3 oct 2026 · en curso · 2 sesiones');
   });
 
