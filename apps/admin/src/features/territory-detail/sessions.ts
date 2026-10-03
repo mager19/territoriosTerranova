@@ -13,14 +13,14 @@ import { draftToPolygonGeoJSON, type DraftState } from '../territory-editor/draf
 /**
  * Distinct, map-legible hues for consecutive sessions. None is the draft
  * orange (#e08a2e), the territory teal (#2f6f5e), or the remaining-area
- * magenta (#b0339a), so a session never reads as one of those layers.
+ * blue (#2563eb), so a session never reads as one of those layers.
  */
 export const SESSION_COLORS: readonly string[] = [
-  '#2563eb',
+  '#b0339a',
   '#16a34a',
   '#d97706',
   '#7c3aed',
-  '#0891b2',
+  '#78350f',
   '#dc2626',
   '#65a30d',
   '#db2777'
@@ -29,7 +29,7 @@ export const SESSION_COLORS: readonly string[] = [
 /** Colors cycle once there are more sessions than hues; the session list always pairs a color with its number. */
 export function sessionColor(index: number): string {
   const length = SESSION_COLORS.length;
-  return SESSION_COLORS[((index % length) + length) % length] ?? '#2563eb';
+  return SESSION_COLORS[((index % length) + length) % length] ?? '#b0339a';
 }
 
 /** A session of the current cycle that recorded a covered area, with its display number and color. */

@@ -173,7 +173,7 @@ export function installEditorLayers(map: MapLibreMap): void {
   });
 
   // Remaining-area, from the latest progress entry — visually distinct from
-  // both saved (teal) and draft (orange): a hatched magenta outline, since
+  // both saved (teal) and draft (orange): a dashed blue area (2026-10-03), since
   // it represents an ADMINISTRATOR-VIEWED estimate of what is left, never a
   // territory boundary or a drawing in progress. Absent (no progress entry
   // recorded a remaining area) means this layer simply stays empty — the UI
@@ -183,13 +183,13 @@ export function installEditorLayers(map: MapLibreMap): void {
     id: 'remaining-area-fill',
     type: 'fill',
     source: 'remaining-area',
-    paint: { 'fill-color': '#b0339a', 'fill-opacity': 0.18 }
+    paint: { 'fill-color': '#2563eb', 'fill-opacity': 0.28 }
   });
   map.addLayer({
     id: 'remaining-area-line',
     type: 'line',
     source: 'remaining-area',
-    paint: { 'line-color': '#7a1f6b', 'line-width': 2, 'line-dasharray': [1, 1] }
+    paint: { 'line-color': '#1d4ed8', 'line-width': 2, 'line-dasharray': [2, 1] }
   });
 
   map.addSource('draft-territory', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
@@ -356,7 +356,7 @@ export function installSnapIndicatorLayer(map: MapLibreMap): void {
       'circle-radius': 9,
       'circle-opacity': 0,
       'circle-stroke-width': 3,
-      'circle-stroke-color': '#1d4ed8'
+      'circle-stroke-color': '#111827'
     }
   });
 }
