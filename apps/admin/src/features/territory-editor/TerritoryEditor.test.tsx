@@ -100,6 +100,7 @@ const BARRIO_GEOMETRY: MultiPolygon = {
 const selectedTerritory: TerritoryWithRevisions = {
   id: 1,
   name: 'Guasimalito 1',
+  slug: 'guasimalito-1',
   number: null,
   status: 'active',
   createdAt: '2026-09-21T00:00:00.000Z',
@@ -119,6 +120,7 @@ function listItem(id: number, geometry: Polygon): TerritoryListItem {
   return {
     id,
     name: `T${id}`,
+    slug: `t${id}`,
     number: null,
     status: 'active',
     createdAt: '2026-09-21T00:00:00.000Z',

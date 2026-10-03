@@ -19,6 +19,8 @@ import type { Polygon } from '@territorios/geo';
 
 export interface TerritoryDetailProps {
   readonly territoryId: number;
+  /** Fixed public slug, for the share panel's `/t/<slug>` link. */
+  readonly slug: string;
   readonly boundary: Polygon | null;
   readonly refreshToken: number;
   /** Forwarded up to App so the map (TerritoryEditor) can render it as an overlay. */
@@ -42,7 +44,7 @@ export interface TerritoryDetailProps {
  * counter to thread through — the equivalent A5-original plumbing this
  * replaces).
  */
-export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemainingAreaChange, onEdit }: TerritoryDetailProps): JSX.Element {
+export function TerritoryDetail({ territoryId, slug, boundary, refreshToken, onRemainingAreaChange, onEdit }: TerritoryDetailProps): JSX.Element {
   const [progressVersion, setProgressVersion] = useState(0);
   const combinedRefreshToken = refreshToken + progressVersion;
   const [status, setStatus] = useState<TerritoryOperationalStatus | null>(null);
@@ -154,6 +156,7 @@ export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemaini
       </div>
       <TerritoryTopBar
         territoryId={territoryId}
+        slug={slug}
         refreshToken={combinedRefreshToken}
         cycles={cycles}
         onChanged={bumpProgressVersion}

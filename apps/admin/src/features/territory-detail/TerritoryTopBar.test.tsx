@@ -70,7 +70,7 @@ async function renderBar(initial: TerritoryOperationalStatus, cycles: readonly T
   root = createRoot(host);
   await act(async () => {
     root?.render(
-      <TerritoryTopBar territoryId={7} refreshToken={0} cycles={cycles} onChanged={onChanged} onStatus={onStatus} />
+      <TerritoryTopBar territoryId={7} slug="nv-07" refreshToken={0} cycles={cycles} onChanged={onChanged} onStatus={onStatus} />
     );
   });
   return { onChanged, onStatus };
@@ -142,11 +142,14 @@ describe('TerritoryTopBar', () => {
     await renderBar(status({ state: 'in_progress' }));
     const share = button('Compartir');
     expect(share?.getAttribute('aria-expanded')).toBe('false');
-    expect(button('Compartir este territorio')).toBeUndefined();
+    const region = host?.querySelector<HTMLElement>(`#${share?.getAttribute('aria-controls') ?? ''}`);
+    expect(region?.hidden).toBe(true);
 
     await act(async () => share?.click());
     expect(share?.getAttribute('aria-expanded')).toBe('true');
-    expect(button('Compartir este territorio')).toBeDefined();
+    expect(region?.hidden).toBe(false);
+    // The territory's own fixed public URL, built from its slug.
+    expect(region?.querySelector<HTMLInputElement>('input.share-link-url')?.value).toMatch(/\/t\/nv-07$/);
   });
 
   it('surfaces a failed change as an alert instead of changing state', async () => {
