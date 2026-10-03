@@ -912,8 +912,10 @@ form > div {
 }
 
 @media (min-width: 1024px) {
+  /* Taller than mobile, but leaves room for the toolbar and the barrio
+     search below it on a laptop screen (calc(100vh - 200px) hid them). */
   .editor-map {
-    height: calc(100vh - 200px);
-    min-height: 560px;
+    height: min(calc(100vh - 300px), 640px);
+    min-height: 460px;
   }
 }
