@@ -163,13 +163,13 @@ export function installEditorLayers(map: MapLibreMap): void {
     id: 'saved-territory-fill',
     type: 'fill',
     source: 'saved-territory',
-    paint: { 'fill-color': '#2f6f5e', 'fill-opacity': 0.22 }
+    paint: { 'fill-color': '#2f6f5e', 'fill-opacity': 0.35 }
   });
   map.addLayer({
     id: 'saved-territory-line',
     type: 'line',
     source: 'saved-territory',
-    paint: { 'line-color': '#143f35', 'line-width': 2 }
+    paint: { 'line-color': '#143f35', 'line-width': 3 }
   });
 
   // Remaining-area, from the latest progress entry — visually distinct from
