@@ -95,6 +95,32 @@ function buttonByText(text: string): HTMLButtonElement {
   return button;
 }
 
+function hasButton(text: string): boolean {
+  return [...(host?.querySelectorAll('button') ?? [])].some((candidate) => candidate.textContent === text);
+}
+
+function statusText(): string {
+  return host?.querySelector('[role="status"]')?.textContent ?? '';
+}
+
+function noteField(): HTMLTextAreaElement {
+  const field = host?.querySelector('#progress-note');
+  if (!(field instanceof HTMLTextAreaElement)) throw new Error('Could not find the note field');
+  return field;
+}
+
+async function typeNote(value: string): Promise<void> {
+  await act(async () => {
+    const field = noteField();
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(field, value);
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+async function click(text: string): Promise<void> {
+  await act(async () => buttonByText(text).click());
+}
+
 async function clickMap(x: number, y: number): Promise<void> {
   await act(async () => {
     for (const handler of mapState.handlers.get('click') ?? []) {
@@ -116,64 +142,166 @@ async function renderRecorder(onRecorded: () => void = () => undefined): Promise
   });
 }
 
+/** No "start drawing" step: drawing is active as soon as the recorder mounts. */
 async function drawClosedCoveredArea(): Promise<void> {
-  await act(async () => buttonByText('Dibujar área cubierta').click());
   await clickMap(26, 57);
   await clickMap(27, 57);
   await clickMap(27, 58);
-  await act(async () => buttonByText('Cerrar área cubierta').click());
+  await click('Cerrar área');
 }
 
 describe('ProgressRecorder', () => {
-  it('centers the session on the covered area, keeps pause point and route as optional tools, and asks for no actor', () => {
+  it('offers only the covered area and the note — no route, no pause point, no actor field', () => {
     const html = renderToStaticMarkup(<ProgressRecorder territoryId={1} boundary={null} onRecorded={() => undefined} />);
 
     expect(html).toContain('Registrar sesión');
-    expect(html).toContain('aria-label="Herramientas de la sesión"');
-    expect(html).toContain('Dibujar área cubierta');
-    expect(html).toContain('Cerrar área cubierta');
-    expect(html).toContain('Editar vértices del área');
-    expect(html).toContain('Dibujar ruta');
-    expect(html).toContain('Colocar pausa');
-    expect(html).toContain('Cancelar sesión');
-    expect(html).not.toContain('área pendiente</button>');
+    expect(html).toContain('Marca en el mapa lo que cubrieron en esta sesión. Lo que falta se calcula solo.');
+    expect(html).toContain('Deshacer punto');
+    expect(html).toContain('Cerrar área');
+    expect(html).toContain('Guardar sesión');
+    expect(html).toContain('Cancelar');
+    expect(html).not.toMatch(/ruta|pausa|recorrido/i);
+    expect(html).not.toContain('Dibujar');
     expect(html).not.toContain('progress-recorded-by');
   });
 
-  it('cannot save a session until the covered area is drawn and closed', async () => {
+  it('uses neutral Spanish (tú), never voseo, in the recorder copy', () => {
+    const html = renderToStaticMarkup(<ProgressRecorder territoryId={1} boundary={null} onRecorded={() => undefined} />);
+
+    expect(html).not.toMatch(/Dibujá|Hacé|Marcá|Elegí|Editá|Agregá|Guardá|Arrastrá|Ajustá|Usá|Escribí/);
+  });
+
+  it('starts in drawing mode: map clicks add vertices without pressing any button first', async () => {
+    await renderRecorder();
+    expect(buttonByText('Deshacer punto').disabled).toBe(true);
+    expect(buttonByText('Cerrar área').disabled).toBe(true);
+    expect(statusText()).toContain('Haz clic en el mapa');
+
+    await clickMap(26, 57);
+    expect(buttonByText('Deshacer punto').disabled).toBe(false);
+    expect(buttonByText('Cerrar área').disabled).toBe(true);
+
+    await clickMap(27, 57);
+    await clickMap(27, 58);
+    expect(buttonByText('Cerrar área').disabled).toBe(false);
+    expect(statusText()).toContain('Cerrar área');
+  });
+
+  it('"Deshacer punto" removes the last vertex', async () => {
+    await renderRecorder();
+    await clickMap(26, 57);
+    await clickMap(27, 57);
+    await clickMap(27, 58);
+
+    await click('Deshacer punto');
+
+    expect(buttonByText('Cerrar área').disabled).toBe(true);
+  });
+
+  it('cannot save a session until the covered area is closed', async () => {
     await renderRecorder();
     expect(buttonByText('Guardar sesión').disabled).toBe(true);
 
-    await act(async () => buttonByText('Dibujar área cubierta').click());
     await clickMap(26, 57);
     await clickMap(27, 57);
     await clickMap(27, 58);
     expect(buttonByText('Guardar sesión').disabled).toBe(true);
+    expect(statusText()).not.toContain('lista');
 
-    await act(async () => buttonByText('Cerrar área cubierta').click());
+    await click('Cerrar área');
     expect(buttonByText('Guardar sesión').disabled).toBe(false);
+    expect(statusText()).toContain('Área lista');
   });
 
-  it('sends only the covered area plus optional evidence — never a remaining area', async () => {
+  it('once closed, swaps the drawing buttons for "Ajustar puntos" and "Borrar y volver a dibujar", and ignores further clicks', async () => {
+    recordProgress.mockResolvedValue({});
+    await renderRecorder();
+    await drawClosedCoveredArea();
+
+    expect(hasButton('Deshacer punto')).toBe(false);
+    expect(hasButton('Cerrar área')).toBe(false);
+    expect(hasButton('Ajustar puntos')).toBe(true);
+    expect(hasButton('Borrar y volver a dibujar')).toBe(true);
+
+    await clickMap(30, 60);
+    await click('Guardar sesión');
+
+    const request = recordProgress.mock.calls[0]?.[1] as RecordSessionInput;
+    expect(request.coveredArea.coordinates[0]).toHaveLength(4);
+  });
+
+  it('"Ajustar puntos" toggles vertex editing — labeled "Listo" while active, with the gestures explained', async () => {
+    await renderRecorder();
+    await drawClosedCoveredArea();
+
+    await click('Ajustar puntos');
+    expect(buttonByText('Listo').getAttribute('aria-pressed')).toBe('true');
+    expect(statusText()).toContain('Arrastra un punto');
+    expect(statusText()).toContain('doble clic');
+
+    await click('Listo');
+    expect(buttonByText('Ajustar puntos').getAttribute('aria-pressed')).toBe('false');
+    expect(statusText()).toContain('Área lista');
+  });
+
+  it('"Borrar y volver a dibujar" clears the area and returns to drawing mode', async () => {
+    await renderRecorder();
+    await drawClosedCoveredArea();
+
+    await click('Borrar y volver a dibujar');
+
+    expect(buttonByText('Guardar sesión').disabled).toBe(true);
+    expect(buttonByText('Deshacer punto').disabled).toBe(true);
+    await clickMap(26, 57);
+    expect(buttonByText('Deshacer punto').disabled).toBe(false);
+  });
+
+  it('labels the note for the next group and warns, via aria-describedby, that it is visible through the share link', async () => {
+    await renderRecorder();
+    const field = noteField();
+    const label = host?.querySelector('label[for="progress-note"]');
+
+    expect(label?.textContent).toBe('Nota para el próximo grupo (opcional)');
+    const helpId = field.getAttribute('aria-describedby');
+    expect(helpId).toBeTruthy();
+    const help = host?.querySelector(`#${helpId}`);
+    expect(help?.textContent).toBe(
+      'La verá quien tenga el enlace del territorio. Ej.: “Quedamos en la esquina de la Diagonal 57 con 19C”. No escribas nombres ni datos de personas.'
+    );
+  });
+
+  it('sends only the covered area and the note — never a route, pause point, or remaining area', async () => {
     recordProgress.mockResolvedValue({});
     const onRecorded = vi.fn();
     await renderRecorder(onRecorded);
     await drawClosedCoveredArea();
+    await typeNote('  Quedamos en la esquina  ');
 
-    await act(async () => buttonByText('Colocar pausa').click());
-    await clickMap(26, 57);
-
-    await act(async () => buttonByText('Guardar sesión').click());
+    await click('Guardar sesión');
 
     expect(recordProgress).toHaveBeenCalledTimes(1);
     const [territoryId, request] = recordProgress.mock.calls[0] as [number, RecordSessionInput];
     expect(territoryId).toBe(7);
+    expect(Object.keys(request).sort()).toEqual(['coveredArea', 'note', 'recordedBy']);
     expect(request.coveredArea.type).toBe('Polygon');
-    expect(request.coveredArea.coordinates[0]).toHaveLength(4);
-    expect(request.pausePoint?.type).toBe('Point');
-    expect(request).not.toHaveProperty('remainingArea');
-    expect(request).not.toHaveProperty('baseline');
+    expect(request.note).toBe('Quedamos en la esquina');
     expect(onRecorded).toHaveBeenCalledTimes(1);
+    expect(noteField().value).toBe('');
+  });
+
+  it('"Cancelar" is disabled until something is entered, then clears the drawing and the note', async () => {
+    await renderRecorder();
+    expect(buttonByText('Cancelar').disabled).toBe(true);
+
+    await typeNote('algo');
+    expect(buttonByText('Cancelar').disabled).toBe(false);
+    await clickMap(26, 57);
+
+    await click('Cancelar');
+
+    expect(noteField().value).toBe('');
+    expect(buttonByText('Deshacer punto').disabled).toBe(true);
+    expect(buttonByText('Cancelar').disabled).toBe(true);
   });
 
   it('turns baseline_required into an in-page confirmation and resends with the explicit baseline only after "yes"', async () => {
@@ -185,7 +313,7 @@ describe('ProgressRecorder', () => {
     await renderRecorder(onRecorded);
     await drawClosedCoveredArea();
 
-    await act(async () => buttonByText('Guardar sesión').click());
+    await click('Guardar sesión');
 
     const prompt = host?.querySelector('[role="alertdialog"]');
     expect(prompt?.textContent).toContain('Este ciclo todavía no tiene un área pendiente registrada.');
@@ -194,7 +322,7 @@ describe('ProgressRecorder', () => {
     expect(onRecorded).not.toHaveBeenCalled();
     expect(confirmSpy).not.toHaveBeenCalled();
 
-    await act(async () => buttonByText('Sí, partir de todo el territorio').click());
+    await click('Sí, partir de todo el territorio');
 
     expect(recordProgress).toHaveBeenCalledTimes(2);
     const retried = recordProgress.mock.calls[1]?.[1] as RecordSessionInput;
@@ -207,36 +335,23 @@ describe('ProgressRecorder', () => {
     recordProgress.mockRejectedValueOnce(new ApiError(400, 'baseline_required', 'confirm the baseline'));
     await renderRecorder();
     await drawClosedCoveredArea();
-    await act(async () => buttonByText('Guardar sesión').click());
+    await click('Guardar sesión');
 
-    await act(async () => buttonByText('No, cancelar').click());
+    await click('No, cancelar');
 
     expect(recordProgress).toHaveBeenCalledTimes(1);
     expect(host?.querySelector('[role="alertdialog"]')).toBeNull();
     expect(buttonByText('Guardar sesión').disabled).toBe(false);
   });
 
-  it('explains an out-of-territory rejection in terms of the territory, not the municipal boundary', async () => {
+  it('explains an out-of-territory rejection in terms of the territory, in neutral Spanish', async () => {
     recordProgress.mockRejectedValueOnce(new ApiError(400, 'out_of_bounds', 'covered-area geometry must lie within'));
     await renderRecorder();
     await drawClosedCoveredArea();
-    await act(async () => buttonByText('Guardar sesión').click());
+    await click('Guardar sesión');
 
-    expect(host?.querySelector('[role="alert"]')?.textContent).toContain('fuera del territorio');
-  });
-
-  it('keeps the covered area and the route as separate drafts — drawing a route does not touch the covered area', async () => {
-    recordProgress.mockResolvedValue({});
-    await renderRecorder();
-    await drawClosedCoveredArea();
-
-    await act(async () => buttonByText('Dibujar ruta').click());
-    await clickMap(26, 57);
-    await clickMap(27, 58);
-    await act(async () => buttonByText('Guardar sesión').click());
-
-    const request = recordProgress.mock.calls[0]?.[1] as RecordSessionInput;
-    expect(request.coveredArea.coordinates[0]).toHaveLength(4);
-    expect(request.route?.coordinates).toHaveLength(2);
+    const alert = host?.querySelector('[role="alert"]')?.textContent ?? '';
+    expect(alert).toContain('fuera del territorio');
+    expect(alert).toContain('Ajusta los puntos');
   });
 });

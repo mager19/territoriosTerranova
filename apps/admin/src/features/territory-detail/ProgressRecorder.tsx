@@ -6,9 +6,7 @@ import { ApiError, DEFAULT_ACTOR, describeApiError, recordProgress, type Coverag
 import {
   addVertex,
   closeDraft,
-  coordinateToPointGeoJSON,
   createDraft,
-  draftToLineStringGeoJSON,
   draftToPolygonGeoJSON,
   insertVertex,
   moveVertex,
@@ -28,15 +26,13 @@ import {
   installEditorLayers,
   installSessionLayers,
   renderDraft,
-  renderPausePoint,
   renderRemainingArea,
   renderSavedTerritory,
-  renderSecondaryDraft,
   renderSessions,
   screenPointToCoordinate
 } from '../territory-editor/map-editor.js';
 import { buildSessionRequest, sessionFeatureCollection, type CoverageSession } from './sessions.js';
-import type { MultiPolygon, Point, Polygon } from '@territorios/geo';
+import type { MultiPolygon, Polygon } from '@territorios/geo';
 
 export interface ProgressRecorderProps {
   readonly territoryId: number;
@@ -49,31 +45,30 @@ export interface ProgressRecorderProps {
   readonly onRecorded: () => void;
 }
 
-type DraftKind = 'covered' | 'route';
-type Tool = DraftKind | 'pause';
-
-/** A route only ever needs RFC 7946's own LineString minimum — never the 3-vertex polygon-ring minimum. */
-const ROUTE_MIN_VERTICES = 2;
 const COVERED_MIN_VERTICES = 3;
+
+const NOTE_HELP_ID = 'progress-note-help';
 
 /** Progress-specific wording where the shared error text would mislead (it speaks of Bello's boundary). */
 const RECORDER_ERRORS_ES: Record<string, string> = {
-  out_of_bounds: 'Lo dibujado queda fuera del territorio. Ajustá los vértices para que queden dentro del borde.'
+  out_of_bounds: 'Lo dibujado queda fuera del territorio. Ajusta los puntos para que queden dentro del borde.'
 };
 
 /**
  * "Draw what we covered today" (2026-09-26 product decision). Each session
  * the administrator draws, vertex by vertex, the area covered in that
  * session — it may end mid-block — and the server subtracts it from the
- * cycle's remaining area. The covered area is required; the pause point
- * ("where we stopped") and the route are optional evidence on the same map.
+ * cycle's remaining area. The covered area is the only geometry; an
+ * optional note tells the next group where to resume and is PUBLIC through
+ * the share link (2026-10-03 product decision — the field's help text warns
+ * against writing personal data). The pause point and the route were
+ * removed from this recorder on 2026-10-03; the API still accepts them.
  *
- * The covered area and the route are two independent drafts (draft.ts, the
- * same click-to-add model TerritoryEditor uses). Only one is "focused" at a
- * time: it is rendered in the editable draft layer, receives clicks, and is
- * the one "Editar vértices" (drag to move, click an edge to insert,
- * double-click to remove — TerritoryEditor's own gestures) operates on; the
- * other is shown read-only, so a click never mutates the wrong geometry.
+ * Drawing is active as soon as the recorder mounts: every map click adds a
+ * vertex to the covered-area draft (draft.ts, the same click-to-add model
+ * TerritoryEditor uses) until it is closed. Once closed, clicks are ignored
+ * unless "Ajustar puntos" is on — TerritoryEditor's own gestures: drag to
+ * move, click an edge to insert, double-click to remove.
  *
  * Baseline: when the cycle has no remaining area yet, the server answers
  * `baseline_required`. That turns into an in-page confirmation (never a
@@ -92,24 +87,16 @@ export function ProgressRecorder({
   const mapRef = useRef<MapLibreMap | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [covered, setCovered] = useState<DraftState>(createDraft());
-  const [route, setRoute] = useState<DraftState>(createDraft());
-  const [pausePoint, setPausePoint] = useState<Point | null>(null);
-  const [activeTool, setActiveTool] = useState<Tool | null>(null);
-  const [editing, setEditing] = useState<DraftKind | null>(null);
+  const [adjusting, setAdjusting] = useState(false);
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [baselinePrompt, setBaselinePrompt] = useState(false);
   const draggingIndexRef = useRef<number | null>(null);
-
-  // The draft that clicks and vertex edits apply to.
-  const focused: DraftKind = editing ?? (activeTool === 'route' ? 'route' : 'covered');
-  const focusedDraft = focused === 'route' ? route : covered;
-  const setFocusedDraft = focused === 'route' ? setRoute : setCovered;
-  const focusedDraftRef = useRef(focusedDraft);
+  const coveredRef = useRef(covered);
   useEffect(() => {
-    focusedDraftRef.current = focusedDraft;
-  }, [focusedDraft]);
+    coveredRef.current = covered;
+  }, [covered]);
 
   // Same StrictMode-double-mount guard as TerritoryEditor — see that
   // component's comment for the full explanation.
@@ -132,40 +119,27 @@ export function ProgressRecorder({
     mapRef.current = map;
   }, []);
 
-  // Click-to-draw is explicitly tool-gated: the covered-area and route tools
-  // add vertices to their own draft, the pause tool replaces the single
-  // pause marker. Clicking a closed covered area is ignored rather than
-  // silently starting a new one (draft.ts's addVertex would do that).
+  // Drawing mode: active while the area is open. Clicking a closed area is
+  // ignored rather than silently starting a new one (draft.ts's addVertex
+  // would do that) — "Borrar y volver a dibujar" is the explicit way back.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady) return;
+    if (!map || !mapReady || adjusting) return;
     const handleClick = (event: MapMouseEvent) => {
-      if (editing !== null || activeTool === null) return;
       const coordinate = screenPointToCoordinate(map, event.point);
-      if (activeTool === 'covered') {
-        setCovered((current) => (current.isClosed ? current : addVertex(current, coordinate)));
-      } else if (activeTool === 'route') {
-        setRoute((current) => addVertex(current, coordinate));
-      } else {
-        setPausePoint(coordinateToPointGeoJSON(coordinate));
-        setActiveTool(null);
-      }
+      setCovered((current) => (current.isClosed ? current : addVertex(current, coordinate)));
     };
     map.on('click', handleClick);
     return () => {
       map.off('click', handleClick);
     };
-  }, [mapReady, editing, activeTool]);
+  }, [mapReady, adjusting]);
 
-  // Vertex editing of the focused draft: drag to move, click an edge to
-  // insert, double-click a vertex to remove. The covered area is a closed
-  // ring (wraparound edge, >= 3 vertices); the route is an open path.
+  // "Ajustar puntos": drag a vertex to move it, click an edge to insert
+  // one, double-click a vertex to remove it (never below a 3-vertex ring).
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady || editing === null) return;
-    const closed = editing === 'covered';
-    const minVertices = closed ? COVERED_MIN_VERTICES : ROUTE_MIN_VERTICES;
-    const setDraft = editing === 'covered' ? setCovered : setRoute;
+    if (!map || !mapReady || !adjusting) return;
 
     map.doubleClickZoom.disable();
 
@@ -182,7 +156,7 @@ export function ProgressRecorder({
       if (draggingIndexRef.current === null) {
         if (findVertexIndexAtPoint(map, event.point) !== null) {
           map.getCanvas().style.cursor = 'grab';
-        } else if (findEdgeIndexAtPoint(map, focusedDraftRef.current.vertices, event.point, closed) !== null) {
+        } else if (findEdgeIndexAtPoint(map, coveredRef.current.vertices, event.point, true) !== null) {
           map.getCanvas().style.cursor = 'copy';
         } else {
           map.getCanvas().style.cursor = '';
@@ -191,7 +165,7 @@ export function ProgressRecorder({
       }
       const coordinate = screenPointToCoordinate(map, event.point);
       const index = draggingIndexRef.current;
-      setDraft((current) => moveVertex(current, index, coordinate));
+      setCovered((current) => moveVertex(current, index, coordinate));
     };
 
     const endDrag = () => {
@@ -203,8 +177,8 @@ export function ProgressRecorder({
 
     const handleClick = (event: MapMouseEvent) => {
       if (findVertexIndexAtPoint(map, event.point) !== null) return;
-      setDraft((current) => {
-        const edgeIndex = findEdgeIndexAtPoint(map, current.vertices, event.point, closed);
+      setCovered((current) => {
+        const edgeIndex = findEdgeIndexAtPoint(map, current.vertices, event.point, true);
         if (edgeIndex === null) return current;
         return insertVertex(current, edgeIndex, screenPointToCoordinate(map, event.point));
       });
@@ -214,7 +188,7 @@ export function ProgressRecorder({
       const index = findVertexIndexAtPoint(map, event.point);
       if (index === null) return;
       event.preventDefault();
-      setDraft((current) => removeVertexAt(current, index, minVertices));
+      setCovered((current) => removeVertexAt(current, index, COVERED_MIN_VERTICES));
     };
 
     map.on('mousedown', handleMouseDown);
@@ -234,21 +208,13 @@ export function ProgressRecorder({
       window.removeEventListener('mouseup', endDrag);
       endDrag();
     };
-  }, [mapReady, editing]);
+  }, [mapReady, adjusting]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    renderDraft(map, focusedDraft);
-    const other = focused === 'route' ? draftToPolygonGeoJSON(covered) : draftToLineStringGeoJSON(route);
-    renderSecondaryDraft(map, other);
-  }, [focused, focusedDraft, covered, route, mapReady]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
-    renderPausePoint(map, pausePoint);
-  }, [pausePoint, mapReady]);
+    renderDraft(map, covered);
+  }, [covered, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -271,27 +237,30 @@ export function ProgressRecorder({
     }
   }, [boundary, mapReady]);
 
+  const vertexCount = covered.vertices.length;
   const coveredReady = draftToPolygonGeoJSON(covered) !== null;
-  const hasAnything = covered.vertices.length > 0 || route.vertices.length > 0 || pausePoint !== null;
+  const hasAnything = vertexCount > 0 || note.trim() !== '';
 
-  function resetSession(): void {
+  function redraw(): void {
     setCovered(resetDraft());
-    setRoute(resetDraft());
-    setPausePoint(null);
-    setEditing(null);
-    setActiveTool(null);
+    setAdjusting(false);
+  }
+
+  function cancel(): void {
+    redraw();
+    setNote('');
     setBaselinePrompt(false);
+    setError(null);
   }
 
   async function save(baseline?: CoverageBaseline): Promise<void> {
-    const request = buildSessionRequest({ recordedBy: DEFAULT_ACTOR, covered, route, pausePoint, note, baseline });
+    const request = buildSessionRequest({ recordedBy: DEFAULT_ACTOR, covered, note, baseline });
     if (request === null) return;
     setSaving(true);
     setError(null);
     try {
       await recordProgress(territoryId, request);
-      resetSession();
-      setNote('');
+      cancel();
       onRecorded();
     } catch (caught) {
       if (caught instanceof ApiError && caught.code === 'baseline_required') {
@@ -307,121 +276,64 @@ export function ProgressRecorder({
     }
   }
 
-  function startTool(tool: Tool): void {
-    setEditing(null);
-    setActiveTool(tool);
-  }
-
   function statusText(): string {
-    if (editing !== null) {
-      return 'Arrastrá un punto para moverlo, hacé clic en un borde para agregar uno, doble clic en un punto para borrarlo.';
+    if (adjusting) {
+      return 'Arrastra un punto para moverlo, haz clic en un borde para agregar uno o doble clic en un punto para borrarlo. Pulsa “Listo” al terminar.';
     }
-    if (activeTool === 'covered') {
-      return covered.isClosed
-        ? 'Área cubierta cerrada. Editá sus vértices, agregá ruta o pausa, o guardá la sesión.'
-        : 'Hacé clic en el mapa para marcar el borde de lo que cubrieron hoy y después usá “Cerrar área cubierta”.';
+    if (covered.isClosed) return 'Área lista. Ya puedes guardar la sesión.';
+    if (vertexCount === 0) return 'Haz clic en el mapa para marcar el primer punto del área cubierta.';
+    if (vertexCount < COVERED_MIN_VERTICES) {
+      const missing = COVERED_MIN_VERTICES - vertexCount;
+      return `Sigue marcando puntos: ${missing === 1 ? 'falta 1' : `faltan ${missing}`} para poder cerrar el área.`;
     }
-    if (activeTool === 'route') return 'Hacé clic en el mapa para agregar puntos a la ruta.';
-    if (activeTool === 'pause') return 'Hacé clic en el mapa para marcar dónde se detuvieron.';
-    if (!hasAnything) return 'Elegí “Dibujar área cubierta” para comenzar la sesión.';
-    if (!coveredReady) return 'Falta cerrar el área cubierta: es obligatoria para guardar la sesión.';
-    return 'Sesión lista para guardar.';
+    return 'Cuando termines de marcar, pulsa “Cerrar área” para poder guardar la sesión.';
   }
 
   return (
     <section aria-labelledby="progress-recorder-heading">
       <h3 id="progress-recorder-heading">Registrar sesión</h3>
-      <p>
-        Dibujá el área que cubrieron en esta sesión (puede terminar a mitad de cuadra). El área pendiente se calcula sola.
-        El punto de pausa y la ruta son opcionales.
-      </p>
+      <p>Marca en el mapa lo que cubrieron en esta sesión. Lo que falta se calcula solo.</p>
 
       <div
         ref={containerRef}
         className="session-map"
         role="img"
         aria-label={`Mapa de la sesión: territorio, área pendiente y sesiones anteriores. ${
-          covered.vertices.length > 0
-            ? `Área cubierta: ${covered.vertices.length} punto(s)${covered.isClosed ? ', cerrada' : ''}.`
+          vertexCount > 0
+            ? `Área cubierta: ${vertexCount} punto(s)${covered.isClosed ? ', cerrada' : ''}.`
             : 'Todavía no hay área cubierta dibujada.'
-        }${route.vertices.length > 0 ? ` Ruta: ${route.vertices.length} punto(s).` : ''}`}
+        }`}
       />
       <p className="map-attribution">{OSM_ATTRIBUTION}</p>
 
       <div role="toolbar" aria-label="Herramientas de la sesión" className="map-toolbar">
-        <button
-          type="button"
-          className="primary"
-          onClick={() => {
-            if (covered.isClosed) setCovered(resetDraft());
-            startTool('covered');
-          }}
-          aria-pressed={activeTool === 'covered' && editing === null}
-        >
-          {covered.isClosed ? 'Redibujar área cubierta' : 'Dibujar área cubierta'}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setCovered((current) => closeDraft(current));
-            setActiveTool(null);
-          }}
-          disabled={covered.vertices.length < COVERED_MIN_VERTICES || covered.isClosed}
-        >
-          Cerrar área cubierta
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setEditing((current) => (current === 'covered' ? null : 'covered'));
-            setActiveTool(null);
-          }}
-          disabled={covered.vertices.length < COVERED_MIN_VERTICES}
-          aria-pressed={editing === 'covered'}
-        >
-          {editing === 'covered' ? 'Terminar edición del área' : 'Editar vértices del área'}
-        </button>
-        <button type="button" onClick={() => startTool('route')} aria-pressed={activeTool === 'route' && editing === null}>
-          Dibujar ruta
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setEditing((current) => (current === 'route' ? null : 'route'));
-            setActiveTool(null);
-          }}
-          disabled={route.vertices.length < ROUTE_MIN_VERTICES}
-          aria-pressed={editing === 'route'}
-        >
-          {editing === 'route' ? 'Terminar edición de la ruta' : 'Editar vértices de la ruta'}
-        </button>
-        <button type="button" onClick={() => startTool('pause')} aria-pressed={activeTool === 'pause'}>
-          Colocar pausa
-        </button>
-        <button type="button" onClick={() => setPausePoint(null)} disabled={pausePoint === null}>
-          Quitar pausa
-        </button>
-        <button
-          type="button"
-          onClick={() => setFocusedDraft((current) => undoVertex(current))}
-          disabled={focusedDraft.vertices.length === 0 || focusedDraft.isClosed || editing !== null}
-        >
-          Deshacer punto
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setRoute(resetDraft());
-            if (focused === 'route') setEditing(null);
-          }}
-          disabled={route.vertices.length === 0}
-        >
-          Quitar ruta
-        </button>
-        <button type="button" onClick={resetSession} disabled={!hasAnything}>
-          Cancelar sesión
-        </button>
+        {covered.isClosed ? (
+          <>
+            <button type="button" onClick={() => setAdjusting((current) => !current)} aria-pressed={adjusting}>
+              {adjusting ? 'Listo' : 'Ajustar puntos'}
+            </button>
+            <button type="button" onClick={redraw}>
+              Borrar y volver a dibujar
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" onClick={() => setCovered((current) => undoVertex(current))} disabled={vertexCount === 0}>
+              Deshacer punto
+            </button>
+            <button
+              type="button"
+              className="primary"
+              onClick={() => setCovered((current) => closeDraft(current))}
+              disabled={vertexCount < COVERED_MIN_VERTICES}
+            >
+              Cerrar área
+            </button>
+          </>
+        )}
       </div>
+
+      <p role="status">{statusText()}</p>
 
       <form
         onSubmit={(event) => {
@@ -431,11 +343,19 @@ export function ProgressRecorder({
         style={{ marginTop: '0.75rem' }}
       >
         <div>
-          <label htmlFor="progress-note">Nota (opcional)</label>
-          <input id="progress-note" value={note} onChange={(event) => setNote(event.target.value)} />
+          <label htmlFor="progress-note">Nota para el próximo grupo (opcional)</label>
+          <textarea
+            id="progress-note"
+            rows={2}
+            value={note}
+            aria-describedby={NOTE_HELP_ID}
+            onChange={(event) => setNote(event.target.value)}
+          />
+          <p id={NOTE_HELP_ID} className="editor-hint">
+            La verá quien tenga el enlace del territorio. Ej.: “Quedamos en la esquina de la Diagonal 57 con 19C”. No
+            escribas nombres ni datos de personas.
+          </p>
         </div>
-
-        <p role="status">{statusText()}</p>
 
         {baselinePrompt && (
           <div role="alertdialog" aria-labelledby="baseline-prompt-heading" className="baseline-prompt">
@@ -463,9 +383,14 @@ export function ProgressRecorder({
           </p>
         )}
 
-        <button type="submit" disabled={!coveredReady || saving || baselinePrompt}>
-          {saving ? 'Guardando…' : 'Guardar sesión'}
-        </button>
+        <div className="session-actions">
+          <button type="submit" className="primary" disabled={!coveredReady || saving || baselinePrompt}>
+            {saving ? 'Guardando…' : 'Guardar sesión'}
+          </button>
+          <button type="button" onClick={cancel} disabled={!hasAnything || saving}>
+            Cancelar
+          </button>
+        </div>
       </form>
     </section>
   );

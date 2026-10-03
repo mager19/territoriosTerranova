@@ -195,7 +195,8 @@ label {
 
 /* Dub's signature input: black border (inputs feel important), 6px radius,
    compact padding, Inter. */
-input {
+input,
+textarea {
   font-family: var(--font-body);
   font-size: 14px;
   color: var(--color-charcoal);
@@ -223,7 +224,8 @@ select:focus-visible {
   outline-offset: 1px;
 }
 
-input:focus-visible {
+input:focus-visible,
+textarea:focus-visible {
   outline: 2px solid var(--color-electric-blue);
   outline-offset: 1px;
 }
@@ -355,6 +357,19 @@ button[aria-current='true'] {
 .editor-hint {
   font-size: 12px;
   color: var(--color-fog);
+}
+
+textarea {
+  display: block;
+  resize: vertical;
+}
+
+/* Recorder footer: save is the primary action, cancel sits right beside it. */
+.session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 /* Session recorder: the detail page's main map, sized for drawing vertex by

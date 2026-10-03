@@ -111,19 +111,11 @@ describe('buildSessionRequest', () => {
   ];
 
   it('returns null until the covered area is a closed polygon — it is the required part of a session', () => {
-    expect(
-      buildSessionRequest({ recordedBy: 'admin', covered: draftOf(triangle, false), route: createDraft(), pausePoint: null, note: '' })
-    ).toBeNull();
+    expect(buildSessionRequest({ recordedBy: 'admin', covered: draftOf(triangle, false), note: '' })).toBeNull();
   });
 
-  it('sends the covered area only, never a remaining area, when nothing else was drawn', () => {
-    const request = buildSessionRequest({
-      recordedBy: 'admin',
-      covered: draftOf(triangle, true),
-      route: createDraft(),
-      pausePoint: null,
-      note: '   '
-    });
+  it('sends the covered area only, never a remaining area, when no note was written', () => {
+    const request = buildSessionRequest({ recordedBy: 'admin', covered: draftOf(triangle, true), note: '   ' });
 
     expect(request).toEqual({
       recordedBy: 'admin',
@@ -132,34 +124,21 @@ describe('buildSessionRequest', () => {
     expect(request).not.toHaveProperty('remainingArea');
   });
 
-  it('adds the trimmed note, baseline, pause point, and a route with at least two vertices', () => {
-    const pausePoint = { type: 'Point' as const, coordinates: [-75.5735, 6.3575] as [number, number] };
+  it('adds the trimmed note and the baseline — and never a route or pause point (removed 2026-10-03)', () => {
     const request = buildSessionRequest({
       recordedBy: 'admin',
       covered: draftOf(triangle, true),
-      route: draftOf([[-75.574, 6.357], [-75.5735, 6.3575]], false),
-      pausePoint,
       note: ' esquina norte ',
       baseline: 'whole_territory'
     });
 
-    expect(request).toMatchObject({
-      note: 'esquina norte',
-      baseline: 'whole_territory',
-      pausePoint,
-      route: { type: 'LineString', coordinates: [[-75.574, 6.357], [-75.5735, 6.3575]] }
-    });
-  });
-
-  it('omits a single-vertex route rather than sending an invalid LineString', () => {
-    const request = buildSessionRequest({
+    expect(request).toEqual({
       recordedBy: 'admin',
-      covered: draftOf(triangle, true),
-      route: draftOf([[-75.574, 6.357]], false),
-      pausePoint: null,
-      note: ''
+      coveredArea: { type: 'Polygon', coordinates: [[...triangle, triangle[0]]] },
+      note: 'esquina norte',
+      baseline: 'whole_territory'
     });
-
     expect(request).not.toHaveProperty('route');
+    expect(request).not.toHaveProperty('pausePoint');
   });
 });

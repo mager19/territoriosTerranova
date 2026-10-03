@@ -5,14 +5,10 @@
  * label. No MapLibre, no React — unit-tested in sessions.test.ts.
  */
 
-import type { FeatureCollection, LineString, MultiPolygon, Point, Polygon } from '@territorios/geo';
+import type { FeatureCollection, MultiPolygon, Polygon } from '@territorios/geo';
 
 import type { CoverageBaseline, ProgressEntry, RecordSessionInput } from '../../api/client.js';
-import {
-  draftToLineStringGeoJSON,
-  draftToPolygonGeoJSON,
-  type DraftState
-} from '../territory-editor/draft.js';
+import { draftToPolygonGeoJSON, type DraftState } from '../territory-editor/draft.js';
 
 /**
  * Distinct, map-legible hues for consecutive sessions. None is the draft
@@ -101,29 +97,25 @@ export function formatProgressPercent(percent: number | null): string {
 export interface SessionDraftInput {
   readonly recordedBy: string;
   readonly covered: DraftState;
-  readonly route: DraftState;
-  readonly pausePoint: Point | null;
   readonly note: string;
   readonly baseline?: CoverageBaseline;
 }
 
 /**
  * The POST body for a new session, or null while the covered area — the one
- * required part — is not a closed polygon yet. The route is included only
- * once it is a real LineString (>= 2 vertices); never a remaining area,
- * which only the server computes.
+ * required part — is not a closed polygon yet. Never a remaining area,
+ * which only the server computes. The recorder no longer captures a route
+ * or a pause point (2026-10-03 product decision); the API still accepts
+ * them as optional fields, but this request never sends them.
  */
 export function buildSessionRequest(input: SessionDraftInput): RecordSessionInput | null {
   const coveredArea = draftToPolygonGeoJSON(input.covered);
   if (coveredArea === null) return null;
-  const route: LineString | null = draftToLineStringGeoJSON(input.route);
   const note = input.note.trim();
   return {
     recordedBy: input.recordedBy,
     coveredArea,
     ...(note === '' ? {} : { note }),
-    ...(input.baseline === undefined ? {} : { baseline: input.baseline }),
-    ...(input.pausePoint === null ? {} : { pausePoint: input.pausePoint }),
-    ...(route === null ? {} : { route })
+    ...(input.baseline === undefined ? {} : { baseline: input.baseline })
   };
 }
