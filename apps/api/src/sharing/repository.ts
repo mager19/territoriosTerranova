@@ -157,8 +157,6 @@ export interface PublicTerritoryView {
 }
 
 interface PublicViewRow {
-  readonly revoked_at: string | null;
-  readonly expires_at: string | null;
   readonly territory_name: string;
   readonly boundary: Polygon;
   readonly remaining_area: Polygon | MultiPolygon | null;
@@ -168,30 +166,19 @@ interface PublicViewRow {
 }
 
 /**
- * Resolves a plaintext token to the public, allowlisted view — or `null`
- * for every unauthorized reason alike (nonexistent, revoked, expired).
- * Callers MUST turn `null` into an identical 404 regardless of cause
- * (A4 brief hard constraint).
+ * The public view's columns, all derived from `t` (territories) and the
+ * laterals below — ONE definition shared by the token and the slug lookup,
+ * so the two public routes can never drift apart in what they expose.
  */
-export async function resolvePublicTerritoryView(
-  pool: TransactionalPool,
-  plaintextToken: string
-): Promise<PublicTerritoryView | null> {
-  const tokenHash = hashShareToken(plaintextToken);
-
-  return withTransaction(pool, async (client) => {
-    const { rows } = await client.query<PublicViewRow>(
-      `SELECT
-         st.revoked_at,
-         st.expires_at,
+const PUBLIC_VIEW_COLUMNS = `
          t.name AS territory_name,
          ST_AsGeoJSON(tr.geom)::json AS boundary,
          ST_AsGeoJSON(coverage.remaining_area)::json AS remaining_area,
          ST_AsGeoJSON(pe.route)::json AS route,
          latest.note,
-         ST_AsGeoJSON(covered.covered_area)::json AS covered_area
-       FROM share_tokens st
-       JOIN territories t ON t.id = st.territory_id
+         ST_AsGeoJSON(covered.covered_area)::json AS covered_area`;
+
+const PUBLIC_VIEW_JOINS = `
        JOIN LATERAL (
          SELECT geom
          FROM territory_revisions
@@ -245,7 +232,39 @@ export async function resolvePublicTerritoryView(
           WHERE territory_id = t.id
             AND covered_area IS NOT NULL
             AND recorded_at >= cycle_start.started_at
-        ) covered ON TRUE
+        ) covered ON TRUE`;
+
+function toPublicView(row: PublicViewRow): PublicTerritoryView {
+  return {
+    territoryName: row.territory_name,
+    boundary: row.boundary,
+    remainingArea: row.remaining_area,
+    remainingAreaStatus: row.remaining_area === null ? 'unknown' : 'recorded',
+    route: row.route,
+    note: row.note,
+    coveredArea: row.covered_area
+  };
+}
+
+/**
+ * Resolves a plaintext token to the public, allowlisted view — or `null`
+ * for every unauthorized reason alike (nonexistent, revoked, expired).
+ * Callers MUST turn `null` into an identical 404 regardless of cause
+ * (A4 brief hard constraint).
+ */
+export async function resolvePublicTerritoryView(
+  pool: TransactionalPool,
+  plaintextToken: string
+): Promise<PublicTerritoryView | null> {
+  const tokenHash = hashShareToken(plaintextToken);
+
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<PublicViewRow & { revoked_at: string | null; expires_at: string | null }>(
+      `SELECT
+         st.revoked_at,
+         st.expires_at,${PUBLIC_VIEW_COLUMNS}
+       FROM share_tokens st
+       JOIN territories t ON t.id = st.territory_id${PUBLIC_VIEW_JOINS}
        WHERE st.token_hash = $1`,
       [tokenHash]
     );
@@ -261,14 +280,35 @@ export async function resolvePublicTerritoryView(
       return null;
     }
 
-    return {
-      territoryName: row.territory_name,
-      boundary: row.boundary,
-      remainingArea: row.remaining_area,
-      remainingAreaStatus: row.remaining_area === null ? 'unknown' : 'recorded',
-      route: row.route,
-      note: row.note,
-      coveredArea: row.covered_area
-    };
+    return toPublicView(row);
+  });
+}
+
+/** What a slug may look like before it is ever sent to the database (apps/public validates the same). */
+export const PUBLIC_SLUG_PATTERN = /^[a-z0-9-]{1,80}$/;
+
+/**
+ * Resolves a territory's fixed public slug (`/t/<slug>`, 2026-10-03 product
+ * decision, AGENTS.md "Privacy rules") to the SAME allowlisted view the
+ * token lookup returns — or `null` when no territory has that slug. Like
+ * the token route, it does not filter on territory status.
+ */
+export async function resolvePublicTerritoryViewBySlug(
+  pool: TransactionalPool,
+  slug: string
+): Promise<PublicTerritoryView | null> {
+  if (!PUBLIC_SLUG_PATTERN.test(slug)) {
+    return null;
+  }
+
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<PublicViewRow>(
+      `SELECT${PUBLIC_VIEW_COLUMNS}
+       FROM territories t${PUBLIC_VIEW_JOINS}
+       WHERE t.slug = $1`,
+      [slug]
+    );
+    const row = rows[0];
+    return row ? toPublicView(row) : null;
   });
 }

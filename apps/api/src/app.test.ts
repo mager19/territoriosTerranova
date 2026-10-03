@@ -101,12 +101,14 @@ describe('CORS', () => {
     );
   }
 
-  it('lets the configured public app read the public share endpoint, without credentials', async () => {
+  const PUBLIC_URLS = ['/public/territories/some-token', '/public/t/some-slug'];
+
+  it.each(PUBLIC_URLS)('lets the configured public app read %s, without credentials', async (url) => {
     app = await buildCorsApp();
 
     const response = await app.inject({
       method: 'GET',
-      url: '/public/territories/some-token',
+      url,
       headers: { origin: PUBLIC_ORIGIN }
     });
 
@@ -119,30 +121,30 @@ describe('CORS', () => {
     expect(response.headers['referrer-policy']).toBe('no-referrer');
   });
 
-  it('answers the public endpoint preflight for the configured origin only', async () => {
+  it.each(PUBLIC_URLS)('answers the %s preflight for the configured origin only', async (url) => {
     app = await buildCorsApp();
 
     const allowed = await app.inject({
       method: 'OPTIONS',
-      url: '/public/territories/some-token',
+      url,
       headers: { origin: PUBLIC_ORIGIN, 'access-control-request-method': 'GET' }
     });
     expect(allowed.headers['access-control-allow-origin']).toBe(PUBLIC_ORIGIN);
 
     const other = await app.inject({
       method: 'OPTIONS',
-      url: '/public/territories/some-token',
+      url,
       headers: { origin: 'https://evil.example', 'access-control-request-method': 'GET' }
     });
     expect(other.headers['access-control-allow-origin']).toBeUndefined();
   });
 
-  it('gives no CORS grant to any other origin', async () => {
+  it.each(PUBLIC_URLS)('gives no CORS grant on %s to any other origin', async (url) => {
     app = await buildCorsApp();
 
     const response = await app.inject({
       method: 'GET',
-      url: '/public/territories/some-token',
+      url,
       headers: { origin: 'https://evil.example' }
     });
 
