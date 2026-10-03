@@ -158,7 +158,7 @@ function lastData(source: string): { features: { properties: Record<string, unkn
 
 async function renderRecorder(
   onRecorded: () => void = () => undefined,
-  props: { boundary?: Polygon | null; remainingArea?: Polygon | MultiPolygon | null } = {}
+  props: { boundary?: Polygon | MultiPolygon | null; remainingArea?: Polygon | MultiPolygon | null } = {}
 ): Promise<void> {
   host = document.createElement('div');
   document.body.append(host);
@@ -507,6 +507,37 @@ describe('ProgressRecorder', () => {
 
       expect(buttonByText('Guardar sesión').disabled).toBe(false);
       expect(statusText()).not.toContain('quedan fuera');
+    });
+  });
+
+  describe('multi-part territory boundary (0012)', () => {
+    /** Two parts: BOUNDARY and a second 60 x 60 px square at screen (200,50)-(260,110). */
+    const TWO_PARTS: MultiPolygon = {
+      type: 'MultiPolygon',
+      coordinates: [BOUNDARY.coordinates, [[at(200, 50), at(260, 50), at(260, 110), at(200, 110), at(200, 50)]]]
+    };
+
+    it('renders every part as the territory boundary', async () => {
+      await renderRecorder(undefined, { boundary: TWO_PARTS });
+      expect(lastData('saved-territory').features[0]?.geometry).toEqual(TWO_PARTS);
+    });
+
+    it('counts a vertex inside ANY part as inside, and one in the gap between parts as outside', async () => {
+      await renderRecorder(undefined, { boundary: TWO_PARTS });
+
+      await clickMap(220, 70);
+      await clickMap(240, 70);
+      await clickMap(140, 70);
+
+      const vertices = lastData('draft-territory').features.filter((feature) => feature.geometry.type === 'Point');
+      expect(vertices.map((feature) => feature.properties?.outside)).toEqual([false, false, true]);
+    });
+
+    it('snaps to a vertex of the second part', async () => {
+      await renderRecorder(undefined, { boundary: TWO_PARTS });
+      await clickMap(257, 107);
+      const vertices = lastData('draft-territory').features.filter((feature) => feature.geometry.type === 'Point');
+      expect(vertices.map((feature) => feature.geometry.coordinates)).toEqual([at(260, 110)]);
     });
   });
 });

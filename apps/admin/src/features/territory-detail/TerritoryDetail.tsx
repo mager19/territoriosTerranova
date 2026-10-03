@@ -15,13 +15,13 @@ import { ProgressList } from './ProgressList.js';
 import { ProgressRecorder } from './ProgressRecorder.js';
 import { TerritoryTopBar } from './TerritoryTopBar.js';
 import { currentCycleSessions } from './sessions.js';
-import type { Polygon } from '@territorios/geo';
+import type { TerritoryGeometry } from '@territorios/geo';
 
 export interface TerritoryDetailProps {
   readonly territoryId: number;
   /** Fixed public slug, for the share panel's `/t/<slug>` link. */
   readonly slug: string;
-  readonly boundary: Polygon | null;
+  readonly boundary: TerritoryGeometry | null;
   readonly refreshToken: number;
   /** Forwarded up to App so the map (TerritoryEditor) can render it as an overlay. */
   readonly onRemainingAreaChange: (geometry: ProgressEntry['remainingArea']) => void;

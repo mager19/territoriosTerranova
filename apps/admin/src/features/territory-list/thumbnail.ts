@@ -8,7 +8,7 @@
  * no WebGL, deterministic and side-effect-free (no DOM, no MapLibre).
  */
 
-import type { Polygon } from '@territorios/geo';
+import { polygonParts, type Polygon, type TerritoryGeometry } from '@territorios/geo';
 
 /** The outer ring's points mapped into an SVG viewBox. */
 export interface ThumbnailSvg {
@@ -18,34 +18,47 @@ export interface ThumbnailSvg {
   readonly points: string;
 }
 
+/** Every part of a (multi-part) territory mapped into ONE shared SVG viewBox. */
+export interface MultiThumbnailSvg {
+  readonly viewBox: string;
+  /** One `<polygon points>` string per part, in part order. */
+  readonly parts: readonly string[];
+}
+
 /** Small inset (in SVG units) so the polygon never touches the viewBox edge. */
 const PADDING = 8;
 
 /**
- * Map a territory polygon to an SVG polygon string.
+ * Map a territory geometry — every part of a MultiPolygon (0012) — to SVG
+ * polygon strings sharing one viewBox, so the parts keep their real
+ * relative positions and the gap between them.
  *
- * Reads ONLY the outer ring (`coordinates[0]`; territories have no holes),
- * computes the lon/lat bounding box, then linearly maps lon→x and lat→y with
- * the Y axis flipped (north is up). Aspect ratio is preserved by using a
- * single uniform scale for both axes; the result is centered in the viewBox
- * with a small padding so it is never clipped.
+ * Reads ONLY each part's outer ring (`coordinates[0]`; territories have no
+ * holes), computes the lon/lat bounding box over all parts, then linearly
+ * maps lon→x and lat→y with the Y axis flipped (north is up). Aspect ratio
+ * is preserved by using a single uniform scale for both axes; the result is
+ * centered in the viewBox with a small padding so it is never clipped.
  */
-export function polygonToThumbnail(polygon: Polygon, width = 120, height = 120): ThumbnailSvg {
+export function geometryToThumbnail(geometry: TerritoryGeometry, width = 120, height = 120): MultiThumbnailSvg {
   const viewBox = `0 0 ${width} ${height}`;
-  const ring = polygon.coordinates[0];
-  if (!ring || ring.length === 0) {
-    return { viewBox, points: '' };
+  const rings = polygonParts(geometry)
+    .map((part) => part.coordinates[0])
+    .filter((ring) => ring !== undefined && ring.length > 0);
+  if (rings.length === 0) {
+    return { viewBox, parts: [] };
   }
 
   let minLon = Infinity;
   let maxLon = -Infinity;
   let minLat = Infinity;
   let maxLat = -Infinity;
-  for (const [lon, lat] of ring) {
-    if (lon < minLon) minLon = lon;
-    if (lon > maxLon) maxLon = lon;
-    if (lat < minLat) minLat = lat;
-    if (lat > maxLat) maxLat = lat;
+  for (const ring of rings) {
+    for (const [lon, lat] of ring) {
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
   }
 
   const lonSpan = maxLon - minLon;
@@ -66,14 +79,22 @@ export function polygonToThumbnail(polygon: Polygon, width = 120, height = 120):
   const offsetX = (width - drawnWidth) / 2;
   const offsetY = (height - drawnHeight) / 2;
 
-  const points = ring
-    .map(([lon, lat]) => {
-      const x = offsetX + (lon - minLon) * scale;
-      // Flip Y: larger latitude (north) maps to a smaller SVG y.
-      const y = offsetY + (maxLat - lat) * scale;
-      return `${x},${y}`;
-    })
-    .join(' ');
+  const parts = rings.map((ring) =>
+    ring
+      .map(([lon, lat]) => {
+        const x = offsetX + (lon - minLon) * scale;
+        // Flip Y: larger latitude (north) maps to a smaller SVG y.
+        const y = offsetY + (maxLat - lat) * scale;
+        return `${x},${y}`;
+      })
+      .join(' ')
+  );
 
-  return { viewBox, points };
+  return { viewBox, parts };
+}
+
+/** Single-polygon form of geometryToThumbnail (one part, one points string). */
+export function polygonToThumbnail(polygon: Polygon, width = 120, height = 120): ThumbnailSvg {
+  const { viewBox, parts } = geometryToThumbnail(polygon, width, height);
+  return { viewBox, points: parts[0] ?? '' };
 }

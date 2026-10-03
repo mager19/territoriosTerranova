@@ -21,7 +21,7 @@ import {
   BELLO_ZOOM,
   findEdgeIndexAtPoint,
   findVertexIndexAtPoint,
-  fitToPolygon,
+  fitToGeometry,
   installEditorLayers,
   installSessionLayers,
   installSnapIndicatorLayer,
@@ -35,11 +35,12 @@ import {
 import type { Coordinate } from '../territory-editor/draft.js';
 import { buildSessionRequest, sessionFeatureCollection, type CoverageSession } from './sessions.js';
 import { findOutsideVertexIndices, snapCoordinate } from '../territory-editor/snap.js';
-import type { MultiPolygon, Polygon } from '@territorios/geo';
+import type { MultiPolygon, Polygon, TerritoryGeometry } from '@territorios/geo';
 
 export interface ProgressRecorderProps {
   readonly territoryId: number;
-  readonly boundary: Polygon | null;
+  /** The territory boundary: a Polygon, or a MultiPolygon for a multi-part territory (0012). */
+  readonly boundary: TerritoryGeometry | null;
   /** Latest remaining area of the current cycle (empty polygon = nothing left, null = unknown). */
   readonly remainingArea?: Polygon | MultiPolygon | null;
   /** Earlier sessions of the current cycle, drawn in their own colors. */
@@ -81,12 +82,18 @@ const RECORDER_ERRORS_ES: Record<string, string> = {
  * the server's own out_of_bounds rule. Insert-on-edge in "Ajustar puntos"
  * does not snap: it inserts on the draft's own edge by design.
  *
+ * Multi-part territories (0012): the boundary may be a MultiPolygon. Every
+ * part is rendered, the view fits all of them, every part's vertices and
+ * edges are snap targets, and a vertex counts as inside when it lies in ANY
+ * part. One session draws one covered shape, so a session covers one part
+ * at a time (a shape spanning the gap between parts is outside).
+ *
  * Baseline: when the cycle has no remaining area yet, the server answers
  * `baseline_required`. That turns into an in-page confirmation (never a
  * browser dialog); only an explicit "yes" resends the session with
  * `baseline: 'whole_territory'`.
  */
-type SnapSourcesValue = { boundary: Polygon | null; remainingArea: Polygon | MultiPolygon | null };
+type SnapSourcesValue = { boundary: TerritoryGeometry | null; remainingArea: Polygon | MultiPolygon | null };
 
 /** The snapped coordinate under a screen point, or null when nothing is within tolerance. */
 function findSnap(map: MapLibreMap, point: { x: number; y: number }, sources: SnapSourcesValue): Coordinate | null {
@@ -281,7 +288,7 @@ export function ProgressRecorder({
     if (!map || !mapReady) return;
     renderSavedTerritory(map, boundary);
     if (boundary) {
-      fitToPolygon(map, boundary);
+      fitToGeometry(map, boundary);
     }
   }, [boundary, mapReady]);
 

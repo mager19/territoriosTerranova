@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MultiPolygon, Polygon } from '@territorios/geo';
 
-import { findOutsideVertexIndices, snapCoordinate, snapToGeometries, SNAP_TOLERANCE_PX, type Projector } from './snap.js';
+import { findOutsideVertexIndices, isInsideGeometry, snapCoordinate, snapToGeometries, SNAP_TOLERANCE_PX, type Projector } from './snap.js';
 
 /** 1 degree = 1000 px on both axes, y grows with latitude — enough to reason about pixels by hand. */
 const project: Projector = ([lng, lat]) => ({ x: lng * 1000, y: lat * 1000 });
@@ -177,5 +177,33 @@ describe('findOutsideVertexIndices', () => {
       ]
     };
     expect(findOutsideVertexIndices([[0.01, 0.01], [0.002, 0.002]], withHole)).toEqual([0]);
+  });
+});
+
+describe('multi-part boundaries (2026-10-03)', () => {
+  // Two disjoint parts: the 40 px square and a square at (100,0)-(140,40).
+  const TWO_PARTS: MultiPolygon = {
+    type: 'MultiPolygon',
+    coordinates: [BOUNDARY.coordinates, [[[0.1, 0], [0.14, 0], [0.14, 0.04], [0.1, 0.04], [0.1, 0]]]]
+  };
+
+  it('treats a vertex inside ANY part as inside, and one in the gap between parts as outside', () => {
+    const vertices: [number, number][] = [
+      [0.02, 0.02], // inside part 1
+      [0.12, 0.02], // inside part 2
+      [0.07, 0.02] // the gap (the creek)
+    ];
+    expect(findOutsideVertexIndices(vertices, TWO_PARTS)).toEqual([2]);
+  });
+
+  it('isInsideGeometry answers for a Polygon and for each MultiPolygon part', () => {
+    expect(isInsideGeometry([0.02, 0.02], BOUNDARY)).toBe(true);
+    expect(isInsideGeometry([0.12, 0.02], TWO_PARTS)).toBe(true);
+    expect(isInsideGeometry([0.07, 0.02], TWO_PARTS)).toBe(false);
+  });
+
+  it('snaps the session recorder to a vertex of the second boundary part', () => {
+    const snap = snapCoordinate({ x: 143, y: 42 }, { boundary: TWO_PARTS, remainingArea: null }, project);
+    expect(snap).toEqual({ coordinate: [0.14, 0.04], kind: 'vertex' });
   });
 });

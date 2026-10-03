@@ -16,7 +16,7 @@
  */
 
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
-import type { Feature, FeatureCollection, Geometry, MultiPolygon, Polygon, Position } from '@territorios/geo';
+import type { Feature, FeatureCollection, Geometry, MultiPolygon, Polygon, Position, TerritoryGeometry } from '@territorios/geo';
 
 import type { Coordinate, DraftState } from './draft.js';
 
@@ -257,8 +257,8 @@ export function renderDraft(map: MapLibreMap, draft: DraftState, outsideIndices:
   source.setData({ type: 'FeatureCollection', features });
 }
 
-/** Renders the persisted (server-confirmed) territory boundary, or clears it when there is none yet. */
-export function renderSavedTerritory(map: MapLibreMap, geometry: Polygon | null): void {
+/** Renders the persisted (server-confirmed) territory boundary — every part of a multi-part territory — or clears it when there is none yet. */
+export function renderSavedTerritory(map: MapLibreMap, geometry: TerritoryGeometry | null): void {
   const source = asGeoJsonSource(map.getSource('saved-territory'));
   if (!source) return;
   source.setData(
@@ -341,6 +341,48 @@ export function installSessionLayers(map: MapLibreMap): void {
 }
 
 /**
+ * The territory's OTHER parts while drawing a multi-part territory
+ * (2026-10-03, option A): the closed parts that are not the active one, in
+ * the draft orange but solid and lighter, below the active draft layers.
+ * Each feature carries its `partIndex`; the editor selects a part by
+ * testing the click against these polygons. Call after installEditorLayers.
+ */
+export function installDraftPartsLayer(map: MapLibreMap): void {
+  map.addSource('draft-other-parts', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer(
+    {
+      id: 'draft-other-parts-fill',
+      type: 'fill',
+      source: 'draft-other-parts',
+      paint: { 'fill-color': '#e08a2e', 'fill-opacity': 0.18 }
+    },
+    'draft-territory-fill'
+  );
+  map.addLayer(
+    {
+      id: 'draft-other-parts-line',
+      type: 'line',
+      source: 'draft-other-parts',
+      paint: { 'line-color': '#a85a12', 'line-width': 2 }
+    },
+    'draft-territory-fill'
+  );
+}
+
+/** Renders the inactive parts of the draft (see installDraftPartsLayer), or clears the layer. */
+export function renderDraftOtherParts(
+  map: MapLibreMap,
+  parts: readonly { readonly index: number; readonly polygon: Polygon }[]
+): void {
+  const source = asGeoJsonSource(map.getSource('draft-other-parts'));
+  if (!source) return;
+  source.setData({
+    type: 'FeatureCollection',
+    features: parts.map(({ index, polygon }) => ({ type: 'Feature', properties: { partIndex: index }, geometry: polygon }))
+  });
+}
+
+/**
  * The OTHER territories, for the territory editor (2026-10-03): a faint
  * thin grey outline, no fill, below every other editor layer — just enough
  * to show what the draft snaps to, never confusable with the saved (teal),
@@ -360,8 +402,8 @@ export function installNeighborTerritoriesLayer(map: MapLibreMap): void {
   );
 }
 
-/** Renders the neighbouring territories' outlines, or clears the layer. */
-export function renderNeighborTerritories(map: MapLibreMap, geometries: readonly Polygon[]): void {
+/** Renders the neighbouring territories' outlines (multi-part ones with every part), or clears the layer. */
+export function renderNeighborTerritories(map: MapLibreMap, geometries: readonly TerritoryGeometry[]): void {
   const source = asGeoJsonSource(map.getSource('neighbor-territories'));
   if (!source) return;
   source.setData({
@@ -409,34 +451,14 @@ export function renderSessions(map: MapLibreMap, sessions: FeatureCollection): v
   source.setData(sessions);
 }
 
-/** Centers and fits the map to a polygon's bounding box, WGS84 in, WGS84 bounds out. */
-export function fitToPolygon(map: MapLibreMap, geometry: Polygon): void {
-  const positions: readonly Position[] = geometry.coordinates.flat();
-  const first = positions[0];
-  if (!first) return;
-
-  let west = first[0];
-  let east = first[0];
-  let south = first[1];
-  let north = first[1];
-  for (const [lon, lat] of positions) {
-    west = Math.min(west, lon);
-    east = Math.max(east, lon);
-    south = Math.min(south, lat);
-    north = Math.max(north, lat);
-  }
-  map.fitBounds(
-    [
-      [west, south],
-      [east, north]
-    ],
-    { padding: 48, animate: false }
-  );
-}
-
-/** Same bbox-fit as fitToPolygon, one nesting level deeper for MultiPolygon's extra "which part" level. */
-export function fitToMultiPolygon(map: MapLibreMap, geometry: MultiPolygon): void {
-  const positions: readonly Position[] = geometry.coordinates.flat(2);
+/**
+ * Centers and fits the map to the bounding box over EVERY part of a Polygon
+ * or MultiPolygon (a multi-part territory, or an AMVA barrio), WGS84 in,
+ * WGS84 bounds out.
+ */
+export function fitToGeometry(map: MapLibreMap, geometry: Polygon | MultiPolygon): void {
+  const positions: readonly Position[] =
+    geometry.type === 'Polygon' ? geometry.coordinates.flat() : geometry.coordinates.flat(2);
   const first = positions[0];
   if (!first) return;
 

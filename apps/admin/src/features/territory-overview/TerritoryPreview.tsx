@@ -7,7 +7,7 @@ import { ApiError, describeApiError, getTerritory, type TerritoryWithRevisions }
 import {
   BELLO_CENTER,
   BELLO_ZOOM,
-  fitToPolygon,
+  fitToGeometry,
   installEditorLayers,
   renderSavedTerritory
 } from '../territory-editor/map-editor.js';
@@ -104,7 +104,7 @@ export function TerritoryPreview({ territoryId, onClose }: TerritoryPreviewProps
     if (!map || !mapReady) return;
     renderSavedTerritory(map, currentGeometry);
     if (currentGeometry) {
-      fitToPolygon(map, currentGeometry);
+      fitToGeometry(map, currentGeometry);
     }
   }, [currentGeometry, mapReady]);
 

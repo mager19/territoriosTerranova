@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Polygon } from '@territorios/geo';
+import type { MultiPolygon, Polygon } from '@territorios/geo';
 
-import { polygonToThumbnail } from './thumbnail.js';
+import { geometryToThumbnail, polygonToThumbnail } from './thumbnail.js';
 
 function bounds(points: string): { minX: number; maxX: number; minY: number; maxY: number } {
   const coords = points.split(' ').map((pair) => pair.split(',').map(Number));
@@ -105,5 +105,33 @@ describe('polygonToThumbnail', () => {
 
   it('is deterministic for the same input', () => {
     expect(polygonToThumbnail(square)).toEqual(polygonToThumbnail(square));
+  });
+});
+
+describe('geometryToThumbnail (multi-part territories)', () => {
+  it('draws a Polygon exactly like polygonToThumbnail', () => {
+    expect(geometryToThumbnail(square).parts).toEqual([polygonToThumbnail(square).points]);
+  });
+
+  it('draws every part of a MultiPolygon in one shared viewBox, keeping the gap between them', () => {
+    // Two 2x2 squares side by side with a 2-unit gap: total span 6 x 2.
+    const twoParts: MultiPolygon = {
+      type: 'MultiPolygon',
+      coordinates: [
+        square.coordinates,
+        [[[4, 0], [6, 0], [6, 2], [4, 2], [4, 0]]]
+      ]
+    };
+    const { viewBox, parts } = geometryToThumbnail(twoParts);
+    expect(viewBox).toBe('0 0 120 120');
+    expect(parts).toHaveLength(2);
+
+    const left = bounds(parts[0]!);
+    const right = bounds(parts[1]!);
+    // The wider axis (6 units) fills 8..112; each square spans a third of it.
+    expect(left.minX).toBe(8);
+    expect(right.maxX).toBe(112);
+    expect(right.minX - left.maxX).toBeCloseTo(104 / 3, 6);
+    expect(left.minY).toBe(right.minY);
   });
 });

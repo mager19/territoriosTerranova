@@ -6,7 +6,7 @@
  * string.
  */
 
-import type { LineString, MultiPolygon, Point, Polygon } from '@territorios/geo';
+import type { LineString, MultiPolygon, Point, Polygon, TerritoryGeometry } from '@territorios/geo';
 
 /**
  * Same-origin API prefix (docs/admin-auth.md): Vite's dev server proxies
@@ -33,7 +33,7 @@ export interface TerritoryRevision {
   readonly id: number;
   readonly territoryId: number;
   readonly revisionNumber: number;
-  readonly geometry: Polygon;
+  readonly geometry: TerritoryGeometry;
   readonly author: string;
   readonly createdAt: string;
 }
@@ -51,7 +51,7 @@ export interface Territory {
 
 /** A territory as returned by the list endpoint: `Territory` plus the current revision's geometry for a static SVG thumbnail (null when it has no revisions). */
 export interface TerritoryListItem extends Territory {
-  readonly geometry: Polygon | null;
+  readonly geometry: TerritoryGeometry | null;
   readonly operationalState: OperationalState;
 }
 
@@ -192,7 +192,7 @@ export function getTerritory(id: number): Promise<TerritoryWithRevisions> {
 
 export function createTerritory(input: {
   name: string;
-  geometry: Polygon;
+  geometry: TerritoryGeometry;
   number?: string;
 }): Promise<TerritoryWithRevisions> {
   return request('/admin/territories', { method: 'POST', body: JSON.stringify(input) });
@@ -200,7 +200,7 @@ export function createTerritory(input: {
 
 export function submitRevision(
   territoryId: number,
-  input: { geometry: Polygon }
+  input: { geometry: TerritoryGeometry }
 ): Promise<TerritoryRevision> {
   return request(`/admin/territories/${territoryId}/revisions`, {
     method: 'POST',
@@ -319,9 +319,10 @@ export function searchReferenceBarrios(name: string): Promise<{ barrios: readonl
  * to the raw server message rather than showing nothing.
  */
 const ERROR_MESSAGES_ES: Record<string, string> = {
-  invalid_geometry: 'La geometría no es válida.',
-  zero_area_geometry: 'La geometría no tiene área real.',
-  out_of_bounds: 'La forma queda fuera del límite municipal de Bello.',
+  invalid_geometry:
+    'La geometría no es válida: revisa que el contorno no se cruce y que las partes no se superpongan ni compartan un borde.',
+  zero_area_geometry: 'La geometría (o alguna de sus partes) no tiene área real.',
+  out_of_bounds: 'La forma (o alguna de sus partes) queda fuera del límite municipal de Bello.',
   invalid_request: 'Faltan datos o el formato no es válido.',
   territory_not_found: 'Ese territorio no existe.',
   unauthorized_overlap: 'Esta forma se superpone con otro territorio activo.',

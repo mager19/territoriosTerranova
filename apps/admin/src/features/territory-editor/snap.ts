@@ -30,7 +30,8 @@ export interface ScreenPoint {
 export type Projector = (coordinate: Coordinate) => ScreenPoint;
 
 export interface SnapSources {
-  readonly boundary: Polygon | null;
+  /** The territory boundary: every part of a multi-part territory (0012) is a snap target. */
+  readonly boundary: Polygon | MultiPolygon | null;
   /** Current remaining area of the cycle; null (unknown) or an empty polygon (nothing left) contributes nothing. */
   readonly remainingArea: Polygon | MultiPolygon | null;
 }
@@ -213,16 +214,27 @@ function isInsidePolygon(p: Coordinate, polygon: Polygon): boolean {
 }
 
 /**
+ * Whether a point lies inside (or on the edge of) a Polygon, or inside ANY
+ * part of a MultiPolygon — a multi-part territory (0012) is "inside" when a
+ * point falls in any of its parts, never in the gap between them.
+ */
+export function isInsideGeometry(p: Coordinate, geometry: Polygon | MultiPolygon): boolean {
+  if (geometry.type === 'Polygon') return isInsidePolygon(p, geometry);
+  return geometry.coordinates.some((rings) => isInsidePolygon(p, { type: 'Polygon', coordinates: rings }));
+}
+
+/**
  * Indices of draft vertices that lie outside the territory boundary — a
  * client pre-check so the administrator sees which points to move before
  * the server rejects the session. Points on the boundary (within ~0.1 mm)
- * count as inside. No boundary: nothing can be judged, nothing is flagged.
+ * count as inside; for a multi-part territory, inside any part counts. No
+ * boundary: nothing can be judged, nothing is flagged.
  */
-export function findOutsideVertexIndices(vertices: readonly Coordinate[], boundary: Polygon | null): number[] {
+export function findOutsideVertexIndices(vertices: readonly Coordinate[], boundary: Polygon | MultiPolygon | null): number[] {
   if (boundary === null || boundary.coordinates.length === 0) return [];
   const outside: number[] = [];
   vertices.forEach((vertex, index) => {
-    if (!isInsidePolygon(vertex, boundary)) outside.push(index);
+    if (!isInsideGeometry(vertex, boundary)) outside.push(index);
   });
   return outside;
 }
