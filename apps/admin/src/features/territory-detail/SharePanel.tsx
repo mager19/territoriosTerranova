@@ -79,7 +79,7 @@ export function SharePanel({ territoryId }: SharePanelProps): JSX.Element {
   return (
     <section aria-labelledby="share-heading">
       <h3 id="share-heading">Compartir</h3>
-      <p>Envía este link al grupo de voluntarios. Cualquiera que lo tenga puede ver el territorio y registrar progreso.</p>
+      <p>Envía este link al grupo de voluntarios. Cualquiera que lo tenga puede ver el territorio en el mapa.</p>
 
       <button type="button" className="primary" onClick={() => void handleShare()} disabled={busy}>
         Compartir este territorio
@@ -88,23 +88,36 @@ export function SharePanel({ territoryId }: SharePanelProps): JSX.Element {
       {error && <p role="alert">{error}</p>}
 
       {tokens.length > 0 && (
-        <ul>
+        <ul className="share-links">
           {tokens.map((issued) => (
-            <li key={issued.id}>
+            <li key={issued.id} className="share-link">
               {issued.revoked ? (
                 <span>Link revocado (creado el {new Date(issued.createdAt).toLocaleString()})</span>
               ) : (
                 <>
-                  <input readOnly value={linkFor(issued.token)} aria-label="Link para compartir" />
-                  <a href={linkFor(issued.token)} target="_blank" rel="noopener noreferrer">
-                    Abrir
-                  </a>
-                  <button type="button" onClick={() => void handleCopy(issued.id, issued.token)} disabled={busy}>
-                    {copiedId === issued.id ? 'Copiado' : 'Copiar link'}
-                  </button>
-                  <button type="button" onClick={() => void handleRevoke(issued.id)} disabled={busy}>
-                    Revocar
-                  </button>
+                  <input
+                    className="share-link-url"
+                    readOnly
+                    value={linkFor(issued.token)}
+                    aria-label="Link para compartir"
+                  />
+                  {/* Stacked full-width on phones, one row on wider screens (styles.css). */}
+                  <div className="share-link-actions">
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => void handleCopy(issued.id, issued.token)}
+                      disabled={busy}
+                    >
+                      {copiedId === issued.id ? 'Copiado' : 'Copiar link'}
+                    </button>
+                    <a className="button-link" href={linkFor(issued.token)} target="_blank" rel="noopener noreferrer">
+                      Abrir link
+                    </a>
+                    <button type="button" onClick={() => void handleRevoke(issued.id)} disabled={busy}>
+                      Revocar
+                    </button>
+                  </div>
                 </>
               )}
             </li>
