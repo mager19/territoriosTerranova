@@ -341,8 +341,38 @@ export function installSessionLayers(map: MapLibreMap): void {
 }
 
 /**
- * Snap indicator for the session recorder, added on top of everything
- * (call after installSessionLayers): a hollow blue ring where a click or
+ * The OTHER territories, for the territory editor (2026-10-03): a faint
+ * thin grey outline, no fill, below every other editor layer — just enough
+ * to show what the draft snaps to, never confusable with the saved (teal),
+ * remaining (blue), draft (orange), or barrio (brown dashed) layers.
+ * Call after installEditorLayers.
+ */
+export function installNeighborTerritoriesLayer(map: MapLibreMap): void {
+  map.addSource('neighbor-territories', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer(
+    {
+      id: 'neighbor-territories-line',
+      type: 'line',
+      source: 'neighbor-territories',
+      paint: { 'line-color': '#6b7280', 'line-width': 1, 'line-opacity': 0.7 }
+    },
+    'reference-barrios-line'
+  );
+}
+
+/** Renders the neighbouring territories' outlines, or clears the layer. */
+export function renderNeighborTerritories(map: MapLibreMap, geometries: readonly Polygon[]): void {
+  const source = asGeoJsonSource(map.getSource('neighbor-territories'));
+  if (!source) return;
+  source.setData({
+    type: 'FeatureCollection',
+    features: geometries.map((geometry) => ({ type: 'Feature', properties: null, geometry }))
+  });
+}
+
+/**
+ * Snap indicator for the session recorder and the territory editor, added
+ * on top of everything (call last): a hollow near-black ring where a click or
  * drag would snap. A visual aid only — the snap itself happens on click,
  * and nothing depends on seeing this ring.
  */

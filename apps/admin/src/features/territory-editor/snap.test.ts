@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MultiPolygon, Polygon } from '@territorios/geo';
 
-import { findOutsideVertexIndices, snapCoordinate, SNAP_TOLERANCE_PX, type Projector } from './snap.js';
+import { findOutsideVertexIndices, snapCoordinate, snapToGeometries, SNAP_TOLERANCE_PX, type Projector } from './snap.js';
 
 /** 1 degree = 1000 px on both axes, y grows with latitude — enough to reason about pixels by hand. */
 const project: Projector = ([lng, lat]) => ({ x: lng * 1000, y: lat * 1000 });
@@ -89,6 +89,49 @@ describe('snapCoordinate', () => {
 
   it('honours a custom tolerance', () => {
     expect(snapCoordinate({ x: 45, y: 46 }, { boundary: BOUNDARY, remainingArea: null }, project, 5)).toBeNull();
+  });
+});
+
+describe('snapToGeometries', () => {
+  // Two neighbouring 10 x 10 px squares and a MultiPolygon barrio far to the east.
+  const WEST: Polygon = { type: 'Polygon', coordinates: [[[0, 0], [0.01, 0], [0.01, 0.01], [0, 0.01], [0, 0]]] };
+  const EAST: Polygon = { type: 'Polygon', coordinates: [[[0.03, 0], [0.04, 0], [0.04, 0.01], [0.03, 0.01], [0.03, 0]]] };
+  const BARRIO: MultiPolygon = {
+    type: 'MultiPolygon',
+    coordinates: [
+      [[[0.1, 0], [0.12, 0], [0.12, 0.02], [0.1, 0]]],
+      [[[0.2, 0], [0.22, 0], [0.22, 0.02], [0.2, 0]]]
+    ]
+  };
+
+  it('returns null with no geometries or nothing in range', () => {
+    expect(snapToGeometries({ x: 5, y: 5 }, [], project)).toBeNull();
+    expect(snapToGeometries({ x: 20, y: 50 }, [WEST, EAST, BARRIO], project)).toBeNull();
+  });
+
+  it('snaps to the nearest vertex across every geometry, regardless of order', () => {
+    // 8.5 px from WEST (10,10), 5 px from EAST (30,10) -> EAST wins: one tier, nearest vertex.
+    expect(snapToGeometries({ x: 25, y: 10 }, [WEST, EAST], project)).toEqual({ coordinate: [0.03, 0.01], kind: 'vertex' });
+  });
+
+  it('snaps to a vertex of any MultiPolygon part', () => {
+    expect(snapToGeometries({ x: 218, y: 22 }, [WEST, BARRIO], project)).toEqual({ coordinate: [0.22, 0.02], kind: 'vertex' });
+  });
+
+  it('prefers a vertex of one geometry over a closer edge of another', () => {
+    // BIG's bottom edge is 2 px away (its vertices 50 px); SPIKE's tip vertex is 10 px away.
+    const big: Polygon = { type: 'Polygon', coordinates: [[[0, 0], [0.1, 0], [0.1, 0.1], [0, 0.1], [0, 0]]] };
+    const spike: Polygon = { type: 'Polygon', coordinates: [[[0.05, -0.008], [0.06, -0.1], [0.04, -0.1], [0.05, -0.008]]] };
+    expect(snapToGeometries({ x: 50, y: 2 }, [big], project)?.kind).toBe('edge');
+    expect(snapToGeometries({ x: 50, y: 2 }, [big, spike], project)).toEqual({ coordinate: [0.05, -0.008], kind: 'vertex' });
+  });
+
+  it('snaps to the nearest edge point when no vertex is in range, interpolating geographically', () => {
+    const snap = snapToGeometries({ x: 105, y: 20 }, [BARRIO], project);
+    // (0.105, 0.02) is ~10.6 px from the diagonal (0.1,0)-(0.12,0.02) and 15 px+ from any vertex.
+    expect(snap?.kind).toBe('edge');
+    const [lng, lat] = snap!.coordinate;
+    expect(lat).toBeCloseTo(lng - 0.1, 15);
   });
 });
 

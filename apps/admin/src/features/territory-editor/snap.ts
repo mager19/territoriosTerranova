@@ -1,6 +1,6 @@
 /**
- * Snapping and outside-vertex detection for the session recorder
- * (2026-10-03). Pure: no MapLibre, no DOM. The caller passes a projector
+ * Snapping and outside-vertex detection, shared by the session recorder
+ * and the territory editor (2026-10-03). Pure: no MapLibre, no DOM. The caller passes a projector
  * (MapLibre's map.project in the app, a linear stand-in in tests), so the
  * tolerance is measured in screen pixels — what the administrator can
  * actually see — while every returned coordinate is geographic.
@@ -11,12 +11,15 @@
  * server tolerates 5 cm of floating-point overshoot for the edge case
  * (apps/api/src/domain/progress.ts, CONTAINMENT_TOLERANCE_METERS).
  *
- * Only ProgressRecorder uses this; TerritoryEditor does not snap.
+ * TerritoryEditor reuses the same snapping (snapToGeometries) against the
+ * neighbouring territories and the selected AMVA reference barrio, so a
+ * new territory can share an exact border with its neighbours instead of
+ * leaving slivers or tiny overlaps the server would reject.
  */
 
 import type { MultiPolygon, Polygon, Position } from '@territorios/geo';
 
-import type { Coordinate } from '../territory-editor/draft.js';
+import type { Coordinate } from './draft.js';
 
 export interface ScreenPoint {
   readonly x: number;
@@ -37,6 +40,8 @@ export interface SnapResult {
   readonly kind: 'vertex' | 'edge';
 }
 
+export type SnapGeometry = Polygon | MultiPolygon;
+
 export const SNAP_TOLERANCE_PX = 12;
 
 /**
@@ -48,7 +53,7 @@ const ON_BOUNDARY_EPSILON_DEGREES = 1e-9;
 
 type Ring = readonly Position[];
 
-function polygonRings(geometry: Polygon | MultiPolygon | null): Ring[] {
+function polygonRings(geometry: SnapGeometry | null): Ring[] {
   if (geometry === null) return [];
   if (geometry.type === 'Polygon') return [...geometry.coordinates];
   return geometry.coordinates.flat();
@@ -119,9 +124,30 @@ function nearestEdgePoint(point: ScreenPoint, rings: readonly Ring[], project: P
 
 /**
  * Where a click/drag at `point` should land, or null to use the raw point.
- * Priority: boundary vertices, then remaining-area vertices, then the
- * nearest point on any boundary or remaining-area edge. A vertex in range
- * always wins over an edge, even a closer one, so corners are easy to hit.
+ * `vertexTiers` is checked in order: a vertex in range from an earlier tier
+ * wins over any later tier; within a tier the nearest vertex wins. Only when
+ * no vertex at all is in range does the nearest point on any edge (of any
+ * tier) apply. A vertex in range always wins over an edge, even a closer
+ * one, so corners are easy to hit.
+ */
+function snapToTiers(
+  point: ScreenPoint,
+  vertexTiers: readonly (readonly Ring[])[],
+  project: Projector,
+  tolerancePx: number
+): SnapResult | null {
+  for (const rings of vertexTiers) {
+    const vertex = nearestVertex(point, rings, project, tolerancePx);
+    if (vertex) return { coordinate: vertex, kind: 'vertex' };
+  }
+  const edgePoint = nearestEdgePoint(point, vertexTiers.flat(), project, tolerancePx);
+  return edgePoint ? { coordinate: edgePoint, kind: 'edge' } : null;
+}
+
+/**
+ * Session recorder snapping. Priority: boundary vertices, then
+ * remaining-area vertices, then the nearest point on any boundary or
+ * remaining-area edge.
  */
 export function snapCoordinate(
   point: ScreenPoint,
@@ -129,17 +155,20 @@ export function snapCoordinate(
   project: Projector,
   tolerancePx: number = SNAP_TOLERANCE_PX
 ): SnapResult | null {
-  const boundaryRings = polygonRings(sources.boundary);
-  const remainingRings = polygonRings(sources.remainingArea);
+  return snapToTiers(point, [polygonRings(sources.boundary), polygonRings(sources.remainingArea)], project, tolerancePx);
+}
 
-  const boundaryVertex = nearestVertex(point, boundaryRings, project, tolerancePx);
-  if (boundaryVertex) return { coordinate: boundaryVertex, kind: 'vertex' };
-
-  const remainingVertex = nearestVertex(point, remainingRings, project, tolerancePx);
-  if (remainingVertex) return { coordinate: remainingVertex, kind: 'vertex' };
-
-  const edgePoint = nearestEdgePoint(point, [...boundaryRings, ...remainingRings], project, tolerancePx);
-  return edgePoint ? { coordinate: edgePoint, kind: 'edge' } : null;
+/**
+ * Territory editor snapping: every geometry is one tier — the nearest
+ * vertex of any of them wins, then the nearest point on any of their edges.
+ */
+export function snapToGeometries(
+  point: ScreenPoint,
+  geometries: readonly SnapGeometry[],
+  project: Projector,
+  tolerancePx: number = SNAP_TOLERANCE_PX
+): SnapResult | null {
+  return snapToTiers(point, [geometries.flatMap((geometry) => polygonRings(geometry))], project, tolerancePx);
 }
 
 function distanceToSegmentDegrees(p: Coordinate, a: Position, b: Position): number {

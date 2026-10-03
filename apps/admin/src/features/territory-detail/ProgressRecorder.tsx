@@ -35,7 +35,7 @@ import {
 } from '../territory-editor/map-editor.js';
 import type { Coordinate } from '../territory-editor/draft.js';
 import { buildSessionRequest, sessionFeatureCollection, type CoverageSession } from './sessions.js';
-import { findOutsideVertexIndices, snapCoordinate } from './snap.js';
+import { findOutsideVertexIndices, snapCoordinate } from '../territory-editor/snap.js';
 import type { MultiPolygon, Polygon } from '@territorios/geo';
 
 export interface ProgressRecorderProps {
