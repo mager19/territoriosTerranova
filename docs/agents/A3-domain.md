@@ -65,6 +65,19 @@ polygon (0% left), never NULL. The admin operational state exposes
 `progressPercent` (geodesic areas; null = unknown). `covered_area` is admin
 only and never part of the public view.
 
+**Explicit open/close, 2026-10-03:** a territory is explicitly OPENED
+(`in_progress`, or `reopened` for a later cycle), sessions are recorded while
+it is open, and it is then CLOSED (`cycle_completed` with an effective
+completion date). Recording a session no longer opens cycle 1 implicitly: when
+the territory has no operational event, or its cycle is completed, the session
+is rejected with `territory_not_open` (409). A legacy `paused` cycle still
+counts as open. Reopening no longer requires a reason (stored as NULL when
+absent, `db/migrations/0008_optional_reopen_reason.sql`); every transition is
+still audited. `GET /admin/territories/:id/cycles` lists each cycle newest
+first with its opening and closing timestamps, effective completion date, and
+the number of sessions attributed to it — derived from the existing events
+and progress entries.
+
 ## Definition of done
 
 - [ ] Server-side geometry validation rejects invalid, zero-area, out-of-city, and

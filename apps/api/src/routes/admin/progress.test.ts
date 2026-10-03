@@ -131,3 +131,12 @@ describe('GET /admin/territories/:id/progress — validation branches', () => {
     expect(response.statusCode).toBe(400);
   });
 });
+
+describe('GET /admin/territories/:id/cycles — validation branches', () => {
+  it('rejects a non-integer territory id without touching the database', async () => {
+    app = await buildTestApp();
+    const response = await app.inject({ method: 'GET', url: '/admin/territories/not-a-number/cycles' });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: 'invalid_request' });
+  });
+});

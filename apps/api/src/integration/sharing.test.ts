@@ -118,6 +118,14 @@ async function createTerritoryAndShare(
     payload: { name, geometry, author: 'admin-1' }
   });
   const territoryId = territoryResponse.json().id;
+  // Recording progress requires an open territory (2026-10-03): every shared
+  // territory in this file starts with its first cycle explicitly opened.
+  const openResponse = await app.inject({
+    method: 'POST',
+    url: `/admin/territories/${territoryId}/operational-state`,
+    payload: { action: 'in_progress', actor: 'admin-1' }
+  });
+  expect(openResponse.statusCode).toBe(201);
 
   const tokenResponse = await app.inject({
     method: 'POST',
@@ -277,9 +285,6 @@ describe('GET /public/territories/:token — response shape', () => {
 
   it('does not reuse a prior cycle’s pending-area snapshot after an administrator reopens work', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
-    await app.inject({
-      method: 'POST', url: `/admin/territories/${territoryId}/operational-state`, payload: { action: 'in_progress', actor: 'admin-1' }
-    });
     await app.inject({
       method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload: { recordedBy: 'admin-1', coveredArea: WEST_HALF, baseline: 'whole_territory' }
     });
@@ -444,7 +449,6 @@ describe('GET /public/territories/:token — response shape', () => {
     const record = (payload: Record<string, unknown>) =>
       app.inject({ method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload });
 
-    await state({ action: 'in_progress', actor: 'admin-1' });
     await record({ recordedBy: 'admin-1', coveredArea: WEST_HALF, baseline: 'whole_territory', note: 'previous cycle note' });
     await state({ action: 'cycle_completed', actor: 'admin-1', effectiveCompletionDate: '2026-09-21' });
     await state({ action: 'reopened', actor: 'admin-1', reason: 'new work started' });

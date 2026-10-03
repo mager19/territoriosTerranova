@@ -146,6 +146,7 @@ export async function getTerritoryOperationalStatus(
 export interface ChangeOperationalStateInput {
   readonly action: OperationalAction;
   readonly actor: string;
+  /** Optional for every action (2026-10-03: reopening no longer requires one); stored as NULL when absent. */
   readonly reason?: string;
   readonly effectiveCompletionDate?: string;
 }
@@ -158,7 +159,6 @@ export async function changeTerritoryOperationalState(
   const actor = input.actor.trim();
   const reason = input.reason?.trim() || null;
   if (actor === '') throw new ValidationError('actor must not be blank');
-  if (input.action === 'reopened' && reason === null) throw new ValidationError('reopening requires a reason');
   if (input.action === 'cycle_completed' && !/^\d{4}-\d{2}-\d{2}$/.test(input.effectiveCompletionDate ?? '')) {
     throw new ValidationError('cycle completion requires an effectiveCompletionDate in YYYY-MM-DD format');
   }
@@ -186,5 +186,80 @@ export async function changeTerritoryOperationalState(
     });
 
     return queryTerritoryOperationalStatus(client, territoryId);
+  });
+}
+
+/**
+ * One operational work cycle, derived from the append-only events: opened by
+ * its first event, closed by its cycle_completed event (null while open).
+ */
+export interface TerritoryCycle {
+  readonly cycleNumber: number;
+  /** ISO timestamp of the first operational event of the cycle. */
+  readonly openedAt: string;
+  /** ISO timestamp of the cycle_completed event, or null while the cycle is open. */
+  readonly closedAt: string | null;
+  /** The administrator-declared completion date (YYYY-MM-DD), or null while the cycle is open. */
+  readonly effectiveCompletionDate: string | null;
+  /**
+   * Progress entries attributed to this cycle — same attribution as the
+   * progress list: the latest operational event recorded no later than the
+   * entry. Entries recorded before the first cycle belong to none.
+   */
+  readonly sessionCount: number;
+}
+
+/** Every cycle of a territory, newest first. Read-only; derived from existing tables. */
+export async function listTerritoryCycles(
+  pool: TransactionalPool,
+  territoryId: number
+): Promise<readonly TerritoryCycle[]> {
+  return withTransaction(pool, async (client) => {
+    const { rows: territoryRows } = await client.query<{ id: string }>('SELECT id FROM territories WHERE id = $1', [territoryId]);
+    if (!territoryRows[0]) throw new TerritoryNotFoundError(territoryId);
+
+    const { rows } = await client.query<{
+      cycle_number: number;
+      opened_at: Date;
+      closed_at: Date | null;
+      effective_completion_date: string | null;
+      session_count: string;
+    }>(
+      `WITH cycles AS (
+         SELECT cycle_number,
+                min(created_at) AS opened_at,
+                max(created_at) FILTER (WHERE action = 'cycle_completed') AS closed_at,
+                to_char(max(effective_completion_date) FILTER (WHERE action = 'cycle_completed'), 'YYYY-MM-DD')
+                  AS effective_completion_date
+         FROM territory_operational_events
+         WHERE territory_id = $1
+         GROUP BY cycle_number
+       ), sessions AS (
+         SELECT attributed.cycle_number, count(*) AS session_count
+         FROM progress_entries pe
+         JOIN LATERAL (
+           SELECT cycle_number
+           FROM territory_operational_events
+           WHERE territory_id = pe.territory_id AND created_at <= pe.recorded_at
+           ORDER BY id DESC
+           LIMIT 1
+         ) attributed ON TRUE
+         WHERE pe.territory_id = $1
+         GROUP BY attributed.cycle_number
+       )
+       SELECT c.cycle_number, c.opened_at, c.closed_at, c.effective_completion_date,
+              COALESCE(s.session_count, 0) AS session_count
+       FROM cycles c
+       LEFT JOIN sessions s ON s.cycle_number = c.cycle_number
+       ORDER BY c.cycle_number DESC`,
+      [territoryId]
+    );
+    return rows.map((row) => ({
+      cycleNumber: row.cycle_number,
+      openedAt: row.opened_at.toISOString(),
+      closedAt: row.closed_at === null ? null : row.closed_at.toISOString(),
+      effectiveCompletionDate: row.effective_completion_date,
+      sessionCount: Number(row.session_count)
+    }));
   });
 }

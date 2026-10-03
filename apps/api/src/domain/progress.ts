@@ -32,6 +32,7 @@ import {
   InvalidGeometryError,
   OutOfBoundsError,
   TerritoryNotFoundError,
+  TerritoryNotOpenError,
   ValidationError,
   ZeroAreaGeometryError
 } from './errors.js';
@@ -51,6 +52,9 @@ import { withTransaction, type TransactionalPool } from '../db/transaction.js';
  * with a message that names the cause.
  */
 const AREA_EPSILON = 1e-12;
+
+/** Latest operational actions under which the territory is open for recording (paused kept for backward compatibility). */
+const OPEN_ACTIONS: ReadonlySet<string> = new Set(['in_progress', 'reopened', 'paused']);
 
 export interface ProgressEntry {
   readonly id: number;
@@ -330,9 +334,9 @@ export async function recordProgress(
   const routeParam = toGeoJsonParam(route);
 
   return withTransaction(pool, async (client) => {
-    // This row lock makes the first coverage record atomically open cycle 1,
-    // prevents a completed cycle from receiving a late progress entry, and
-    // serializes concurrent sessions so each subtracts from the latest
+    // This row lock serializes the open-territory check with concurrent
+    // state changes (a cycle cannot close under a session being recorded)
+    // and serializes concurrent sessions so each subtracts from the latest
     // remaining area rather than from a stale one.
     const { rows: territoryRows } = await client.query<{ id: string }>(
       `SELECT id FROM territories WHERE id = $1 FOR UPDATE`,
@@ -342,6 +346,9 @@ export async function recordProgress(
       throw new TerritoryNotFoundError(territoryId);
     }
 
+    // 2026-10-03: recording requires an explicitly OPENED territory. There is
+    // no implicit opening on the first session any more; paused (legacy)
+    // still counts as open.
     const { rows: operationalRows } = await client.query<{ action: string; cycle_number: number }>(
       `SELECT action, cycle_number
        FROM territory_operational_events
@@ -351,29 +358,16 @@ export async function recordProgress(
       [territoryId]
     );
     const operational = operationalRows[0];
-    if (operational?.action === 'cycle_completed') {
-      throw new ValidationError('reopen the completed cycle before recording more progress');
+    if (!operational) {
+      throw new TerritoryNotOpenError('the territory has not been opened; open it before recording progress');
     }
+    if (!OPEN_ACTIONS.has(operational.action)) {
+      throw new TerritoryNotOpenError('the territory is closed; open it again before recording progress');
+    }
+    const cycleNumber = operational.cycle_number;
 
     await assertSessionGeometriesValid(client, coveredParam, routeParam);
     await assertWithinCurrentRevision(client, territoryId, coveredParam, pauseParam, routeParam);
-
-    if (!operational) {
-      await client.query(
-        `INSERT INTO territory_operational_events (territory_id, cycle_number, action, actor)
-         VALUES ($1, 1, 'in_progress', $2)`,
-        [territoryId, recordedBy]
-      );
-      await recordAuditEvent(client, {
-        entityType: 'territory',
-        entityId: territoryId,
-        action: 'operational_in_progress',
-        actor: recordedBy,
-        reason: 'operational cycle opened by first progress record',
-        payload: { cycleNumber: 1 }
-      });
-    }
-    const cycleNumber = operational?.cycle_number ?? 1;
 
     const computed = await computeRemaining(client, territoryId, cycleNumber, coveredParam, baseline);
 

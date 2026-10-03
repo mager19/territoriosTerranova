@@ -130,6 +130,22 @@ interface SessionPayload {
   readonly route?: unknown;
 }
 
+/** Explicitly opens the territory's first cycle — recording progress requires an open territory (2026-10-03). */
+async function openTerritory(territoryId: number): Promise<void> {
+  const response = await app.inject({
+    method: 'POST',
+    url: `/admin/territories/${territoryId}/operational-state`,
+    payload: { action: 'in_progress', actor: 'admin-1' }
+  });
+  expect(response.statusCode).toBe(201);
+}
+
+async function createOpenTerritory(name: string, geometry: unknown = VALID_SQUARE): Promise<number> {
+  const territoryId = await createTerritory(name, geometry);
+  await openTerritory(territoryId);
+  return territoryId;
+}
+
 function recordSession(territoryId: number, payload: SessionPayload) {
   return app.inject({
     method: 'POST',
@@ -174,7 +190,7 @@ async function countEntries(territoryId: number): Promise<number> {
 
 describe('POST /admin/territories/:id/progress', () => {
   it('rejects a note-only entry — every new session must carry the area it covered', async () => {
-    const territoryId = await createTerritory('T-progress-01');
+    const territoryId = await createOpenTerritory('T-progress-01');
 
     const response = await recordSession(territoryId, { recordedBy: 'worker-1', note: 'started at the north corner' });
     expect(response.statusCode).toBe(400);
@@ -183,7 +199,7 @@ describe('POST /admin/territories/:id/progress', () => {
   });
 
   it('records a session with covered area, pause point, and route — the remaining area is derived, never sent', async () => {
-    const territoryId = await createTerritory('T-progress-02');
+    const territoryId = await createOpenTerritory('T-progress-02');
 
     const response = await recordSession(territoryId, {
       recordedBy: 'worker-1',
@@ -204,7 +220,7 @@ describe('POST /admin/territories/:id/progress', () => {
   });
 
   it('rejects a zero-area covered area with the field named', async () => {
-    const territoryId = await createTerritory('T-progress-03');
+    const territoryId = await createOpenTerritory('T-progress-03');
 
     const response = await recordSession(territoryId, { coveredArea: ZERO_AREA_COVERED, baseline: 'whole_territory' });
     expect(response.statusCode).toBe(400);
@@ -214,7 +230,7 @@ describe('POST /admin/territories/:id/progress', () => {
   });
 
   it('rejects a self-intersecting covered area instead of repairing it', async () => {
-    const territoryId = await createTerritory('T-progress-bowtie');
+    const territoryId = await createOpenTerritory('T-progress-bowtie');
 
     const response = await recordSession(territoryId, { coveredArea: BOWTIE_COVERED, baseline: 'whole_territory' });
     expect(response.statusCode).toBe(400);
@@ -222,8 +238,8 @@ describe('POST /admin/territories/:id/progress', () => {
     expect(response.json().message).toMatch(/covered-area/);
   });
 
-  it('anyone can record progress at any time — there is no "must be assigned/active" precondition', async () => {
-    const territoryId = await createTerritory('T-progress-04');
+  it('anyone can record progress on an open territory — there is no "must be assigned" precondition', async () => {
+    const territoryId = await createOpenTerritory('T-progress-04');
 
     const first = await recordSession(territoryId, {
       recordedBy: 'worker-1',
@@ -247,7 +263,7 @@ describe('POST /admin/territories/:id/progress', () => {
   });
 
   it('rejects a raw UPDATE against progress_entries at the database level (immutable, proven directly)', async () => {
-    const territoryId = await createTerritory('T-progress-05');
+    const territoryId = await createOpenTerritory('T-progress-05');
     const created = await recordSession(territoryId, { note: 'first note', coveredArea: WEST_HALF, baseline: 'whole_territory' });
     const entryId = created.json().id;
 
@@ -265,7 +281,7 @@ describe('POST /admin/territories/:id/progress', () => {
 
 describe('coverage sessions — remaining area = previous remaining MINUS covered', () => {
   it('subtracts across two sessions and derives progress from geodesic areas', async () => {
-    const territoryId = await createTerritory('T-coverage-two-sessions');
+    const territoryId = await createOpenTerritory('T-coverage-two-sessions');
 
     const first = await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' });
     expect(first.statusCode).toBe(201);
@@ -286,7 +302,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
   });
 
   it('keeps a split remaining area as a MultiPolygon', async () => {
-    const territoryId = await createTerritory('T-coverage-split');
+    const territoryId = await createOpenTerritory('T-coverage-split');
 
     const response = await recordSession(territoryId, { coveredArea: MIDDLE_STRIP, baseline: 'whole_territory' });
     expect(response.statusCode).toBe(201);
@@ -295,14 +311,13 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
   });
 
   it('requires an explicit baseline for the first session of a cycle and records nothing without it', async () => {
-    const territoryId = await createTerritory('T-coverage-baseline');
+    const territoryId = await createOpenTerritory('T-coverage-baseline');
 
     const rejected = await recordSession(territoryId, { coveredArea: WEST_HALF });
     expect(rejected.statusCode).toBe(400);
     expect(rejected.json()).toMatchObject({ error: 'baseline_required' });
     expect(await countEntries(territoryId)).toBe(0);
-    // The rejected attempt did not even open the cycle.
-    expect((await operationalState(territoryId)).json()).toMatchObject({ state: 'no_record', progressPercent: null });
+    expect((await operationalState(territoryId)).json()).toMatchObject({ state: 'in_progress', progressPercent: null });
 
     const accepted = await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' });
     expect(accepted.statusCode).toBe(201);
@@ -313,7 +328,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
   });
 
   it('refuses a baseline once the cycle already has a remaining area — the baseline is never re-applied', async () => {
-    const territoryId = await createTerritory('T-coverage-baseline-twice');
+    const territoryId = await createOpenTerritory('T-coverage-baseline-twice');
     await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' });
 
     const response = await recordSession(territoryId, { coveredArea: EAST_HALF, baseline: 'whole_territory' });
@@ -324,7 +339,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
   });
 
   it('starts a reopened cycle fresh: the previous cycle remaining area is not reused and a new baseline is required', async () => {
-    const territoryId = await createTerritory('T-coverage-reopen');
+    const territoryId = await createOpenTerritory('T-coverage-reopen');
     await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' });
     expect((await changeState(territoryId, { action: 'cycle_completed', effectiveCompletionDate: '2026-09-21' })).statusCode).toBe(201);
     const reopened = await changeState(territoryId, { action: 'reopened', reason: 'new addresses' });
@@ -346,7 +361,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
   });
 
   it('serializes concurrent sessions on the territory lock: each subtracts from the latest remaining area', async () => {
-    const territoryId = await createTerritory('T-coverage-concurrent');
+    const territoryId = await createOpenTerritory('T-coverage-concurrent');
     await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' });
 
     const [a, b] = await Promise.all([
@@ -363,7 +378,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
   });
 
   it('lets exactly one of two concurrent first sessions apply the baseline', async () => {
-    const territoryId = await createTerritory('T-coverage-concurrent-baseline');
+    const territoryId = await createOpenTerritory('T-coverage-concurrent-baseline');
 
     const results = await Promise.all([
       recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' }),
@@ -374,7 +389,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
   });
 
   it('rejects a covered area, pause point, or route outside the territory current revision', async () => {
-    const territoryId = await createTerritory('T-coverage-outside');
+    const territoryId = await createOpenTerritory('T-coverage-outside');
 
     const outside = await recordSession(territoryId, { coveredArea: OUTSIDE_TERRITORY, baseline: 'whole_territory' });
     expect(outside.statusCode).toBe(400);
@@ -406,7 +421,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
   });
 
   it('validates containment against the CURRENT revision, not the original one', async () => {
-    const territoryId = await createTerritory('T-coverage-revision');
+    const territoryId = await createOpenTerritory('T-coverage-revision');
     const revision = await app.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/revisions`,
@@ -420,7 +435,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
   });
 
   it('rejects a covered area that does not intersect the current remaining area', async () => {
-    const territoryId = await createTerritory('T-coverage-no-overlap');
+    const territoryId = await createOpenTerritory('T-coverage-no-overlap');
     await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' });
 
     const response = await recordSession(territoryId, { coveredArea: rectangle(-75.574, 6.357, -75.5735, 6.358) });
@@ -431,7 +446,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
   });
 
   it('stores full coverage as an explicit EMPTY remaining area (0% left), never NULL/unknown', async () => {
-    const territoryId = await createTerritory('T-coverage-full');
+    const territoryId = await createOpenTerritory('T-coverage-full');
     await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' });
 
     const full = await recordSession(territoryId, { coveredArea: EAST_HALF });
@@ -460,7 +475,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
   });
 
   it('computes 100% when the first session covers the whole territory', async () => {
-    const territoryId = await createTerritory('T-coverage-whole-at-once');
+    const territoryId = await createOpenTerritory('T-coverage-whole-at-once');
     const response = await recordSession(territoryId, { coveredArea: VALID_SQUARE, baseline: 'whole_territory' });
     expect(response.statusCode).toBe(201);
     expect((await operationalState(territoryId)).json().progressPercent).toBe(100);
@@ -510,7 +525,7 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
 
 describe('GET /admin/territories/:id/progress', () => {
   it('lists progress entries for a territory in chronological order, with each covered area', async () => {
-    const territoryId = await createTerritory('T-progress-list');
+    const territoryId = await createOpenTerritory('T-progress-list');
     await recordSession(territoryId, { note: 'first', coveredArea: WEST_HALF, baseline: 'whole_territory' });
     await recordSession(territoryId, { note: 'second', coveredArea: EAST_HALF });
 
@@ -551,9 +566,6 @@ describe('administrator-controlled operational cycles', () => {
     expect(completed.statusCode).toBe(201);
     expect(completed.json()).toMatchObject({ state: 'cycle_completed', effectiveCompletionDate: '2026-09-21' });
 
-    const withoutReason = await changeState(territoryId, { action: 'reopened' });
-    expect(withoutReason.statusCode).toBe(400);
-
     const reopened = await changeState(territoryId, { action: 'reopened', reason: 'new addresses need coverage' });
     expect(reopened.statusCode).toBe(201);
     expect(reopened.json()).toMatchObject({ state: 'reopened', cycleNumber: 2, remainingArea: null, remainingAreaStatus: 'unknown' });
@@ -573,9 +585,155 @@ describe('administrator-controlled operational cycles', () => {
     await changeState(territoryId, { action: 'in_progress' });
     await changeState(territoryId, { action: 'cycle_completed', effectiveCompletionDate: '2026-09-21' });
     const response = await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory', route: ROUTE });
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({ error: 'invalid_request' });
-    expect(response.json().message).toMatch(/reopen/);
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: 'territory_not_open' });
+    expect(await countEntries(territoryId)).toBe(0);
+  });
+
+  it('rejects progress on a territory that was never opened — recording no longer opens a cycle implicitly', async () => {
+    const territoryId = await createTerritory('T-operational-never-opened');
+
+    const response = await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: 'territory_not_open' });
+    expect(await countEntries(territoryId)).toBe(0);
+    expect((await operationalState(territoryId)).json()).toMatchObject({ state: 'no_record', cycleNumber: null });
+
+    const history = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
+    expect(history.json().events.map((event: { action: string }) => event.action)).toEqual(['created']);
+  });
+
+  it('still accepts progress on a legacy paused cycle — paused counts as open', async () => {
+    const territoryId = await createOpenTerritory('T-operational-paused');
+    expect((await changeState(territoryId, { action: 'paused' })).statusCode).toBe(201);
+
+    const response = await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' });
+    expect(response.statusCode).toBe(201);
+    expect(response.json().cycleNumber).toBe(1);
+  });
+
+  it('reopens without a reason: the reason is optional and stored as null, and the transition is still audited', async () => {
+    const territoryId = await createOpenTerritory('T-operational-reopen-no-reason');
+    await changeState(territoryId, { action: 'cycle_completed', effectiveCompletionDate: '2026-10-03' });
+
+    const reopened = await changeState(territoryId, { action: 'reopened' });
+    expect(reopened.statusCode).toBe(201);
+    expect(reopened.json()).toMatchObject({ state: 'reopened', cycleNumber: 2 });
+
+    const stored = await withClient(async (client) => {
+      const { rows } = await client.query<{ reason: string | null }>(
+        `SELECT reason FROM territory_operational_events WHERE territory_id = $1 AND action = 'reopened'`,
+        [territoryId]
+      );
+      return rows;
+    });
+    expect(stored).toEqual([{ reason: null }]);
+
+    const history = await app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/audit` });
+    expect(history.json().events.map((event: { action: string }) => event.action)).toContain('operational_reopened');
+  });
+});
+
+describe('GET /admin/territories/:id/cycles', () => {
+  function listCycles(territoryId: number) {
+    return app.inject({ method: 'GET', url: `/admin/territories/${territoryId}/cycles` });
+  }
+
+  async function eventTimes(territoryId: number): Promise<Array<{ action: string; created_at: Date }>> {
+    return withClient(async (client) => {
+      const { rows } = await client.query<{ action: string; created_at: Date }>(
+        'SELECT action, created_at FROM territory_operational_events WHERE territory_id = $1 ORDER BY id',
+        [territoryId]
+      );
+      return rows;
+    });
+  }
+
+  it('returns an empty list for a territory that was never opened', async () => {
+    const territoryId = await createTerritory('T-cycles-none');
+    const response = await listCycles(territoryId);
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ cycles: [] });
+  });
+
+  it('returns one open cycle with its opening timestamp and session count', async () => {
+    const territoryId = await createOpenTerritory('T-cycles-open');
+    expect((await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' })).statusCode).toBe(201);
+
+    const [opened] = await eventTimes(territoryId);
+    const response = await listCycles(territoryId);
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      cycles: [
+        {
+          cycleNumber: 1,
+          openedAt: opened!.created_at.toISOString(),
+          closedAt: null,
+          effectiveCompletionDate: null,
+          sessionCount: 1
+        }
+      ]
+    });
+  });
+
+  it('lists a closed and a reopened cycle newest first, with each cycle’s dates and its own session count', async () => {
+    const territoryId = await createOpenTerritory('T-cycles-two');
+    expect((await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' })).statusCode).toBe(201);
+    expect((await recordSession(territoryId, { coveredArea: NORTH_EAST_QUARTER })).statusCode).toBe(201);
+    expect((await changeState(territoryId, { action: 'paused' })).statusCode).toBe(201);
+    expect((await changeState(territoryId, { action: 'cycle_completed', effectiveCompletionDate: '2026-10-10' })).statusCode).toBe(201);
+    expect((await changeState(territoryId, { action: 'reopened' })).statusCode).toBe(201);
+    expect((await recordSession(territoryId, { coveredArea: EAST_HALF, baseline: 'whole_territory' })).statusCode).toBe(201);
+
+    const events = await eventTimes(territoryId);
+    const opened1 = events.find((event) => event.action === 'in_progress')!.created_at;
+    const closed1 = events.find((event) => event.action === 'cycle_completed')!.created_at;
+    const opened2 = events.find((event) => event.action === 'reopened')!.created_at;
+
+    const response = await listCycles(territoryId);
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      cycles: [
+        {
+          cycleNumber: 2,
+          openedAt: opened2.toISOString(),
+          closedAt: null,
+          effectiveCompletionDate: null,
+          sessionCount: 1
+        },
+        {
+          cycleNumber: 1,
+          openedAt: opened1.toISOString(),
+          closedAt: closed1.toISOString(),
+          effectiveCompletionDate: '2026-10-10',
+          sessionCount: 2
+        }
+      ]
+    });
+  });
+
+  it('counts zero sessions for a cycle closed without any recorded progress and ignores legacy entries before the first cycle', async () => {
+    const territoryId = await createTerritory('T-cycles-empty-closed');
+    await withClient((client) =>
+      client.query(
+        `INSERT INTO progress_entries (territory_id, recorded_by, recorded_at)
+         VALUES ($1, 'legacy', now() - interval '1 day')`,
+        [territoryId]
+      )
+    );
+    await openTerritory(territoryId);
+    expect((await changeState(territoryId, { action: 'cycle_completed', effectiveCompletionDate: '2026-10-03' })).statusCode).toBe(201);
+
+    const response = await listCycles(territoryId);
+    expect(response.json().cycles).toHaveLength(1);
+    expect(response.json().cycles[0]).toMatchObject({ cycleNumber: 1, sessionCount: 0, effectiveCompletionDate: '2026-10-03' });
+    expect(response.json().cycles[0].closedAt).not.toBeNull();
+  });
+
+  it('returns territory_not_found for a nonexistent territory', async () => {
+    const response = await listCycles(999999);
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: 'territory_not_found' });
   });
 });
 
@@ -587,6 +745,7 @@ describe('GET /admin/territories/:id/audit', () => {
       url: `/admin/territories/${territoryId}/share-tokens`,
       payload: { createdBy: 'admin-1' }
     });
+    await openTerritory(territoryId);
     await recordSession(territoryId, { recordedBy: 'worker-1', note: 'halfway done', coveredArea: WEST_HALF, baseline: 'whole_territory' });
     await app.inject({
       method: 'POST',
@@ -634,7 +793,7 @@ describe('GET /admin/territories/:id/audit', () => {
       coordinates: [[[-75.59, 6.34], [-75.585, 6.34], [-75.585, 6.345], [-75.59, 6.345], [-75.59, 6.34]]]
     };
     const territoryA = await createTerritory('T-audit-isolation-A');
-    const territoryB = await createTerritory('T-audit-isolation-B', DISTINCT_SQUARE);
+    const territoryB = await createOpenTerritory('T-audit-isolation-B', DISTINCT_SQUARE);
     const recorded = await recordSession(territoryB, {
       recordedBy: 'worker-1',
       note: 'B only',

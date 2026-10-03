@@ -107,6 +107,21 @@ export class CoveredAreaNotRemainingError extends Error {
   }
 }
 
+/**
+ * Progress can only be recorded while the territory is open (2026-10-03):
+ * the latest operational event must be in_progress, reopened, or (legacy)
+ * paused. A territory that was never opened, or whose cycle is completed,
+ * rejects the session. Distinct code so the admin UI can tell the
+ * administrator to open the territory first.
+ */
+export class TerritoryNotOpenError extends Error {
+  readonly code = 'territory_not_open' as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'TerritoryNotOpenError';
+  }
+}
+
 /** Every typed domain error a caller should catch and map to a distinct response. */
 export type DomainError =
   | InvalidGeometryError
@@ -118,7 +133,8 @@ export type DomainError =
   | ValidationError
   | DuplicateTerritoryNumberError
   | BaselineRequiredError
-  | CoveredAreaNotRemainingError;
+  | CoveredAreaNotRemainingError
+  | TerritoryNotOpenError;
 
 export function isDomainError(error: unknown): error is DomainError {
   return (
@@ -131,6 +147,7 @@ export function isDomainError(error: unknown): error is DomainError {
     error instanceof ValidationError ||
     error instanceof DuplicateTerritoryNumberError ||
     error instanceof BaselineRequiredError ||
-    error instanceof CoveredAreaNotRemainingError
+    error instanceof CoveredAreaNotRemainingError ||
+    error instanceof TerritoryNotOpenError
   );
 }
