@@ -184,7 +184,32 @@ async function assertSessionGeometriesValid(
   }
 }
 
-/** Covered area, pause point, and route must all lie within the territory's CURRENT revision. */
+/**
+ * Metres a session geometry may exceed the territory's current boundary by
+ * (2026-10-03). The admin recorder snaps vertices onto the boundary; the
+ * snapped coordinate goes through a screen-space projection and JSON, so a
+ * vertex "on" a non-axis-aligned edge can land a few nanodegrees outside it
+ * and a strict ST_CoveredBy rejects it. 5 cm absorbs that floating-point
+ * error while still rejecting anything a person could actually draw outside
+ * (an imprecise click is metres off at street zoom).
+ */
+const CONTAINMENT_TOLERANCE_METERS = 0.05;
+
+/**
+ * Covered area, pause point, and route must all lie within the territory's
+ * CURRENT revision, widened by CONTAINMENT_TOLERANCE_METERS.
+ *
+ * The tolerance is a geodesic buffer of the boundary: ST_Buffer on the
+ * geography (PostGIS buffers it in a best-fit planar projection, so the
+ * distance is true metres, not degrees) cast back to geometry, then the
+ * same ST_CoveredBy as before. This is a single-row predicate against one
+ * revision polygon, so there is no index to preserve; the buffer is computed
+ * once and shared by all three checks. The buffered polygon is ONLY a
+ * predicate: the stored covered area is exactly what was sent (never
+ * clipped or repaired), and the remaining area is still derived from the
+ * unbuffered boundary, where any overshoot simply falls outside the
+ * ST_Difference and changes nothing.
+ */
 async function assertWithinCurrentRevision(
   client: PoolClient,
   territoryId: number,
@@ -193,16 +218,17 @@ async function assertWithinCurrentRevision(
   route: string | null
 ): Promise<void> {
   const { rows } = await client.query<{ covered_inside: boolean; pause_inside: boolean; route_inside: boolean }>(
-    `SELECT ST_CoveredBy(ST_SetSRID(ST_GeomFromGeoJSON($2), 4326), tr.geom) AS covered_inside,
-            ($3::text IS NULL OR ST_CoveredBy(ST_SetSRID(ST_GeomFromGeoJSON($3), 4326), tr.geom)) AS pause_inside,
-            ($4::text IS NULL OR ST_CoveredBy(ST_SetSRID(ST_GeomFromGeoJSON($4), 4326), tr.geom)) AS route_inside
+    `SELECT ST_CoveredBy(ST_SetSRID(ST_GeomFromGeoJSON($2), 4326), tr.tolerant) AS covered_inside,
+            ($3::text IS NULL OR ST_CoveredBy(ST_SetSRID(ST_GeomFromGeoJSON($3), 4326), tr.tolerant)) AS pause_inside,
+            ($4::text IS NULL OR ST_CoveredBy(ST_SetSRID(ST_GeomFromGeoJSON($4), 4326), tr.tolerant)) AS route_inside
      FROM (
-       SELECT geom FROM territory_revisions
+       SELECT ST_Buffer(geom::geography, $5::float8)::geometry AS tolerant
+       FROM territory_revisions
        WHERE territory_id = $1
        ORDER BY revision_number DESC
        LIMIT 1
      ) tr`,
-    [territoryId, coveredArea, pausePoint, route]
+    [territoryId, coveredArea, pausePoint, route, CONTAINMENT_TOLERANCE_METERS]
   );
   const row = rows[0];
   if (!row) throw new ValidationError('the territory has no geometry revision to record progress against');

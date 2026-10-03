@@ -434,6 +434,91 @@ describe('coverage sessions — remaining area = previous remaining MINUS covere
     expect(response.json()).toMatchObject({ error: 'out_of_bounds' });
   });
 
+  describe('5 cm containment tolerance for snapped vertices (2026-10-03)', () => {
+    // ~110,636 m per degree of longitude at this latitude (6.358°N).
+    const TWO_CM_IN_DEGREES = 0.02 / 110_636;
+    const ONE_M_IN_DEGREES = 1 / 110_636;
+    // Non-axis-aligned edges, so a point interpolated along an edge is not
+    // exactly representable and a strict ST_CoveredBy can flip on float error.
+    const IRREGULAR: { type: 'Polygon'; coordinates: number[][][] } = {
+      type: 'Polygon',
+      coordinates: [[[-75.574, 6.357], [-75.5715, 6.3575], [-75.5722, 6.3595], [-75.5741, 6.3588], [-75.574, 6.357]]]
+    };
+    const [A, B, C, D] = IRREGULAR.coordinates[0] as [number[], number[], number[], number[]];
+
+    async function storedCoveredEquals(entryId: number, expected: unknown): Promise<boolean> {
+      return withClient(async (client) => {
+        const { rows } = await client.query<{ equal: boolean }>(
+          `SELECT ST_Equals(covered_area, ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)) AS equal
+           FROM progress_entries WHERE id = $1`,
+          [entryId, JSON.stringify(expected)]
+        );
+        return rows[0]?.equal === true;
+      });
+    }
+
+    it('accepts a covered area with a vertex 2 cm outside the boundary and stores it exactly as sent (never clipped)', async () => {
+      const territoryId = await createOpenTerritory('T-tolerance-2cm');
+      const overshoot = {
+        type: 'Polygon',
+        coordinates: [[[-75.574 - TWO_CM_IN_DEGREES, 6.357], [-75.573, 6.357], [-75.573, 6.359], [-75.574, 6.359], [-75.574 - TWO_CM_IN_DEGREES, 6.357]]]
+      };
+
+      const response = await recordSession(territoryId, { coveredArea: overshoot, baseline: 'whole_territory' });
+      expect(response.statusCode).toBe(201);
+      expect(await storedCoveredEquals(response.json().id, overshoot)).toBe(true);
+      // The remaining area is still exactly the territory minus the covered area.
+      expect(await remainingEquals(response.json().id, EAST_HALF)).toBe(true);
+    });
+
+    it('still rejects a covered area with a vertex 1 m outside the boundary as out_of_bounds', async () => {
+      const territoryId = await createOpenTerritory('T-tolerance-1m');
+      const tooFar = {
+        type: 'Polygon',
+        coordinates: [[[-75.574 - ONE_M_IN_DEGREES, 6.357], [-75.573, 6.357], [-75.573, 6.359], [-75.574, 6.359], [-75.574 - ONE_M_IN_DEGREES, 6.357]]]
+      };
+
+      const response = await recordSession(territoryId, { coveredArea: tooFar, baseline: 'whole_territory' });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error: 'out_of_bounds' });
+      expect(await countEntries(territoryId)).toBe(0);
+    });
+
+    it('accepts a covered area whose vertices are exactly boundary vertices', async () => {
+      const territoryId = await createOpenTerritory('T-tolerance-boundary-vertices', IRREGULAR);
+      const triangle = { type: 'Polygon', coordinates: [[A, B, C, A]] };
+
+      const response = await recordSession(territoryId, { coveredArea: triangle, baseline: 'whole_territory' });
+      expect(response.statusCode).toBe(201);
+      expect(await remainingEquals(response.json().id, { type: 'Polygon', coordinates: [[A, C, D, A]] })).toBe(true);
+    });
+
+    it('accepts a vertex interpolated along a diagonal boundary edge (edge snap)', async () => {
+      const territoryId = await createOpenTerritory('T-tolerance-edge-snap', IRREGULAR);
+      const t = 0.37;
+      const onEdge = [B[0]! + (C[0]! - B[0]!) * t, B[1]! + (C[1]! - B[1]!) * t];
+      const covered = { type: 'Polygon', coordinates: [[A, B, onEdge, A]] };
+
+      const response = await recordSession(territoryId, { coveredArea: covered, baseline: 'whole_territory' });
+      expect(response.statusCode).toBe(201);
+    });
+
+    it("accepts a session snapped to the previous session's border (remaining-area vertices) and leaves nothing", async () => {
+      const territoryId = await createOpenTerritory('T-tolerance-remaining-snap', IRREGULAR);
+      const first = await recordSession(territoryId, {
+        coveredArea: { type: 'Polygon', coordinates: [[A, B, C, A]] },
+        baseline: 'whole_territory'
+      });
+      expect(first.statusCode).toBe(201);
+
+      // Second session drawn on the remaining area's own vertices (A, C, D).
+      const second = await recordSession(territoryId, { coveredArea: { type: 'Polygon', coordinates: [[A, C, D, A]] } });
+      expect(second.statusCode).toBe(201);
+      expect(second.json().remainingArea).toEqual({ type: 'Polygon', coordinates: [] });
+      expect((await operationalState(territoryId)).json().progressPercent).toBe(100);
+    });
+  });
+
   it('rejects a covered area that does not intersect the current remaining area', async () => {
     const territoryId = await createOpenTerritory('T-coverage-no-overlap');
     await recordSession(territoryId, { coveredArea: WEST_HALF, baseline: 'whole_territory' });
