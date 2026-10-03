@@ -127,6 +127,9 @@ importers:
       maplibre-gl:
         specifier: ^6.7.0
         version: 6.7.0
+      polylabel:
+        specifier: ^2.1.0
+        version: 2.1.0
     devDependencies:
       '@types/geojson':
         specifier: ^7946.0.16
@@ -1779,6 +1782,9 @@ packages:
     resolution: {integrity: sha512-+7ziBLidS4NaNCdt57SUDT+wYmmd5fmiQejUic/kb+YsYSCPyOOE9sebzMjNmQrsnNpDJqd4WHvV/8lfKfUDUg==}
     engines: {node: '>=20'}
     hasBin: true
+
+  polylabel@2.1.0:
+    resolution: {integrity: sha512-ZCL9pc/BpnyBB1Es5Eh6baziBhZFS0fTlEXGarLMqbMYbAyawqGAjyo2+MfignMggSubmllMgRGcR0L0liOugg==}
 
   postcss@8.5.28:
     resolution: {integrity: sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A==}
@@ -3898,6 +3904,10 @@ snapshots:
   playwright@1.63.0:
     dependencies:
       playwright-core: 1.63.0
+
+  polylabel@2.1.0:
+    dependencies:
+      tinyqueue: 3.0.0
 
   postcss@8.5.28:
     dependencies:

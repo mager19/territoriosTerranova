@@ -14,7 +14,8 @@
     "@fontsource/inter": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@territorios/geo": "workspace:*",
-    "maplibre-gl": "^6.7.0"
+    "maplibre-gl": "^6.7.0",
+    "polylabel": "^2.1.0"
   },
   "devDependencies": {
     "@types/geojson": "^7946.0.16",
