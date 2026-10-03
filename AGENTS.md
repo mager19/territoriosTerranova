@@ -36,6 +36,10 @@ exist; if you cite a file here, create it in the same change.
   requirement to enforce.
 - Keep administrative and public boundaries separate. A share token is a scoped
   public bearer secret, never an administrator principal.
+- The admin API requires a session from one of the env-configured admin
+  accounts (`ADMIN_1_*`, `ADMIN_2_*`; docs/admin-auth.md). Every `/admin/*`
+  route except sign-in is guarded, and the actor of every admin write is the
+  session email, never a client-sent field.
 
 ## Map provider policy
 

@@ -3,7 +3,6 @@ import { useState, type JSX } from 'react';
 import {
   ApiError,
   createShareToken,
-  DEFAULT_ACTOR,
   describeApiError,
   revokeShareToken,
   PUBLIC_APP_BASE_URL,
@@ -44,7 +43,7 @@ export function SharePanel({ territoryId }: SharePanelProps): JSX.Element {
     setBusy(true);
     setError(null);
     try {
-      const created = await createShareToken(territoryId, { createdBy: DEFAULT_ACTOR });
+      const created = await createShareToken(territoryId);
       setTokens((current) => [...current, { ...created, revoked: false }]);
     } catch (caught) {
       setError(caught instanceof ApiError ? describeApiError(caught) : 'No se pudo crear el link.');
@@ -57,7 +56,7 @@ export function SharePanel({ territoryId }: SharePanelProps): JSX.Element {
     setBusy(true);
     setError(null);
     try {
-      await revokeShareToken(tokenId, DEFAULT_ACTOR);
+      await revokeShareToken(tokenId);
       setTokens((current) => current.map((t) => (t.id === tokenId ? { ...t, revoked: true } : t)));
     } catch (caught) {
       setError(caught instanceof ApiError ? describeApiError(caught) : 'No se pudo revocar el link.');

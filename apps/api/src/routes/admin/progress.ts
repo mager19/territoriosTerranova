@@ -15,6 +15,7 @@ import {
   listTerritoryCycles,
   type OperationalAction
 } from '../../domain/territory-operational-state.js';
+import { sessionEmail } from '../../auth/admin-guard.js';
 import { isRecord, trySendDomainError } from './error-response.js';
 import type { TransactionalPool } from '../../db/transaction.js';
 
@@ -45,7 +46,8 @@ export function registerAdminProgressRoutes(app: FastifyInstance, deps: AdminPro
     try {
       return reply.status(201).send(await changeTerritoryOperationalState(deps.pool, territoryId, {
         action: body.action as OperationalAction,
-        actor: typeof body.actor === 'string' ? body.actor : '',
+        // The actor is the signed-in administrator; a client-sent `actor` is ignored.
+        actor: sessionEmail(request),
         reason: typeof body.reason === 'string' ? body.reason : undefined,
         effectiveCompletionDate: typeof body.effectiveCompletionDate === 'string' ? body.effectiveCompletionDate : undefined
       }));
@@ -76,7 +78,8 @@ export function registerAdminProgressRoutes(app: FastifyInstance, deps: AdminPro
     const body = isRecord(request.body) ? request.body : {};
     try {
       const entry = await recordProgress(deps.pool, territoryId, {
-        recordedBy: typeof body.recordedBy === 'string' ? body.recordedBy : '',
+        // The recorder is the signed-in administrator; a client-sent `recordedBy` is ignored.
+        recordedBy: sessionEmail(request),
         note: typeof body.note === 'string' ? body.note : undefined,
         coveredArea: body.coveredArea,
         baseline: body.baseline,

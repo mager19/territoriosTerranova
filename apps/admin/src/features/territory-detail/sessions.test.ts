@@ -97,14 +97,13 @@ describe('buildSessionRequest', () => {
   ];
 
   it('returns null until the covered area is a closed polygon — it is the required part of a session', () => {
-    expect(buildSessionRequest({ recordedBy: 'admin', covered: draftOf(triangle, false), note: '' })).toBeNull();
+    expect(buildSessionRequest({ covered: draftOf(triangle, false), note: '' })).toBeNull();
   });
 
   it('sends the covered area only, never a remaining area, when no note was written', () => {
-    const request = buildSessionRequest({ recordedBy: 'admin', covered: draftOf(triangle, true), note: '   ' });
+    const request = buildSessionRequest({ covered: draftOf(triangle, true), note: '   ' });
 
     expect(request).toEqual({
-      recordedBy: 'admin',
       coveredArea: { type: 'Polygon', coordinates: [[...triangle, triangle[0]]] }
     });
     expect(request).not.toHaveProperty('remainingArea');
@@ -112,14 +111,12 @@ describe('buildSessionRequest', () => {
 
   it('adds the trimmed note and the baseline — and never a route or pause point (removed 2026-10-03)', () => {
     const request = buildSessionRequest({
-      recordedBy: 'admin',
       covered: draftOf(triangle, true),
       note: ' esquina norte ',
       baseline: 'whole_territory'
     });
 
     expect(request).toEqual({
-      recordedBy: 'admin',
       coveredArea: { type: 'Polygon', coordinates: [[...triangle, triangle[0]]] },
       note: 'esquina norte',
       baseline: 'whole_territory'

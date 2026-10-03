@@ -6,9 +6,9 @@
  * admin routes").
  */
 
-import rateLimit from '@fastify/rate-limit';
 import type { FastifyInstance } from 'fastify';
 
+import { rateLimitKey } from '../../rate-limit/keys.js';
 import { resolvePublicTerritoryView } from '../../sharing/repository.js';
 import type { TransactionalPool } from '../../db/transaction.js';
 
@@ -31,17 +31,22 @@ export async function registerPublicTerritoryRoutes(
   app: FastifyInstance,
   deps: PublicTerritoryRouteDeps
 ): Promise<void> {
-  // Registered non-global: nothing else on this Fastify instance is rate
-  // limited by this registration. Two independent limits are attached
-  // below directly to the one public route — per IP (default key) and per
-  // token (custom key) — both must pass.
-  await app.register(rateLimit, { global: false });
+  // @fastify/rate-limit is registered once, non-global, in app.ts (the
+  // admin sign-in routes use it too): nothing is rate limited unless a
+  // route attaches a limit. Two independent limits are attached below
+  // directly to the one public route — per IP and per token — both must
+  // pass. Each key names its bucket, because the store may be shared by
+  // every limiter and every API instance (rate-limit/pg-store.ts).
 
   app.get<{ Params: { token: string } }>(
     '/public/territories/:token',
     {
       preHandler: [
-        app.rateLimit({ max: 30, timeWindow: '1 minute' }),
+        app.rateLimit({
+          max: 30,
+          timeWindow: '1 minute',
+          keyGenerator: (request) => rateLimitKey('public-ip', request.ip)
+        }),
         app.rateLimit({
           max: 60,
           timeWindow: '1 minute',

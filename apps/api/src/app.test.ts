@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import type { PoolClient } from 'pg';
 
 import { buildApp } from './app.js';
+import { testAuthConfig } from './test-support/admin-auth.js';
 
 let app: FastifyInstance | undefined;
 
@@ -59,5 +61,99 @@ describe('GET /health', () => {
     expect(body).not.toContain('password');
     expect(body).not.toContain('secret');
     expect(body).not.toContain('authentication');
+  });
+});
+
+describe('client IP behind a proxy (TRUST_PROXY)', () => {
+  async function clientIp(trustProxy: boolean | number, forwardedFor: string): Promise<string> {
+    app = await buildApp({ queryPostgisVersion: async () => '3.4.3' }, { logger: false, trustProxy });
+    app.get('/test-only/ip', async (request) => ({ ip: request.ip }));
+    const response = await app.inject({ method: 'GET', url: '/test-only/ip', headers: { 'x-forwarded-for': forwardedFor } });
+    return response.json<{ ip: string }>().ip;
+  }
+
+  it('takes the address the nearest proxy saw with a hop count of 1, ignoring anything a client prepended', async () => {
+    expect(await clientIp(1, '203.0.113.10')).toBe('203.0.113.10');
+    expect(await clientIp(1, '10.0.0.1, 203.0.113.10')).toBe('203.0.113.10');
+  });
+
+  it('ignores X-Forwarded-For entirely when no proxy is trusted', async () => {
+    expect(await clientIp(false, '203.0.113.10')).toBe('127.0.0.1');
+  });
+});
+
+describe('CORS', () => {
+  const PUBLIC_ORIGIN = 'https://public.example.test';
+
+  /** Every query answers "no rows": the public route then takes its 404 path. */
+  const emptyPool = {
+    connect: async () =>
+      ({
+        query: async () => ({ rows: [] }),
+        release: () => undefined
+      }) as unknown as PoolClient
+  };
+
+  async function buildCorsApp(): Promise<FastifyInstance> {
+    return buildApp(
+      { queryPostgisVersion: async () => '3.4.3', pool: emptyPool, auth: { config: testAuthConfig() } },
+      { logger: false, publicAppOrigins: [PUBLIC_ORIGIN] }
+    );
+  }
+
+  it('lets the configured public app read the public share endpoint, without credentials', async () => {
+    app = await buildCorsApp();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/public/territories/some-token',
+      headers: { origin: PUBLIC_ORIGIN }
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.headers['access-control-allow-origin']).toBe(PUBLIC_ORIGIN);
+    expect(response.headers['access-control-allow-credentials']).toBeUndefined();
+    // The privacy headers survive CORS.
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.headers['x-robots-tag']).toBe('noindex, nofollow');
+    expect(response.headers['referrer-policy']).toBe('no-referrer');
+  });
+
+  it('answers the public endpoint preflight for the configured origin only', async () => {
+    app = await buildCorsApp();
+
+    const allowed = await app.inject({
+      method: 'OPTIONS',
+      url: '/public/territories/some-token',
+      headers: { origin: PUBLIC_ORIGIN, 'access-control-request-method': 'GET' }
+    });
+    expect(allowed.headers['access-control-allow-origin']).toBe(PUBLIC_ORIGIN);
+
+    const other = await app.inject({
+      method: 'OPTIONS',
+      url: '/public/territories/some-token',
+      headers: { origin: 'https://evil.example', 'access-control-request-method': 'GET' }
+    });
+    expect(other.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('gives no CORS grant to any other origin', async () => {
+    app = await buildCorsApp();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/public/territories/some-token',
+      headers: { origin: 'https://evil.example' }
+    });
+
+    expect(response.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it.each(['/health', '/admin/me', '/admin/territories'])('never grants the public origin access to %s', async (url) => {
+    app = await buildCorsApp();
+
+    const response = await app.inject({ method: 'GET', url, headers: { origin: PUBLIC_ORIGIN } });
+
+    expect(response.headers['access-control-allow-origin']).toBeUndefined();
   });
 });

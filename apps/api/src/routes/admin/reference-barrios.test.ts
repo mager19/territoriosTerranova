@@ -10,6 +10,13 @@ import type { FastifyInstance } from 'fastify';
 
 import { buildApp } from '../../app.js';
 import type { TransactionalPool } from '../../db/transaction.js';
+import {
+  asAdmin,
+  createInMemoryAdminSessionStore,
+  sessionCookieFor,
+  testAuthConfig,
+  type AuthenticatedClient
+} from '../../test-support/admin-auth.js';
 
 const poisonPool: TransactionalPool = {
   connect: async () => {
@@ -18,20 +25,28 @@ const poisonPool: TransactionalPool = {
 };
 
 let app: FastifyInstance | undefined;
+let admin: AuthenticatedClient;
 
 afterEach(async () => {
   await app?.close();
   app = undefined;
 });
 
-function buildTestApp(): Promise<FastifyInstance> {
-  return buildApp({ queryPostgisVersion: async () => '3.4.3', pool: poisonPool }, { logger: false });
+/** Every request through `admin` carries a valid session (in-memory store): these tests exercise validation, not the guard (see auth/admin-guard.test.ts). */
+async function buildTestApp(): Promise<FastifyInstance> {
+  const sessions = createInMemoryAdminSessionStore();
+  const built = await buildApp(
+    { queryPostgisVersion: async () => '3.4.3', pool: poisonPool, auth: { config: testAuthConfig(), sessions } },
+    { logger: false }
+  );
+  admin = asAdmin(built, await sessionCookieFor(sessions));
+  return built;
 }
 
 describe('GET /admin/reference/barrios — validation branches', () => {
   it('rejects a missing name query param without touching the database', async () => {
     app = await buildTestApp();
-    const response = await app.inject({ method: 'GET', url: '/admin/reference/barrios' });
+    const response = await admin.inject({ method: 'GET', url: '/admin/reference/barrios' });
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: 'invalid_request' });
@@ -39,7 +54,7 @@ describe('GET /admin/reference/barrios — validation branches', () => {
 
   it('rejects a blank (whitespace-only) name query param without touching the database', async () => {
     app = await buildTestApp();
-    const response = await app.inject({ method: 'GET', url: '/admin/reference/barrios?name=%20%20' });
+    const response = await admin.inject({ method: 'GET', url: '/admin/reference/barrios?name=%20%20' });
 
     expect(response.statusCode).toBe(400);
   });

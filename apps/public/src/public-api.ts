@@ -8,6 +8,11 @@
 import type { LineString, MultiPolygon, Polygon } from '@territorios/geo';
 import { isLineString, isMultiPolygon, isPolygon } from '@territorios/geo';
 
+/**
+ * Where the API lives. Production: the admin deployment's same-origin API,
+ * `https://admin-territorios-flame.vercel.app/api` (docs/deploy-vercel.md);
+ * a path prefix and a trailing slash are both fine.
+ */
 export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3000';
 
 export interface PublicTerritoryView {
@@ -123,7 +128,7 @@ export async function fetchPublicTerritory(
 ): Promise<PublicTerritoryResult> {
   let response: Response;
   try {
-    response = await fetchImpl(`${baseUrl}/public/territories/${encodeURIComponent(token)}`);
+    response = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}/public/territories/${encodeURIComponent(token)}`);
   } catch {
     return { status: 'error' };
   }

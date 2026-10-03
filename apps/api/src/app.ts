@@ -1,5 +1,12 @@
+import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
+import rateLimit, { type FastifyRateLimitStoreCtor } from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
+
+import type { AdminAuthConfig } from './config.js';
+import { registerAdminGuard } from './auth/admin-guard.js';
+import { createPgAdminSessionStore, type AdminSessionStore } from './auth/session-store.js';
+import { registerAdminAuthRoutes } from './routes/admin/auth.js';
 
 import { registerAdminProgressRoutes } from './routes/admin/progress.js';
 import { registerAdminReferenceBarrioRoutes } from './routes/admin/reference-barrios.js';
@@ -8,6 +15,7 @@ import { registerAdminTerritoryOverviewRoutes } from './routes/admin/territory-o
 import { registerAdminTerritoryRoutes } from './routes/admin/territories.js';
 import { registerPublicTerritoryRoutes } from './routes/public/territories.js';
 import type { TransactionalPool } from './db/transaction.js';
+import { rateLimitKey } from './rate-limit/keys.js';
 
 export interface AppDependencies {
   /**
@@ -22,16 +30,54 @@ export interface AppDependencies {
    * present (A3 admin routes, A4 the public one).
    */
   readonly pool?: TransactionalPool;
+  /**
+   * Required whenever `pool` is given: admin routes never register without
+   * their session guard (docs/admin-auth.md).
+   */
+  readonly auth?: AdminAuthDependencies;
+}
+
+export interface AdminAuthDependencies {
+  readonly config: AdminAuthConfig;
+  /** Defaults to the PostgreSQL store over `pool`; unit tests inject an in-memory one. */
+  readonly sessions?: AdminSessionStore;
 }
 
 export interface BuildAppOptions {
   readonly logger?: boolean;
+  /** Fastify `trustProxy` (config.trustProxy): needed for per-IP rate limits behind a proxy. */
+  readonly trustProxy?: boolean | number;
+  /** Origins allowed to call the public share endpoint cross-origin (config.publicAppOrigins). */
+  readonly publicAppOrigins?: readonly string[];
+  /**
+   * @fastify/rate-limit store. Defaults to the plugin's per-instance memory
+   * store; a deployment with several instances (Vercel) passes the shared
+   * PostgreSQL store (rate-limit/pg-store.ts, wired by create-api.ts).
+   */
+  readonly rateLimitStore?: FastifyRateLimitStoreCtor;
 }
 
 /**
- * Async because the public route registers @fastify/rate-limit and then
- * synchronously reads the `app.rateLimit` decorator it creates
- * (routes/public/territories.ts) — that decorator only exists once the
+ * TRUST_PROXY as Fastify's trustProxy. Fastify 5 ignores a bare hop count
+ * (it trusts nothing, so every client behind a proxy shares the proxy's IP
+ * and one rate-limit bucket); a hop count therefore becomes the equivalent
+ * trust function: trust the `hops` addresses nearest to the API — the socket
+ * peer and the rightmost X-Forwarded-For entries — and take the next one as
+ * the client. On Vercel, which overwrites X-Forwarded-For with the client
+ * IP, TRUST_PROXY=1 yields that IP (docs/deploy-vercel.md).
+ */
+function trustProxyOption(trustProxy: boolean | number): boolean | ((address: string, hop: number) => boolean) {
+  if (typeof trustProxy !== 'number') return trustProxy;
+  return (_address, hop) => hop < trustProxy;
+}
+
+/** apps/public's local dev server, the default when no origin is configured. */
+const DEV_PUBLIC_APP_ORIGINS = ['http://127.0.0.1:5174', 'http://localhost:5174'];
+
+/**
+ * Async because @fastify/rate-limit and @fastify/cookie are registered here
+ * and their decorators (`app.rateLimit`, `reply.setCookie`) are used by the
+ * routes registered right after — those decorators only exist once the
  * plugin's own registration has actually resolved. Fastify's own docs
  * pattern this as `await fastify.register(...)` before using the
  * decorator; calling that without awaiting here would race app.listen()/
@@ -41,16 +87,32 @@ export async function buildApp(
   deps: AppDependencies,
   options: BuildAppOptions = {}
 ): Promise<FastifyInstance> {
-  const app = Fastify({ logger: options.logger ?? true });
+  const app = Fastify({
+    logger: options.logger ?? true,
+    trustProxy: trustProxyOption(options.trustProxy ?? false)
+  });
 
-  // Admin/public are separate Vite dev servers (apps/admin :5173,
-  // apps/public :5174), cross-origin from the API (:3000). Restricted to
-  // exactly those two known local dev origins — never '*'. This is
-  // deliberately dev-scoped: a real deployment topology (reverse proxy,
-  // same-origin, or a production allowlist) is a "still open" production
-  // decision (docs/agents/README.md), not decided here.
+  // CORS is granted ONLY to the public share endpoint, ONLY for the public
+  // app's origin(s), and never with credentials: apps/public calls it
+  // cross-origin (docs/deploy-vercel.md). The admin app calls the API
+  // same-origin through /api (docs/admin-auth.md), so admin routes need — and
+  // get — no CORS grant; its session cookie is never sent cross-origin.
+  // Never '*'.
+  const publicAppOrigins = [...(options.publicAppOrigins ?? DEV_PUBLIC_APP_ORIGINS)];
   void app.register(cors, {
-    origin: ['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:5174', 'http://localhost:5174']
+    delegator: (request, callback) => {
+      const isPublicRoute = request.url.startsWith('/public/');
+      callback(null, isPublicRoute ? { origin: publicAppOrigins, methods: ['GET'], credentials: false } : { origin: false });
+    }
+  });
+
+  // Registered once, non-global: only routes that attach a limit are limited
+  // (the public share route and the admin sign-in/out routes).
+  // Every limiter's keyGenerator names its own bucket (rateLimitKey), so a
+  // shared store never mixes two limits' counters for the same client.
+  await app.register(rateLimit, {
+    global: false,
+    ...(options.rateLimitStore === undefined ? {} : { store: options.rateLimitStore })
   });
 
   // The health endpoint reflects real database state. It is never a
@@ -72,6 +134,33 @@ export async function buildApp(
   });
 
   if (deps.pool) {
+    const auth = deps.auth;
+    if (auth === undefined) {
+      throw new Error('admin routes require auth dependencies (deps.auth); refusing to register them unguarded');
+    }
+    const sessions = auth.sessions ?? createPgAdminSessionStore(deps.pool);
+    await app.register(cookie);
+    // Before any admin route: the guard attaches itself through onRoute.
+    registerAdminGuard(app, {
+      sessions,
+      allowedOrigins: auth.config.allowedOrigins,
+      activeEmails: auth.config.accounts.map((account) => account.email)
+    });
+    registerAdminAuthRoutes(app, {
+      config: auth.config,
+      sessions,
+      // Per client IP (behind a proxy this needs TRUST_PROXY, docs/admin-auth.md).
+      loginRateLimit: app.rateLimit({
+        max: 5,
+        timeWindow: '15 minutes',
+        keyGenerator: (request) => rateLimitKey('admin-login', request.ip)
+      }),
+      logoutRateLimit: app.rateLimit({
+        max: 30,
+        timeWindow: '1 minute',
+        keyGenerator: (request) => rateLimitKey('admin-logout', request.ip)
+      })
+    });
     registerAdminTerritoryRoutes(app, { pool: deps.pool });
     registerAdminTerritoryOverviewRoutes(app, { pool: deps.pool });
     registerAdminProgressRoutes(app, { pool: deps.pool });

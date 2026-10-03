@@ -1,8 +1,9 @@
 /**
  * Admin territory routes — slice 1 of the A3 brief. Registered under
- * /admin/territories by app.ts. Administrator-authenticated (A3 owns this
- * boundary; A4 owns the public one — a share token must never reach these
- * routes, and these routes never accept one).
+ * /admin/territories by app.ts. Behind the admin session guard
+ * (auth/admin-guard.ts) — a share token must never reach these routes, and
+ * these routes never accept one. Every write is attributed to the session
+ * email; client-sent actor fields are ignored.
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -15,6 +16,7 @@ import {
   setTerritoryNumber,
   submitRevision
 } from '../../domain/territories.js';
+import { sessionEmail } from '../../auth/admin-guard.js';
 import { isRecord, trySendDomainError } from './error-response.js';
 import type { TransactionalPool } from '../../db/transaction.js';
 
@@ -29,7 +31,8 @@ export function registerAdminTerritoryRoutes(app: FastifyInstance, deps: AdminTe
       const territory = await createTerritory(deps.pool, {
         name: typeof body.name === 'string' ? body.name : '',
         geometry: body.geometry,
-        author: typeof body.author === 'string' ? body.author : '',
+        // The actor is the signed-in administrator; a client-sent `author` is ignored.
+        author: sessionEmail(request),
         number: typeof body.number === 'string' ? body.number : undefined
       });
       return reply.status(201).send(territory);
@@ -81,7 +84,7 @@ export function registerAdminTerritoryRoutes(app: FastifyInstance, deps: AdminTe
     try {
       const revision = await submitRevision(deps.pool, territoryId, {
         geometry: body.geometry,
-        author: typeof body.author === 'string' ? body.author : ''
+        author: sessionEmail(request)
       });
       return reply.status(201).send(revision);
     } catch (error) {

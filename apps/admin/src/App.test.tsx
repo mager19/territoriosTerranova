@@ -1,21 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { App } from './App.js';
+import { AdminShell } from './App.js';
 import { TerritoryEditor } from './features/territory-editor/TerritoryEditor.js';
 import { TerritoryDetail } from './features/territory-detail/TerritoryDetail.js';
 import { matchPath, pathForView } from './routes.js';
 
-describe('App', () => {
+describe('AdminShell (signed in)', () => {
   it('renders the admin heading and the main landmark', () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<AdminShell email="ana@example.org" onLogout={() => undefined} />);
 
     expect(html).toContain('<main class="content"');
     expect(html).toContain('Gestión de Territorios — Administración');
   });
 
   it('renders the territory list as a card grid', () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<AdminShell email="ana@example.org" onLogout={() => undefined} />);
 
     // The grid marker plus the loading status. The old "Dibujar un
     // territorio nuevo" button is gone — that editor now lives on /nuevo.
@@ -32,8 +32,15 @@ describe('App', () => {
     expect(html).toContain('Descartar borrador');
   });
 
+  it('sizes the editor map with the .editor-map class (viewport-filling on desktop), not an inline height', () => {
+    const html = renderToStaticMarkup(<TerritoryEditor selectedTerritory={null} onSaved={() => undefined} />);
+
+    expect(html).toMatch(/<div[^>]*class="editor-map"[^>]*role="img"/);
+    expect(html).not.toContain('height:420px');
+  });
+
   it('offers a way to switch to the overview', () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<AdminShell email="ana@example.org" onLogout={() => undefined} />);
 
     expect(html).toContain('Resumen');
   });
@@ -48,7 +55,7 @@ describe('App', () => {
   });
 
   it('renders a sidebar nav with all three view links', () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<AdminShell email="ana@example.org" onLogout={() => undefined} />);
 
     expect(html).toContain('aria-label="Vistas"');
     expect(html).toMatch(/<a[^>]*href="\/resumen"[^>]*>Resumen<\/a>/);
@@ -57,7 +64,7 @@ describe('App', () => {
   });
 
   it('marks "Territorios" as the current view by default', () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<AdminShell email="ana@example.org" onLogout={() => undefined} />);
 
     expect(html).toMatch(/<a[^>]*aria-current="true"[^>]*>Territorios<\/a>/);
   });

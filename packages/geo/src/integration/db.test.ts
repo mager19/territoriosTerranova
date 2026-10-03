@@ -147,6 +147,7 @@ describe('migration runner', () => {
       const tableNames = tables.rows.map((row) => row.table_name);
       expect(tableNames).toEqual(
         expect.arrayContaining([
+          'admin_sessions',
           'audit_events',
           'progress_entries',
           'reference_barrios',

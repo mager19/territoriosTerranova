@@ -42,7 +42,7 @@
   --radius-buttons: 8px;
   --radius-largecards: 16px;
 
-  /* Map border (kept so the two inline `var(--map-border, #ccc)` refs in the .tsx resolve consistently) */
+  /* Hairline border shared by every map container (.editor-map, .session-map, ...) */
   --map-border: #e5e5e5;
 }
 
@@ -73,6 +73,31 @@ body {
   background: #eef2ff;
   border-right: 1px solid var(--color-ash);
   padding: 40px 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Signed-in account, pinned to the bottom of the sidebar: the email in
+   quiet muted text, sign-out as a default (secondary) button. */
+.sidebar-account {
+  margin-top: auto;
+  padding-top: 24px;
+  border-top: 1px solid var(--color-ash);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-account-email {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--color-steel);
+  overflow-wrap: anywhere;
+}
+
+.sidebar-logout {
+  align-self: flex-start;
 }
 
 /* The app brand in the sidebar — Inter 500, near-black, quiet. */
@@ -837,4 +862,58 @@ form > div {
 .barrio-clear:hover:not(:disabled) {
   background: var(--color-paper-mist);
   border-color: var(--color-smoke);
+}
+
+/* Sign-in: one centered card on the paper-mist canvas — hairline border,
+   12px radius, no shadow, same black-bordered inputs as the rest of the
+   app and the near-black primary CTA. */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--color-paper-mist);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--color-canvas-white);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-cards);
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.login-title {
+  font-size: 20px;
+  line-height: 1.3;
+  margin: 0 0 8px;
+}
+
+.login-card input {
+  max-width: none;
+}
+
+.login-card button[type='submit'] {
+  margin-top: 20px;
+  width: 100%;
+}
+
+/* Territory editor map. 420px on small screens; on desktop it fills most of
+   the viewport so drawing a territory has room. The height only changes with
+   the viewport, and MapLibre already resizes the map on window resize. */
+.editor-map {
+  width: 100%;
+  height: 420px;
+  border: 1px solid var(--map-border);
+}
+
+@media (min-width: 1024px) {
+  .editor-map {
+    height: calc(100vh - 200px);
+    min-height: 560px;
+  }
 }

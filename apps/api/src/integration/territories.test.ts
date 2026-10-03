@@ -24,6 +24,15 @@ import { runMigrations } from '@territorios/geo/db/migrate';
 import type { FastifyInstance } from 'fastify';
 
 import { buildApp } from '../app.js';
+import { createPgAdminSessionStore, type AdminSessionStore } from '../auth/session-store.js';
+import {
+  SECOND_ADMIN_EMAIL,
+  TEST_ADMIN_EMAIL,
+  asAdmin,
+  sessionCookieFor,
+  testAuthConfig,
+  type AuthenticatedClient
+} from '../test-support/admin-auth.js';
 
 const IMAGE = 'postgis/postgis:16-3.4';
 
@@ -137,6 +146,9 @@ let container: StartedPostgreSqlContainer;
 let databaseUrl: string;
 let pool: Pool;
 let app: FastifyInstance;
+let sessions: AdminSessionStore;
+/** Every admin request goes through a real session (admin_sessions in this container) for TEST_ADMIN_EMAIL. */
+let admin: AuthenticatedClient;
 
 async function withClient<T>(run: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: databaseUrl });
@@ -160,7 +172,12 @@ beforeAll(async () => {
   await withClient((client) => client.query(FIXTURE_BOUNDARY_SQL));
 
   pool = new Pool({ connectionString: databaseUrl, max: 5 });
-  app = await buildApp({ queryPostgisVersion: async () => '3.4.3', pool }, { logger: false });
+  sessions = createPgAdminSessionStore(pool);
+  app = await buildApp(
+    { queryPostgisVersion: async () => '3.4.3', pool, auth: { config: testAuthConfig(), sessions } },
+    { logger: false }
+  );
+  admin = asAdmin(app, await sessionCookieFor(sessions, TEST_ADMIN_EMAIL));
 }, 360_000);
 
 afterEach(async () => {
@@ -187,7 +204,7 @@ async function auditEventsFor(entityId: number): Promise<Array<{ action: string;
 
 describe('POST /admin/territories', () => {
   it('creates a territory with its first revision and an audit event', async () => {
-    const response = await app.inject({
+    const response = await admin.inject({
       method: 'POST',
       url: '/admin/territories',
       payload: { name: 'T-01', geometry: VALID_SQUARE, author: 'admin-1' }
@@ -197,11 +214,11 @@ describe('POST /admin/territories', () => {
     const body = response.json();
     expect(body).toMatchObject({ name: 'T-01', status: 'active' });
     expect(body.revisions).toHaveLength(1);
-    expect(body.revisions[0]).toMatchObject({ revisionNumber: 1, author: 'admin-1' });
+    expect(body.revisions[0]).toMatchObject({ revisionNumber: 1, author: TEST_ADMIN_EMAIL });
     expect(body.revisions[0].geometry.type).toBe('Polygon');
 
     const events = await auditEventsFor(body.id);
-    expect(events).toEqual([{ action: 'created', actor: 'admin-1' }]);
+    expect(events).toEqual([{ action: 'created', actor: TEST_ADMIN_EMAIL }]);
   });
 
   it.each([
@@ -209,7 +226,7 @@ describe('POST /admin/territories', () => {
     ['zero_area_geometry', 400, COLLINEAR],
     ['out_of_bounds', 400, OUTSIDE_BELLO]
   ])('rejects a %s geometry with a distinct %i response, never a generic 400', async (code, status, geometry) => {
-    const response = await app.inject({
+    const response = await admin.inject({
       method: 'POST',
       url: '/admin/territories',
       payload: { name: `T-${code}`, geometry, author: 'admin-1' }
@@ -219,14 +236,14 @@ describe('POST /admin/territories', () => {
   });
 
   it('rejects an unauthorized overlap with a real active territory as a 409, distinct from the other causes', async () => {
-    const first = await app.inject({
+    const first = await admin.inject({
       method: 'POST',
       url: '/admin/territories',
       payload: { name: 'T-overlap-first', geometry: OVERLAP_A, author: 'admin-1' }
     });
     expect(first.statusCode).toBe(201);
 
-    const second = await app.inject({
+    const second = await admin.inject({
       method: 'POST',
       url: '/admin/territories',
       payload: { name: 'T-overlap-second', geometry: OVERLAP_B, author: 'admin-1' }
@@ -238,24 +255,24 @@ describe('POST /admin/territories', () => {
 
 describe('GET /admin/territories and GET /admin/territories/:id', () => {
   it('lists created territories and reads one back with its revision history', async () => {
-    const created = await app.inject({
+    const created = await admin.inject({
       method: 'POST',
       url: '/admin/territories',
       payload: { name: 'T-list', geometry: VALID_SQUARE, author: 'admin-1' }
     });
     const { id } = created.json();
 
-    const list = await app.inject({ method: 'GET', url: '/admin/territories' });
+    const list = await admin.inject({ method: 'GET', url: '/admin/territories' });
     expect(list.statusCode).toBe(200);
     expect(list.json().territories.some((t: { id: number }) => t.id === id)).toBe(true);
 
-    const read = await app.inject({ method: 'GET', url: `/admin/territories/${id}` });
+    const read = await admin.inject({ method: 'GET', url: `/admin/territories/${id}` });
     expect(read.statusCode).toBe(200);
     expect(read.json().revisions).toHaveLength(1);
   });
 
   it('returns a distinct territory_not_found response, not a generic 400/500, for a nonexistent id', async () => {
-    const response = await app.inject({ method: 'GET', url: '/admin/territories/999999' });
+    const response = await admin.inject({ method: 'GET', url: '/admin/territories/999999' });
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ error: 'territory_not_found' });
   });
@@ -263,7 +280,7 @@ describe('GET /admin/territories and GET /admin/territories/:id', () => {
 
 describe('POST /admin/territories/:id/revisions', () => {
   it('appends a new revision, leaving the prior revision byte-for-byte unchanged (immutable, never updated)', async () => {
-    const created = await app.inject({
+    const created = await admin.inject({
       method: 'POST',
       url: '/admin/territories',
       payload: { name: 'T-revise', geometry: VALID_SQUARE, author: 'admin-1' }
@@ -283,15 +300,17 @@ describe('POST /admin/territories/:id/revisions', () => {
         ]
       ]
     };
-    const revised = await app.inject({
+    // Revised by the OTHER administrator: the author is that session's email.
+    const secondAdmin = asAdmin(app, await sessionCookieFor(sessions, SECOND_ADMIN_EMAIL));
+    const revised = await secondAdmin.inject({
       method: 'POST',
       url: `/admin/territories/${id}/revisions`,
       payload: { geometry: secondGeometry, author: 'admin-2' }
     });
     expect(revised.statusCode).toBe(201);
-    expect(revised.json()).toMatchObject({ revisionNumber: 2, author: 'admin-2' });
+    expect(revised.json()).toMatchObject({ revisionNumber: 2, author: SECOND_ADMIN_EMAIL });
 
-    const read = await app.inject({ method: 'GET', url: `/admin/territories/${id}` });
+    const read = await admin.inject({ method: 'GET', url: `/admin/territories/${id}` });
     const revision1After = read.json().revisions.find((r: { revisionNumber: number }) => r.revisionNumber === 1);
     expect(revision1After).toEqual(revision1Before);
     expect(read.json().revisions).toHaveLength(2);
@@ -301,7 +320,7 @@ describe('POST /admin/territories/:id/revisions', () => {
   });
 
   it('rejects a real UPDATE against territory_revisions at the database level (immutability, proven directly)', async () => {
-    const created = await app.inject({
+    const created = await admin.inject({
       method: 'POST',
       url: '/admin/territories',
       payload: { name: 'T-immutable', geometry: VALID_SQUARE, author: 'admin-1' }
@@ -316,7 +335,7 @@ describe('POST /admin/territories/:id/revisions', () => {
   });
 
   it('returns territory_not_found, not a generic error, when submitting to a nonexistent territory', async () => {
-    const response = await app.inject({
+    const response = await admin.inject({
       method: 'POST',
       url: '/admin/territories/999999/revisions',
       payload: { geometry: VALID_SQUARE, author: 'admin-1' }
@@ -328,7 +347,7 @@ describe('POST /admin/territories/:id/revisions', () => {
 
 describe('territory numbering', () => {
   it('creates with a number, then changes it', async () => {
-    const created = await app.inject({
+    const created = await admin.inject({
       method: 'POST',
       url: '/admin/territories',
       payload: { name: 'numbered-territory', geometry: VALID_SQUARE, author: 'admin-1', number: 'T-7' }
@@ -336,7 +355,7 @@ describe('territory numbering', () => {
     expect(created.statusCode).toBe(201);
     expect(created.json().number).toBe('T-7');
 
-    const renumbered = await app.inject({
+    const renumbered = await admin.inject({
       method: 'PATCH',
       url: `/admin/territories/${created.json().id}/number`,
       payload: { number: 'T-8' }
@@ -346,14 +365,14 @@ describe('territory numbering', () => {
   });
 
   it('refuses a number another territory already holds', async () => {
-    const first = await app.inject({
+    const first = await admin.inject({
       method: 'POST',
       url: '/admin/territories',
       payload: { name: 'holds-the-number', geometry: VALID_SQUARE, author: 'admin-1', number: 'T-9' }
     });
     expect(first.statusCode).toBe(201);
 
-    const second = await app.inject({
+    const second = await admin.inject({
       method: 'POST',
       url: '/admin/territories',
       payload: { name: 'wants-the-number', geometry: FAR_SQUARE, author: 'admin-1', number: 'T-9' }
@@ -364,7 +383,7 @@ describe('territory numbering', () => {
   });
 
   it('404s when numbering a territory that does not exist', async () => {
-    const response = await app.inject({
+    const response = await admin.inject({
       method: 'PATCH',
       url: '/admin/territories/999999/number',
       payload: { number: 'T-404' }

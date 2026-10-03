@@ -1,11 +1,13 @@
-import { useEffect, useState, type JSX } from 'react';
+import { useEffect, useReducer, useState, type JSX } from 'react';
 
 import { TerritoryDetail } from './features/territory-detail/TerritoryDetail.js';
 import { TerritoryEditor } from './features/territory-editor/TerritoryEditor.js';
 import { TerritoryList } from './features/territory-list/TerritoryList.js';
 import { TerritoryOverview } from './features/territory-overview/TerritoryOverview.js';
 import type { MultiPolygon, Polygon } from '@territorios/geo';
-import { getTerritory, type TerritoryWithRevisions } from './api/client.js';
+import { getMe, getTerritory, logout, onUnauthorized, type TerritoryWithRevisions } from './api/client.js';
+import { authReducer, type AuthState } from './auth/auth-state.js';
+import { LoginScreen } from './auth/LoginScreen.js';
 import { matchPath, pathForView, type RouteMatch, type View } from './routes.js';
 
 /**
@@ -36,7 +38,66 @@ function activeNavItem(view: View): 'resumen' | 'territorios' | 'nuevo' {
   return 'territorios';
 }
 
-export function App(): JSX.Element {
+export interface AppProps {
+  /** Starting auth state; `checking` in the browser (tests render the other states directly). */
+  readonly initialAuth?: AuthState;
+}
+
+/**
+ * Auth gate (docs/admin-auth.md): asks the API who is signed in, shows the
+ * login card when nobody is, and drops back to it on ANY 401 from the API
+ * (expired or revoked session). Nothing administrative renders, and no
+ * admin data is fetched, before the API confirms a session.
+ */
+export function App({ initialAuth = { status: 'checking' } }: AppProps): JSX.Element {
+  const [auth, dispatch] = useReducer(authReducer, initialAuth);
+
+  useEffect(() => onUnauthorized(() => dispatch({ type: 'unauthorized' })), []);
+
+  useEffect(() => {
+    if (initialAuth.status !== 'checking') return;
+    let cancelled = false;
+    getMe()
+      .then((me) => {
+        if (!cancelled) dispatch({ type: 'checked', email: me?.email ?? null });
+      })
+      .catch(() => {
+        // Unreachable API: show the login card; signing in reports the real error.
+        if (!cancelled) dispatch({ type: 'checked', email: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [initialAuth.status]);
+
+  async function handleLogout(): Promise<void> {
+    try {
+      await logout();
+    } finally {
+      dispatch({ type: 'signed_out' });
+    }
+  }
+
+  if (auth.status === 'checking') {
+    return (
+      <div className="login-page">
+        <p role="status">Comprobando sesión…</p>
+      </div>
+    );
+  }
+  if (auth.status === 'anonymous') {
+    return <LoginScreen onSignedIn={(email) => dispatch({ type: 'signed_in', email })} />;
+  }
+  return <AdminShell email={auth.email} onLogout={() => void handleLogout()} />;
+}
+
+export interface AdminShellProps {
+  /** The signed-in administrator, shown in the sidebar. */
+  readonly email: string;
+  readonly onLogout: () => void;
+}
+
+export function AdminShell({ email, onLogout }: AdminShellProps): JSX.Element {
   const [selected, setSelected] = useState<TerritoryWithRevisions | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [remainingAreaGeometry, setRemainingAreaGeometry] = useState<Polygon | MultiPolygon | null>(null);
@@ -170,6 +231,14 @@ export function App(): JSX.Element {
             Nuevo Territorio
           </a>
         </nav>
+        <div className="sidebar-account">
+          <p className="sidebar-account-email" title={email}>
+            {email}
+          </p>
+          <button type="button" className="sidebar-logout" onClick={onLogout}>
+            Cerrar sesión
+          </button>
+        </div>
       </aside>
       <main className="content">
         {route.view === 'territorios' && <TerritoryList refreshToken={refreshToken} />}

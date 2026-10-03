@@ -6,7 +6,6 @@ import { ADMIN_BASEMAP, BasemapAttribution, applyBasemap } from './basemap-ui.js
 import {
   ApiError,
   createTerritory,
-  DEFAULT_ACTOR,
   describeApiError,
   listTerritories,
   searchReferenceBarrios,
@@ -495,13 +494,12 @@ export function TerritoryEditor({
       const trimmedNumber = number.trim();
       const saved = selectedTerritory
         ? await (async () => {
-            const revision = await submitRevision(selectedTerritory.id, { geometry, author: DEFAULT_ACTOR });
+            const revision = await submitRevision(selectedTerritory.id, { geometry });
             return { ...selectedTerritory, revisions: [...selectedTerritory.revisions, revision] };
           })()
         : await createTerritory({
             name: name.trim(),
             geometry,
-            author: DEFAULT_ACTOR,
             ...(trimmedNumber === '' ? {} : { number: trimmedNumber })
           });
       setDraft(resetDraft());
@@ -522,6 +520,7 @@ export function TerritoryEditor({
 
       <div
         ref={containerRef}
+        className="editor-map"
         role="img"
         aria-label={`Mapa centrado en Bello, para dibujar el contorno de un territorio. ${
           editingVertices
@@ -530,7 +529,6 @@ export function TerritoryEditor({
               ? `${draft.vertices.length} punto(s) ubicado(s).`
               : 'Todavía no hay puntos ubicados.'
         }`}
-        style={{ width: '100%', height: '420px', border: '1px solid var(--map-border, #ccc)' }}
       />
       <BasemapAttribution kind={ADMIN_BASEMAP.kind} />
       {territoryListFailed && (
