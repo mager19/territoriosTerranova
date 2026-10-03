@@ -34,8 +34,9 @@ exist; if you cite a file here, create it in the same change.
   bullet used to state). A share token and progress entries attach directly to the
   territory; there is no per-person claim, no minimum, and no completion
   requirement to enforce.
-- Keep administrative and public boundaries separate. A share token is a scoped
-  public bearer secret, never an administrator principal.
+- Keep administrative and public boundaries separate. A share token (legacy) or
+  a territory slug is a public, read-only handle, never an administrator
+  principal.
 - The admin API requires a session from one of the env-configured admin
   accounts (`ADMIN_1_*`, `ADMIN_2_*`; docs/admin-auth.md). Every `/admin/*`
   route except sign-in is guarded, and the actor of every admin write is the
@@ -75,9 +76,18 @@ reuse and freshness approval is still required before production use.
   pause points, cycle number, baseline, and progress percentage stay excluded,
   so no history can be reconstructed.
   See docs/agents/A4-sharing.md and A6-public-web.md for the exact allowlist.
-- Protect public endpoints with opaque high-entropy tokens, hash storage,
-  revocation, optional expiry, HTTPS, rate limits, `no-store`, `noindex`, a
-  restrictive referrer policy, and short justified access-log retention.
+- Public share links are readable, fixed URLs: `<public app>/t/<slug>`, e.g.
+  `https://publico-territorios.vercel.app/t/nv-01` (2026-10-03 product
+  decision, replacing opaque high-entropy token links with hash storage,
+  revocation, and expiry). The slug derives from the territory name, is
+  assigned once, and never changes (db/migrations/0011_territory_slugs.sql).
+  Accepted trade-offs, explicitly and informed: URLs are guessable, so anyone
+  who infers the pattern can see every territory's public view, and access
+  cannot be revoked per link. Accepted because the volunteer group is small,
+  the public view carries no personal data (the allowlist above), and it is
+  read-only. Legacy `/#<token>` links keep working. Every public endpoint
+  still requires HTTPS, rate limits, `no-store`, `noindex`, a restrictive
+  referrer policy, and short justified access-log retention.
 - Never record household or member data.
 
 ## Verification expectations
