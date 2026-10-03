@@ -37,7 +37,9 @@ Share URLs (2026-10-03 product decision, AGENTS.md "Privacy rules"; contract in
 
 The page shows:
 
-- The territory boundary
+- The territory boundary — every part of a multi-part territory (2026-10-03,
+  `boundary` may be a MultiPolygon). The view fits all parts; the name label and
+  the "Cómo llegar" destination sit on the largest part's label point
 - Approved coverage status, using the vocabulary the API returns
 - Where remaining-area geometry exists, render it. Where it does not, display
   **unknown** — never an inference

@@ -82,7 +82,13 @@ and progress entries.
 
 - [ ] Server-side geometry validation rejects invalid, zero-area, out-of-city, and
       unauthorized overlapping polygons — with a distinct error per cause, never a
-      generic 400
+      generic 400. Since 2026-10-03 (0012) territory geometry is a Polygon or a
+      MultiPolygon: create/revision accept either, responses return a Polygon for
+      one part and a MultiPolygon for several, and the same four causes apply to
+      every part (overlapping or edge-sharing parts are `invalid_geometry`, a
+      zero-area part is `zero_area_geometry`). A coverage session draws one
+      Polygon; it must lie within the territory (any part) and the remaining area
+      is the territory minus the covered areas, across parts
 - [ ] Attempting to mutate an existing revision fails; a test proves it
 - [ ] Every lifecycle transition writes an audit event with actor, timestamp, and
       reason where required
