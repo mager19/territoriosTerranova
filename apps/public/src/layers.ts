@@ -7,6 +7,7 @@
  */
 
 import type { MultiPolygon, Polygon } from '@territorios/geo';
+import polylabel from 'polylabel';
 
 import type { PublicTerritoryView } from './public-api.js';
 
@@ -55,4 +56,32 @@ export function legendItems(view: LegendView): LegendItem[] {
     items.push({ key: 'route', label: 'Recorrido', color: LAYER_COLORS.route, shape: 'line' });
   }
   return items;
+}
+
+/** ~1 m at Bello's latitude: plenty for placing a label. */
+const LABEL_PRECISION_DEGREES = 0.00001;
+
+/**
+ * Where the territory name sits on the map: the pole of inaccessibility
+ * (the interior point farthest from every edge), not the centroid or the
+ * bounding-box center, both of which can fall outside an L- or U-shaped
+ * territory. Planar lon/lat math is fine at this scale.
+ */
+export function territoryLabelPoint(boundary: Polygon): [number, number] {
+  const [lon, lat] = polylabel(boundary.coordinates, LABEL_PRECISION_DEGREES);
+  return [lon as number, lat as number];
+}
+
+/**
+ * The territory name drawn over the map as a DOM marker (2026-10-03). The
+ * OSM raster style has no glyphs for a MapLibre symbol layer, and loading
+ * them from elsewhere would break A6's no-external-assets rule; a DOM label
+ * uses the app's own self-hosted font. The name is already public (it is
+ * the page heading); it is set as text, never as HTML.
+ */
+export function createTerritoryLabelElement(name: string): HTMLDivElement {
+  const label = document.createElement('div');
+  label.className = 'territory-label';
+  label.textContent = name;
+  return label;
 }

@@ -3,6 +3,7 @@ import './styles.css';
 
 import { runApp } from './app.js';
 import { selectBasemap } from './basemap.js';
+import { createTerritoryLabelElement, territoryLabelPoint } from './layers.js';
 import { MAPLIBRE_WORKER_URL } from './maplibre-worker.js';
 import {
   BELLO_CENTER,
@@ -60,6 +61,9 @@ void runApp(container, {
     map.on('load', () => {
       installTerritoryLayers(map);
       renderTerritory(map, result.view);
+      new Marker({ element: createTerritoryLabelElement(result.view.territoryName), anchor: 'center' })
+        .setLngLat(territoryLabelPoint(result.view.boundary))
+        .addTo(map);
       fitToBoundingBox(map, box);
     });
 
