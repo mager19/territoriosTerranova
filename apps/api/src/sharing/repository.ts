@@ -22,7 +22,7 @@
  * distinguishing signal.
  */
 
-import type { LineString, MultiPolygon, Point, Polygon } from '@territorios/geo';
+import type { LineString, MultiPolygon, Polygon } from '@territorios/geo';
 
 import { generateShareToken, hashShareToken } from './token-crypto.js';
 import { recordAuditEvent } from '../domain/audit.js';
@@ -138,18 +138,20 @@ export interface PublicTerritoryView {
    */
   readonly route: LineString | null;
   /**
-   * The current cycle's latest recorded pause point — "where the work
-   * stopped". Deliberately exposed (2026-09-26 product decision, AGENTS.md
-   * "Privacy rules"). Null when no entry of the current cycle recorded one.
+   * The note of the single LATEST progress entry of the current cycle, so
+   * volunteers know where to resume. Deliberately exposed (2026-10-03
+   * product decision, AGENTS.md "Privacy rules"; it replaced the pause
+   * point, which is no longer public). Null when that latest entry has no
+   * note — never a fallback to an older note, which could be stale.
    */
-  readonly pausePoint: Point | null;
+  readonly note: string | null;
   /**
    * The UNION of every coverage session's covered area in the current
    * cycle, merged into ONE shape (2026-09-26 product decision). Per-session
    * geometries, session count, and timestamps are never exposed, so the
    * history cannot be reconstructed from it. Null when nothing was covered.
-   * Every other progress-entry field (note, recordedBy, recordedAt,
-   * baseline, cycle number) stays excluded.
+   * Every other progress-entry field (older notes, pause point, recordedBy,
+   * recordedAt, baseline, cycle number) stays excluded.
    */
   readonly coveredArea: Polygon | MultiPolygon | null;
 }
@@ -161,7 +163,7 @@ interface PublicViewRow {
   readonly boundary: Polygon;
   readonly remaining_area: Polygon | MultiPolygon | null;
   readonly route: LineString | null;
-  readonly pause_point: Point | null;
+  readonly note: string | null;
   readonly covered_area: Polygon | MultiPolygon | null;
 }
 
@@ -186,7 +188,7 @@ export async function resolvePublicTerritoryView(
          ST_AsGeoJSON(tr.geom)::json AS boundary,
          ST_AsGeoJSON(coverage.remaining_area)::json AS remaining_area,
          ST_AsGeoJSON(pe.route)::json AS route,
-         ST_AsGeoJSON(pause.pause_point)::json AS pause_point,
+         latest.note,
          ST_AsGeoJSON(covered.covered_area)::json AS covered_area
        FROM share_tokens st
        JOIN territories t ON t.id = st.territory_id
@@ -225,14 +227,16 @@ export async function resolvePublicTerritoryView(
           LIMIT 1
         ) pe ON TRUE
         LEFT JOIN LATERAL (
-          SELECT pause_point
+          -- The single latest entry of the current cycle, WITH OR WITHOUT a
+          -- note (2026-10-03 decision): a latest entry without a note yields
+          -- NULL rather than falling back to an older, possibly stale note.
+          SELECT NULLIF(btrim(note), '') AS note
           FROM progress_entries
           WHERE territory_id = t.id
-            AND pause_point IS NOT NULL
             AND recorded_at >= cycle_start.started_at
           ORDER BY recorded_at DESC, id DESC
           LIMIT 1
-        ) pause ON TRUE
+        ) latest ON TRUE
         LEFT JOIN LATERAL (
           -- One merged shape, never per-session rows (2026-09-26 decision).
           -- ST_CollectionExtract(..., 3) keeps the result Polygon/MultiPolygon.
@@ -263,7 +267,7 @@ export async function resolvePublicTerritoryView(
       remainingArea: row.remaining_area,
       remainingAreaStatus: row.remaining_area === null ? 'unknown' : 'recorded',
       route: row.route,
-      pausePoint: row.pause_point,
+      note: row.note,
       coveredArea: row.covered_area
     };
   });

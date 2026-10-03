@@ -51,7 +51,7 @@ const EAST_STRIP = {
 };
 
 // The pinned public allowlist (sorted).
-const PUBLIC_KEYS = ['boundary', 'coveredArea', 'pausePoint', 'remainingArea', 'remainingAreaStatus', 'route', 'territoryName'];
+const PUBLIC_KEYS = ['boundary', 'coveredArea', 'note', 'remainingArea', 'remainingAreaStatus', 'route', 'territoryName'];
 
 const FIXTURE_BOUNDARY_SQL = `
   INSERT INTO reference_municipal_boundary (id, name, geom, source_url, retrieved_at, attribution)
@@ -173,9 +173,11 @@ describe('GET /public/territories/:token — response shape', () => {
     // This is the pinned list. Adding a field to the public response
     // requires deliberately updating this test — that friction is the
     // point (A4 brief: "must break when someone adds a field carelessly").
-    // `route` (2026-09-08) and `pausePoint` + the merged current-cycle
-    // `coveredArea` (2026-09-26) are the deliberate exceptions to the
-    // exclusion list below (product decisions, AGENTS.md "Privacy rules").
+    // `route` (2026-09-08), the merged current-cycle `coveredArea`
+    // (2026-09-26), and the latest session `note` (2026-10-03) are the
+    // deliberate exceptions to the exclusion list below (product
+    // decisions, AGENTS.md "Privacy rules"). `pausePoint` was removed
+    // from the public view on 2026-10-03.
     expect(Object.keys(body).sort()).toEqual(PUBLIC_KEYS);
   });
 
@@ -298,36 +300,47 @@ describe('GET /public/territories/:token — response shape', () => {
       remainingArea: null,
       remainingAreaStatus: 'unknown',
       route: null,
-      pausePoint: null,
+      note: null,
       coveredArea: null
     });
     expect(Object.keys(response.json())).not.toContain('operationalState');
   });
 
-  it('never leaks recordedBy identity, notes, timestamps, baseline, cycle, history, or internal ids', async () => {
+  it('never leaks recordedBy identity, older notes, timestamps, baseline, cycle, history, pause point, or internal ids', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
-    await app.inject({
+    const first = await app.inject({
       method: 'POST',
       url: `/admin/territories/${territoryId}/progress`,
       payload: {
         recordedBy: 'worker-1',
-        note: 'a secret note the public must never see',
+        note: 'an older note the public must never see',
         coveredArea: WEST_HALF,
         baseline: 'whole_territory',
         pausePoint: { type: 'Point', coordinates: [-75.573, 6.358] },
         route: { type: 'LineString', coordinates: [[-75.5738, 6.3575], [-75.5732, 6.3585]] }
       }
     });
+    expect(first.statusCode).toBe(201);
+    const second = await app.inject({
+      method: 'POST',
+      url: `/admin/territories/${territoryId}/progress`,
+      payload: { recordedBy: 'worker-2', note: 'Quedamos en la esquina', coveredArea: EAST_STRIP }
+    });
+    expect(second.statusCode).toBe(201);
 
     const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
     const body = response.json();
     const raw = JSON.stringify(body);
-    expect(raw).not.toContain('worker-1');
-    expect(raw).not.toContain('secret note');
+    // The latest session's note is the one deliberate text exposure (2026-10-03).
+    expect(body.note).toBe('Quedamos en la esquina');
+    expect(raw).not.toContain('older note');
+    expect(raw).not.toMatch(/worker-[12]/);
     expect(raw).not.toMatch(/"id"\s*:/); // no raw id field anywhere in the payload
     expect(raw).not.toContain('recordedAt');
-    expect(raw).not.toMatch(/recorded(By|At)|note|baseline|cycle|createdAt|history|sessions/i);
+    expect(raw).not.toMatch(/recorded(By|At)|notes|baseline|cycle|createdAt|history|sessions|pause/i);
+    expect(raw.match(/note/gi)).toEqual(['note']); // only the single `note` key itself
     expect(Object.keys(body).sort()).toEqual(PUBLIC_KEYS);
+    expect(body).not.toHaveProperty('pausePoint');
   });
 
   it('exposes the route line by deliberate exception — a volunteer resuming their own coverage', async () => {
@@ -364,33 +377,38 @@ describe('GET /public/territories/:token — response shape', () => {
     expect(response.json().route).toEqual(route);
   });
 
-  it('exposes the latest non-null pause point of the current cycle — where the work stopped', async () => {
+  it('exposes the note of the latest session of the current cycle — where to resume', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
-    const firstPause = { type: 'Point', coordinates: [-75.5735, 6.358] };
-    const laterPause = { type: 'Point', coordinates: [-75.5722, 6.3585] };
     const record = (payload: Record<string, unknown>) =>
       app.inject({ method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload });
 
-    expect((await record({ recordedBy: 'worker-1', coveredArea: WEST_HALF, baseline: 'whole_territory', pausePoint: firstPause })).statusCode).toBe(201);
-    expect((await record({ recordedBy: 'worker-1', coveredArea: EAST_STRIP })).statusCode).toBe(201);
+    expect((await record({ recordedBy: 'worker-1', coveredArea: WEST_HALF, baseline: 'whole_territory', note: 'first note' })).statusCode).toBe(201);
+    expect((await record({ recordedBy: 'worker-1', coveredArea: EAST_STRIP, note: 'Quedamos en la Diagonal 57' })).statusCode).toBe(201);
 
-    let body = (await app.inject({ method: 'GET', url: `/public/territories/${token}` })).json();
-    // The latest entry recorded no pause point: the latest RECORDED one is shown.
-    expect(body.pausePoint).toEqual(firstPause);
-
-    const middle = {
-      type: 'Polygon',
-      coordinates: [[[-75.5729, 6.357], [-75.5726, 6.357], [-75.5726, 6.359], [-75.5729, 6.359], [-75.5729, 6.357]]]
-    };
-    expect((await record({ recordedBy: 'worker-1', coveredArea: middle, pausePoint: laterPause })).statusCode).toBe(201);
-    body = (await app.inject({ method: 'GET', url: `/public/territories/${token}` })).json();
-    expect(body.pausePoint).toEqual(laterPause);
+    // One GET only: the file-wide app shares one per-IP rate-limit bucket.
+    const body = (await app.inject({ method: 'GET', url: `/public/territories/${token}` })).json();
+    expect(body.note).toBe('Quedamos en la Diagonal 57');
+    expect(JSON.stringify(body)).not.toContain('first note');
   });
 
-  it('reports the pause point and covered area as null when nothing was recorded', async () => {
+  it('returns a null note when the latest session has none — never falls back to an older, stale note', async () => {
+    const { token, territoryId } = await createTerritoryAndShare();
+    const record = (payload: Record<string, unknown>) =>
+      app.inject({ method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload });
+
+    expect((await record({ recordedBy: 'worker-1', coveredArea: WEST_HALF, baseline: 'whole_territory', note: 'stale note' })).statusCode).toBe(201);
+    expect((await record({ recordedBy: 'worker-1', coveredArea: EAST_STRIP, note: '   ' })).statusCode).toBe(201);
+
+    const response = await app.inject({ method: 'GET', url: `/public/territories/${token}` });
+    const body = response.json();
+    expect(body.note).toBeNull();
+    expect(JSON.stringify(body)).not.toContain('stale note');
+  });
+
+  it('reports the note and covered area as null when nothing was recorded', async () => {
     const { token } = await createTerritoryAndShare();
     const body = (await app.inject({ method: 'GET', url: `/public/territories/${token}` })).json();
-    expect(body.pausePoint).toBeNull();
+    expect(body.note).toBeNull();
     expect(body.coveredArea).toBeNull();
   });
 
@@ -419,21 +437,20 @@ describe('GET /public/territories/:token — response shape', () => {
     expect(rows[0]!.merged).toBeCloseTo(rows[0]!.expected, 12);
   });
 
-  it('excludes a previous cycle’s pause point and covered area after an administrator reopens work', async () => {
+  it('excludes a previous cycle’s note and covered area after an administrator reopens work', async () => {
     const { token, territoryId } = await createTerritoryAndShare();
-    const oldPause = { type: 'Point', coordinates: [-75.5735, 6.358] };
     const state = (payload: Record<string, unknown>) =>
       app.inject({ method: 'POST', url: `/admin/territories/${territoryId}/operational-state`, payload });
     const record = (payload: Record<string, unknown>) =>
       app.inject({ method: 'POST', url: `/admin/territories/${territoryId}/progress`, payload });
 
     await state({ action: 'in_progress', actor: 'admin-1' });
-    await record({ recordedBy: 'admin-1', coveredArea: WEST_HALF, baseline: 'whole_territory', pausePoint: oldPause });
+    await record({ recordedBy: 'admin-1', coveredArea: WEST_HALF, baseline: 'whole_territory', note: 'previous cycle note' });
     await state({ action: 'cycle_completed', actor: 'admin-1', effectiveCompletionDate: '2026-09-21' });
     await state({ action: 'reopened', actor: 'admin-1', reason: 'new work started' });
 
     let body = (await app.inject({ method: 'GET', url: `/public/territories/${token}` })).json();
-    expect(body.pausePoint).toBeNull();
+    expect(body.note).toBeNull();
     expect(body.coveredArea).toBeNull();
 
     // New cycle: only the new session is reflected, never merged with the old one.
@@ -441,7 +458,8 @@ describe('GET /public/territories/:token — response shape', () => {
     expect(newCycleSession.statusCode).toBe(201);
     body = (await app.inject({ method: 'GET', url: `/public/territories/${token}` })).json();
     expect(body.coveredArea).toEqual(EAST_STRIP);
-    expect(body.pausePoint).toBeNull();
+    expect(body.note).toBeNull();
+    expect(JSON.stringify(body)).not.toContain('previous cycle note');
   });
 
   it('reports the route as null when no progress entry has recorded one — never inferred', async () => {

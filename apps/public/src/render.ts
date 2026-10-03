@@ -15,7 +15,11 @@ export interface PageElements {
   readonly mapContainer: HTMLDivElement;
   /** Map key listing ONLY the layers the resolved territory actually draws; hidden otherwise. */
   readonly legend: HTMLUListElement;
+  /** The latest session's note (2026-10-03 decision) — shown above the map only when present. */
+  readonly note: HTMLElement;
 }
+
+export const NOTE_HEADING = 'Nota del último grupo';
 
 /**
  * Builds the page's static DOM skeleton once. The map is mounted into
@@ -56,6 +60,11 @@ export function mountPage(root: HTMLElement): PageElements {
   locationStatus.className = 'location-status';
   locationStatus.hidden = true;
 
+  const note = document.createElement('section');
+  note.className = 'session-note';
+  note.setAttribute('aria-label', NOTE_HEADING);
+  note.hidden = true;
+
   const mapContainer = document.createElement('div');
   mapContainer.id = 'map';
   mapContainer.setAttribute('role', 'img');
@@ -71,8 +80,8 @@ export function mountPage(root: HTMLElement): PageElements {
   attribution.className = 'attribution';
   attribution.textContent = '© OpenStreetMap contributors';
 
-  root.replaceChildren(heading, status, actions, locationStatus, mapContainer, legend, attribution);
-  return { heading, status, actions, directionsLink, locateButton, locationStatus, mapContainer, legend };
+  root.replaceChildren(heading, status, actions, locationStatus, note, mapContainer, legend, attribution);
+  return { heading, status, actions, directionsLink, locateButton, locationStatus, mapContainer, legend, note };
 }
 
 export function renderStatus(elements: PageElements, state: ViewState): void {
@@ -82,6 +91,31 @@ export function renderStatus(elements: PageElements, state: ViewState): void {
   elements.actions.hidden = state.status !== 'ok';
   elements.mapContainer.hidden = state.status !== 'ok';
   renderLegend(elements.legend, state);
+  renderNote(elements.note, state);
+}
+
+/**
+ * Volunteer-written free text: set ONLY through textContent so markup in a
+ * note is displayed literally and can never be interpreted as HTML.
+ */
+function renderNote(container: HTMLElement, state: ViewState): void {
+  const text = state.status === 'ok' ? state.view.note : null;
+  if (!text) {
+    container.replaceChildren();
+    container.hidden = true;
+    return;
+  }
+
+  const title = document.createElement('p');
+  title.className = 'session-note-title';
+  title.textContent = NOTE_HEADING;
+
+  const body = document.createElement('p');
+  body.className = 'session-note-text';
+  body.textContent = text;
+
+  container.replaceChildren(title, body);
+  container.hidden = false;
 }
 
 function renderLegend(legend: HTMLUListElement, state: ViewState): void {

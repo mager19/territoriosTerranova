@@ -5,8 +5,8 @@
  * endpoint").
  */
 
-import type { LineString, MultiPolygon, Point, Polygon } from '@territorios/geo';
-import { isLineString, isMultiPolygon, isPoint, isPolygon } from '@territorios/geo';
+import type { LineString, MultiPolygon, Polygon } from '@territorios/geo';
+import { isLineString, isMultiPolygon, isPolygon } from '@territorios/geo';
 
 export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3000';
 
@@ -29,10 +29,12 @@ export interface PublicTerritoryView {
    */
   readonly route: LineString | null;
   /**
-   * Where the work stopped: the current cycle's latest recorded pause
-   * point (2026-09-26 product decision, AGENTS.md "Privacy rules").
+   * The note of the current cycle's LATEST session, so volunteers know
+   * where to resume (2026-10-03 product decision, AGENTS.md "Privacy
+   * rules"; it replaced the former pause point). Plain text — always
+   * rendered via textContent, never as HTML. Null when absent.
    */
-  readonly pausePoint: Point | null;
+  readonly note: string | null;
   /**
    * The area already done: every covered area of the current cycle merged
    * into ONE shape by the server (2026-09-26 product decision). Tolerates
@@ -62,19 +64,28 @@ function isAreaGeometry(value: unknown): value is Polygon | MultiPolygon {
   return isPolygon(value) || isMultiPolygon(value) || isEmptyPolygon(value);
 }
 
+/** A note is shown only when it has visible text; blank reads as null. */
+function parseNote(value: unknown): string | null | undefined {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') return undefined;
+  return value.trim() === '' ? null : value;
+}
+
 /**
  * Reads ONLY the seven allowlisted fields off the raw response body. This
  * is the actual enforcement point for the A6 hard constraint "do not
  * render assignee identity, notes, timestamps, history ... even if the API
  * mistakenly returns them" — any other field on the raw JSON is never
  * touched, structurally, no matter what the server sends. `route`
- * (2026-09-08) and `pausePoint` + `coveredArea` (2026-09-26) are the
- * deliberate inclusions beyond the original four (A4's public contract,
- * AGENTS.md "Privacy rules"). See public-api.test.ts for the test that
- * proves an unexpected field never reaches the returned view.
+ * (2026-09-08), `coveredArea` (2026-09-26), and the latest session
+ * `note` (2026-10-03) are the deliberate inclusions beyond the original
+ * four (A4's public contract, AGENTS.md "Privacy rules"). A `pausePoint`
+ * (public until 2026-10-03) is ignored like any other unexpected field.
+ * See public-api.test.ts for the test that proves an unexpected field
+ * never reaches the returned view.
  *
- * `pausePoint` and `coveredArea` are read as null when absent, so an API
- * deployed before 2026-09-26 still renders instead of failing outright.
+ * `note` and `coveredArea` are read as null when absent, so an older API
+ * deployment still renders instead of failing outright.
  */
 function parseView(raw: unknown): PublicTerritoryView | null {
   if (typeof raw !== 'object' || raw === null) return null;
@@ -85,7 +96,7 @@ function parseView(raw: unknown): PublicTerritoryView | null {
   const remainingArea = record.remainingArea;
   const remainingAreaStatus = record.remainingAreaStatus;
   const route = record.route;
-  const pausePoint = record.pausePoint ?? null;
+  const note = parseNote(record.note);
   const coveredArea = record.coveredArea ?? null;
 
   if (typeof territoryName !== 'string' || territoryName.trim() === '') return null;
@@ -93,10 +104,10 @@ function parseView(raw: unknown): PublicTerritoryView | null {
   if (remainingArea !== null && !isAreaGeometry(remainingArea)) return null;
   if (remainingAreaStatus !== 'recorded' && remainingAreaStatus !== 'unknown') return null;
   if (route !== null && !isLineString(route)) return null;
-  if (pausePoint !== null && !isPoint(pausePoint)) return null;
+  if (note === undefined) return null;
   if (coveredArea !== null && !isAreaGeometry(coveredArea)) return null;
 
-  return { territoryName, boundary, remainingArea, remainingAreaStatus, route, pausePoint, coveredArea };
+  return { territoryName, boundary, remainingArea, remainingAreaStatus, route, note, coveredArea };
 }
 
 /**

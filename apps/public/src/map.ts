@@ -202,7 +202,6 @@ function setSource(map: MapLibreMap, sourceId: string, geometry: Geometry | null
 
 export type RenderableView = Pick<PublicTerritoryView, 'boundary' | 'coveredArea' | 'remainingArea' | 'route'>;
 
-/** The pause point is not a layer here: main.ts draws it as a labeled DOM marker (see layers.ts). */
 export function renderTerritory(map: MapLibreMap, view: RenderableView): void {
   setSource(map, 'territory-boundary', view.boundary);
   // An explicit empty polygon ("nothing left" / "nothing done") has nothing to draw.

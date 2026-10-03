@@ -35,27 +35,37 @@ Exactly one read-only endpoint returning one territory's approved map informatio
 The response is built by an **explicit allowlist**. Never serialize a domain
 object and remove fields — that pattern leaks the moment someone adds a column.
 
-Excluded by default, without exception: assignee identity, notes, timestamps,
-history, other territories, AMVA attributes, internal ids.
+Excluded by default: assignee identity, notes (except the single latest
+session note below), timestamps, history, other territories, AMVA attributes,
+internal ids.
 
 Exact public allowlist (pinned by `apps/api/src/integration/sharing.test.ts`):
 `territoryName`, `boundary`, `remainingArea`, `remainingAreaStatus`, `route`,
-`pausePoint`, `coveredArea`. The deliberate inclusions beyond the original four,
+`coveredArea`, `note`. The deliberate inclusions beyond the original four,
 each by explicit product decision because volunteers need them to resume work:
 
 - **route** (2026-09-08): the current cycle's latest *recorded* route (a
   LineString) — a later entry without a route does not hide it.
-- **pausePoint** (2026-09-26): the current cycle's latest non-null pause point
-  ("where the work stopped"), or null.
 - **coveredArea** (2026-09-26): the `ST_Union` of every covered area in the
   current cycle, returned as ONE Polygon/MultiPolygon, or null. Per-session
   geometries, session count, timestamps, recordedBy, notes, cycle number,
   baseline, and progress percentage are never exposed, so the session history
   cannot be reconstructed from it.
+- **note** (2026-10-03): the note of the single LATEST progress entry of the
+  current cycle (`recorded_at DESC, id DESC`), so volunteers know where to
+  resume. If that latest entry has no (or a blank) note, `note` is null — it
+  never falls back to an older note, which could be stale. Older notes and
+  previous cycles' notes are never exposed. Admins are warned in the recording
+  UI not to write personal data in it.
+
+Removed: **pausePoint** was public from 2026-09-26 until 2026-10-03, when it
+was dropped from the allowlist (admins found it confusing; the latest session
+note replaces it). Recorded pause points stay in the database but are never
+returned publicly.
 
 All three are resolved inside the same single query with the same joins for
 every token outcome (timing side-channel protection), and none relaxes the
-identity/notes/timestamps/history exclusions above.
+identity/older-notes/timestamps/history exclusions above.
 
 ### Transport and headers
 

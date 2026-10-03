@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Polygon } from '@territorios/geo';
 
-import { createPausePointMarkerElement, hasDrawableArea, LAYER_COLORS, legendItems, PAUSE_POINT_LABEL } from './layers.js';
+import { hasDrawableArea, LAYER_COLORS, legendItems } from './layers.js';
 
 const SQUARE: Polygon = {
   type: 'Polygon',
@@ -23,7 +23,7 @@ describe('hasDrawableArea', () => {
 
 describe('legendItems', () => {
   it('gives the done area its own distinct color from the pending area', () => {
-    const items = legendItems({ coveredArea: SQUARE, remainingArea: SQUARE, route: null, pausePoint: null });
+    const items = legendItems({ coveredArea: SQUARE, remainingArea: SQUARE, route: null });
 
     expect(items.map((item) => [item.label, item.color])).toEqual([
       ['Hecho', LAYER_COLORS.covered],
@@ -33,31 +33,15 @@ describe('legendItems', () => {
   });
 
   it('omits an empty covered area — nothing done yet has nothing to explain', () => {
-    const items = legendItems({ coveredArea: EMPTY, remainingArea: null, route: null, pausePoint: null });
+    const items = legendItems({ coveredArea: EMPTY, remainingArea: null, route: null });
 
     expect(items).toEqual([]);
   });
 
-  it('shows the pause point as a point entry labeled "Aquí quedamos"', () => {
-    const items = legendItems({
-      coveredArea: null,
-      remainingArea: null,
-      route: null,
-      pausePoint: { type: 'Point', coordinates: [-75.573, 6.358] }
-    });
+  it('never lists a pause point — removed from the public view on 2026-10-03', () => {
+    const items = legendItems({ coveredArea: SQUARE, remainingArea: SQUARE, route: null });
 
-    expect(items).toEqual([{ key: 'pausePoint', label: PAUSE_POINT_LABEL, color: LAYER_COLORS.pausePoint, shape: 'point' }]);
-    expect(PAUSE_POINT_LABEL).toBe('Aquí quedamos');
-  });
-});
-
-describe('createPausePointMarkerElement', () => {
-  it('builds a labeled, accessible marker that always shows "Aquí quedamos"', () => {
-    const marker = createPausePointMarkerElement();
-
-    expect(marker.textContent).toBe('Aquí quedamos');
-    expect(marker.getAttribute('role')).toBe('img');
-    expect(marker.getAttribute('aria-label')).toBe('Aquí quedamos');
-    expect(marker.querySelector('.pause-point-dot')).not.toBeNull();
+    expect(items.map((item) => item.key)).toEqual(['covered', 'remaining']);
+    expect(Object.keys(LAYER_COLORS)).not.toContain('pausePoint');
   });
 });

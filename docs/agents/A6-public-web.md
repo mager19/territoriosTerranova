@@ -55,7 +55,7 @@ bundle, smaller attack surface, less to audit.
   Design as if the viewer is a stranger, because eventually they are.
 - **Never fetch from an admin endpoint.** Not even for convenience during
   development. The bundle must contain no admin URL.
-- Do not render assignee identity, notes, timestamps, history, other
+- Do not render assignee identity, older notes, timestamps, history, other
   territories, or AMVA attributes — even if the API mistakenly returns them.
   **Report an unexpected field to the orchestrator immediately**: that is an A4
   defect and it is severe.
@@ -63,11 +63,14 @@ bundle, smaller attack surface, less to audit.
   beyond territoryName/boundary/remainingArea/remainingAreaStatus:
   - the progress **route** line (2026-09-08): a distinct, bold progress line,
     never confused with the territory boundary or the remaining-area fill;
-  - the **pausePoint** (2026-09-26): a clearly labeled "Aquí quedamos" marker;
   - the merged current-cycle **coveredArea** (2026-09-26): a distinct muted
-    green "done" fill drawn under the remaining area and the route.
-  A legend (Hecho / Pendiente / Recorrido / Aquí quedamos) lists only the
-  layers present.
+    green "done" fill drawn under the remaining area and the route;
+  - the latest session **note** (2026-10-03): a clearly visible text box
+    labeled "Nota del último grupo" right above the map, rendered as plain
+    text (`textContent`, never HTML); nothing is rendered when it is null.
+  A legend (Hecho / Pendiente / Recorrido) lists only the layers present.
+  The **pausePoint** "Aquí quedamos" marker was removed on 2026-10-03; a
+  `pausePoint` field in a response is ignored like any unexpected field.
 - No client-side storage of the token beyond the session.
 - Coordinate order is `[longitude, latitude]`.
 

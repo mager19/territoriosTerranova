@@ -127,36 +127,35 @@
         border: none;
       }
 
-      .legend-point .legend-swatch {
-        border-radius: 50%;
-        border: 2px solid #ffffff;
-        box-shadow: 0 0 0 1px #111111;
+      /* Latest session note (2026-10-03): high-contrast box right above the map. */
+      .session-note {
+        margin: 0 1rem 0.75rem;
+        padding: 0.75rem 1rem;
+        border: 2px solid #111111;
+        border-left-width: 6px;
+        border-radius: 6px;
+        background: #fff8d6;
+        color: #111111;
       }
 
-      /* Pause-point marker: a dot plus an always-visible, high-contrast label. */
-      .pause-point-marker {
-        display: flex;
-        align-items: center;
-        gap: 0.3rem;
-        pointer-events: none;
+      .session-note[hidden] {
+        display: none;
       }
 
-      .pause-point-dot {
-        width: 16px;
-        height: 16px;
-        border-radius: 50%;
-        border: 3px solid #ffffff;
-        box-shadow: 0 0 0 1px #111111;
-      }
-
-      .pause-point-label {
-        background: #111111;
-        color: #ffffff;
+      .session-note-title {
+        margin: 0 0 0.25rem;
         font-size: 0.875rem;
         font-weight: 700;
-        padding: 0.15rem 0.5rem;
-        border-radius: 999px;
-        white-space: nowrap;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+      }
+
+      .session-note-text {
+        margin: 0;
+        font-size: 1.125rem;
+        font-weight: 600;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
     </style>
   </head>
