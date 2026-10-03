@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { buildApp } from './app.js';
 import { readConfig } from './config.js';
 import { queryPostgisVersion } from './health.js';
+import { createShutdown } from './shutdown.js';
 
 const config = readConfig();
 const pool = new Pool({ connectionString: config.databaseUrl, max: 5 });
@@ -15,11 +16,7 @@ const app = await buildApp(
   { trustProxy: config.trustProxy }
 );
 
-const shutdown = async (signal: string): Promise<void> => {
-  app.log.info({ signal }, 'shutting down');
-  await app.close();
-  await pool.end();
-};
+const shutdown = createShutdown(app, pool);
 
 process.on('SIGINT', () => {
   void shutdown('SIGINT');
