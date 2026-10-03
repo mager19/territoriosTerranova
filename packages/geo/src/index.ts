@@ -39,3 +39,6 @@ export {
   isPosition,
   isWgs84Position
 } from './guards.js';
+
+export type { TerritoryGeometry } from './parts.js';
+export { combineParts, largestPart, polygonParts, ringArea } from './parts.js';
