@@ -16,6 +16,8 @@ interface Rewrite {
 
 const ADMIN_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const config = JSON.parse(readFileSync(`${ADMIN_ROOT}vercel.json`, 'utf8')) as {
+  readonly installCommand: string;
+  readonly buildCommand: string;
   readonly regions: readonly string[];
   readonly functions: Record<string, { readonly maxDuration: number }>;
   readonly rewrites: readonly Rewrite[];
@@ -47,6 +49,17 @@ describe('apps/admin/vercel.json', () => {
     expect(Object.keys(config.functions)).toEqual(['api/index.js']);
     expect(existsSync(`${ADMIN_ROOT}api/index.js`)).toBe(true);
     expect(config.functions['api/index.js']!.maxDuration).toBeLessThanOrEqual(60);
+  });
+
+  it('builds the API bundle the function imports during install, before the function is packaged', () => {
+    // Pinned here rather than in the dashboard: the first deploys ran the
+    // dashboard's old commands, never built api/_api.mjs, and every /api
+    // request failed with ERR_MODULE_NOT_FOUND.
+    expect(config.installCommand).toMatch(/^pnpm install && /);
+    expect(config.installCommand).toContain('pnpm --filter @territorios/geo build');
+    expect(config.installCommand).toMatch(/pnpm --filter @territorios\/admin bundle:api$/);
+    expect(config.buildCommand).toBe('vite build');
+    expect(readFileSync(`${ADMIN_ROOT}api/index.js`, 'utf8')).toContain("from './_api.mjs'");
   });
 
   it('runs the function next to the Neon database (us-east-2, Ohio)', () => {

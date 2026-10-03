@@ -62,6 +62,11 @@ backend to a framework project:
 | Output Directory | `dist` |
 | Node.js Version | 22.x |
 
+Both commands are also pinned in `apps/admin/vercel.json` (`installCommand`,
+`buildCommand`), which takes precedence over the dashboard: the second
+production deploy still ran the dashboard's old commands and shipped without
+the bundle.
+
 The API is bundled into one self-contained file, `apps/admin/api/_api.mjs`
 (`scripts/bundle-api.mjs`, esbuild), which `api/index.js` imports by relative
 path. It runs in the Install Command because that is guaranteed to finish
