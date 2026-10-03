@@ -60,8 +60,12 @@ bundle, smaller attack surface, less to audit.
       (2026-10-03, see docs/map-references.md "Basemap"). App fonts are
       self-hosted.
 - [ ] A legacy share token never appears in a referrer, an outbound request, or
-      a logged URL beyond the initial load. (A slug is in the path by design;
-      `no-referrer` still keeps it out of outbound requests.)
+      a logged URL beyond the initial load. (A slug is in the path by design.
+      The page uses `strict-origin` (2026-10-03): outbound requests carry only
+      the bare origin, never the path or the `#` fragment. It replaced
+      `no-referrer` because the OpenStreetMap tile policy requires a Referer
+      and its servers answered 403 "Access blocked" in browsers that strip it,
+      e.g. Brave.)
 - [ ] `noindex` respected; no sitemap; no crawlable link to this app
 - [ ] Nothing in the bundle or DOM reveals admin endpoints, internal ids, other
       territories, or AMVA sources — grep the built output and show it
