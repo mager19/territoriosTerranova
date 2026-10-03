@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { boundingBoxCenter, computeBoundingBox, directionsUrl, haversineMeters } from './map.js';
+import { computeBoundingBox, directionsUrl, haversineMeters } from './map.js';
 
 describe('computeBoundingBox', () => {
   it('computes the WGS84 bounding box of a polygon', () => {
@@ -25,12 +25,16 @@ describe('computeBoundingBox', () => {
   });
 });
 
-describe('boundingBoxCenter', () => {
-  it('averages west/east and south/north independently', () => {
-    const center = boundingBoxCenter({ west: -75.574, east: -75.572, south: 6.357, north: 6.359 });
-
-    expect(center.lat).toBeCloseTo(6.358, 9);
-    expect(center.lon).toBeCloseTo(-75.573, 9);
+describe('computeBoundingBox (multi-part territories)', () => {
+  it('spans every part of a MultiPolygon', () => {
+    const box = computeBoundingBox({
+      type: 'MultiPolygon',
+      coordinates: [
+        [[[-75.574, 6.357], [-75.572, 6.357], [-75.572, 6.359], [-75.574, 6.357]]],
+        [[[-75.565, 6.35], [-75.563, 6.35], [-75.563, 6.352], [-75.565, 6.35]]]
+      ]
+    });
+    expect(box).toEqual({ west: -75.574, east: -75.563, south: 6.35, north: 6.359 });
   });
 });
 

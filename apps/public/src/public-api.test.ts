@@ -125,6 +125,26 @@ describe('fetchPublicTerritory', () => {
     expect(result).toMatchObject({ status: 'ok', view: { remainingArea: multi, remainingAreaStatus: 'recorded' } });
   });
 
+  it('accepts a multi-part territory boundary (MultiPolygon, 0012) with the same allowlist', async () => {
+    const second = BOUNDARY.coordinates.map((ring) => ring.map(([lon, lat]) => [lon! + 0.01, lat!]));
+    const boundary = { type: 'MultiPolygon', coordinates: [BOUNDARY.coordinates, second] };
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(200, { territoryName: 'T-02', boundary, remainingArea: null, remainingAreaStatus: 'unknown', route: null })
+    );
+
+    const result = await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test');
+
+    expect(result).toMatchObject({ status: 'ok', view: { territoryName: 'T-02', boundary } });
+  });
+
+  it('rejects a boundary that is neither a Polygon nor a MultiPolygon', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(200, { territoryName: 'T-03', boundary: ROUTE, remainingArea: null, remainingAreaStatus: 'unknown', route: null })
+    );
+
+    expect(await fetchPublicTerritory(TOKEN_LINK, fetchImpl, 'https://api.example.test')).toEqual({ status: 'error' });
+  });
+
   it('keeps an explicit empty remaining area ("nothing left") distinct from unknown', async () => {
     const empty = { type: 'Polygon', coordinates: [] };
     const fetchImpl = vi.fn().mockResolvedValue(
