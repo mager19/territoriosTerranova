@@ -5,6 +5,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { MultiPolygon, Polygon } from '@territorios/geo';
+
 import { ApiError, type RecordSessionInput } from '../../api/client.js';
 import { ProgressRecorder } from './ProgressRecorder.js';
 
@@ -22,7 +24,8 @@ type Handler = (event: { point: { x: number; y: number }; preventDefault: () => 
  */
 const mapState = vi.hoisted(() => ({
   handlers: new Map<string, Set<Handler>>(),
-  setData: [] as { source: string; data: unknown }[]
+  setData: [] as { source: string; data: unknown }[],
+  renderedFeatures: [] as { properties: Record<string, unknown> }[]
 }));
 
 vi.mock('maplibre-gl', () => ({
@@ -53,7 +56,7 @@ vi.mock('maplibre-gl', () => ({
       return { x: (lng + 75.6) * 1000, y: (lat - 6.3) * 1000 };
     }
     queryRenderedFeatures() {
-      return [];
+      return mapState.renderedFeatures;
     }
     doubleClickZoom = { disable: () => undefined, enable: () => undefined };
     dragPan = { disable: () => undefined, enable: () => undefined };
@@ -77,6 +80,7 @@ let host: HTMLDivElement | null = null;
 beforeEach(() => {
   mapState.handlers.clear();
   mapState.setData.length = 0;
+  mapState.renderedFeatures = [];
   recordProgress.mockReset();
 });
 
@@ -121,20 +125,52 @@ async function click(text: string): Promise<void> {
   await act(async () => buttonByText(text).click());
 }
 
-async function clickMap(x: number, y: number): Promise<void> {
+async function fireMap(type: string, x: number, y: number): Promise<void> {
   await act(async () => {
-    for (const handler of mapState.handlers.get('click') ?? []) {
+    for (const handler of mapState.handlers.get(type) ?? []) {
       handler({ point: { x, y }, preventDefault: () => undefined });
     }
   });
 }
 
-async function renderRecorder(onRecorded: () => void = () => undefined): Promise<void> {
+async function clickMap(x: number, y: number): Promise<void> {
+  await fireMap('click', x, y);
+}
+
+/** Inverse of the mock's projection: the exact coordinate a screen pixel unprojects to. */
+function at(x: number, y: number): [number, number] {
+  return [x / 1000 - 75.6, y / 1000 + 6.3];
+}
+
+/** A 60 x 60 px territory: screen (20,50) to (80,110). */
+const BOUNDARY: Polygon = {
+  type: 'Polygon',
+  coordinates: [[at(20, 50), at(80, 50), at(80, 110), at(20, 110), at(20, 50)]]
+};
+
+function lastData(source: string): { features: { properties: Record<string, unknown> | null; geometry: { type: string; coordinates: unknown } }[] } {
+  const entries = mapState.setData.filter((entry) => entry.source === source);
+  const last = entries[entries.length - 1];
+  if (!last) throw new Error(`No data was set on source ${source}`);
+  return last.data as ReturnType<typeof lastData>;
+}
+
+async function renderRecorder(
+  onRecorded: () => void = () => undefined,
+  props: { boundary?: Polygon | null; remainingArea?: Polygon | MultiPolygon | null } = {}
+): Promise<void> {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
   await act(async () => {
-    root?.render(<ProgressRecorder territoryId={7} boundary={null} onRecorded={onRecorded} />);
+    root?.render(
+      <ProgressRecorder
+        territoryId={7}
+        boundary={props.boundary ?? null}
+        remainingArea={props.remainingArea ?? null}
+        onRecorded={onRecorded}
+      />
+    );
   });
   // Let the mocked `load` microtask install layers and mark the map ready.
   await act(async () => {
@@ -353,5 +389,122 @@ describe('ProgressRecorder', () => {
     const alert = host?.querySelector('[role="alert"]')?.textContent ?? '';
     expect(alert).toContain('fuera del territorio');
     expect(alert).toContain('Ajusta los puntos');
+  });
+
+  describe('snapping to the territory and remaining-area borders (2026-10-03)', () => {
+    it('snaps clicks near boundary vertices exactly onto them', async () => {
+      recordProgress.mockResolvedValue({});
+      await renderRecorder(undefined, { boundary: BOUNDARY });
+
+      await clickMap(22, 52);
+      await clickMap(77, 53);
+      await clickMap(78, 108);
+      await click('Cerrar área');
+      await click('Guardar sesión');
+
+      const request = recordProgress.mock.calls[0]?.[1] as RecordSessionInput;
+      expect(request.coveredArea.coordinates[0]).toEqual([at(20, 50), at(80, 50), at(80, 110), at(20, 50)]);
+    });
+
+    it('snaps a click near a boundary edge onto that edge', async () => {
+      recordProgress.mockResolvedValue({});
+      await renderRecorder(undefined, { boundary: BOUNDARY });
+
+      await clickMap(50, 46);
+      await clickMap(78, 108);
+      await clickMap(22, 108);
+      await click('Cerrar área');
+      await click('Guardar sesión');
+
+      const request = recordProgress.mock.calls[0]?.[1] as RecordSessionInput;
+      const [lng, lat] = request.coveredArea.coordinates[0]![0]!;
+      expect(lat).toBe(at(20, 50)[1]);
+      expect(lng).toBeCloseTo(at(50, 50)[0], 9);
+    });
+
+    it('snaps to a remaining-area vertex (the previous session border)', async () => {
+      recordProgress.mockResolvedValue({});
+      const remaining: Polygon = {
+        type: 'Polygon',
+        coordinates: [[at(50, 50), at(80, 50), at(80, 110), at(50, 110), at(50, 50)]]
+      };
+      await renderRecorder(undefined, { boundary: BOUNDARY, remainingArea: remaining });
+
+      await clickMap(52, 79);
+      await clickMap(49, 112);
+      await clickMap(78, 108);
+      await click('Cerrar área');
+      await click('Guardar sesión');
+
+      const request = recordProgress.mock.calls[0]?.[1] as RecordSessionInput;
+      const ring = request.coveredArea.coordinates[0]!;
+      expect(ring[0]![0]).toBe(at(50, 50)[0]);
+      expect(ring[1]).toEqual(at(50, 110));
+      expect(ring[2]).toEqual(at(80, 110));
+    });
+
+    it('shows a snap indicator while hovering within tolerance and hides it otherwise', async () => {
+      await renderRecorder(undefined, { boundary: BOUNDARY });
+
+      await fireMap('mousemove', 22, 52);
+      const shown = lastData('snap-indicator');
+      expect(shown.features).toHaveLength(1);
+      expect(shown.features[0]?.geometry.coordinates).toEqual(at(20, 50));
+
+      await fireMap('mousemove', 50, 80);
+      expect(lastData('snap-indicator').features).toHaveLength(0);
+    });
+
+    it('snaps a dragged vertex in "Ajustar puntos" mode', async () => {
+      recordProgress.mockResolvedValue({});
+      await renderRecorder(undefined, { boundary: BOUNDARY });
+      // Interior points, at least 20 px from every border: none of them snaps.
+      await clickMap(40, 70);
+      await clickMap(60, 70);
+      await clickMap(60, 90);
+      await click('Cerrar área');
+      await click('Ajustar puntos');
+
+      mapState.renderedFeatures = [{ properties: { index: 0 } }];
+      await fireMap('mousedown', 40, 70);
+      await fireMap('mousemove', 23, 53);
+      expect(lastData('snap-indicator').features).toHaveLength(1);
+      await fireMap('mouseup', 23, 53);
+      mapState.renderedFeatures = [];
+      await click('Listo');
+      await click('Guardar sesión');
+
+      const request = recordProgress.mock.calls[0]?.[1] as RecordSessionInput;
+      expect(request.coveredArea.coordinates[0]![0]).toEqual(at(20, 50));
+    });
+
+    it('marks vertices outside the territory in red, explains it, and blocks saving', async () => {
+      await renderRecorder(undefined, { boundary: BOUNDARY });
+
+      await clickMap(40, 70);
+      await clickMap(60, 70);
+      await clickMap(5, 5);
+
+      const vertices = lastData('draft-territory').features.filter((feature) => feature.geometry.type === 'Point');
+      expect(vertices.map((feature) => feature.properties?.outside)).toEqual([false, false, true]);
+      expect(statusText()).toContain(
+        '1 punto(s) quedan fuera del territorio (en rojo). Muévelos hacia adentro o acércalos al borde para que se peguen.'
+      );
+
+      await click('Cerrar área');
+      expect(buttonByText('Guardar sesión').disabled).toBe(true);
+      expect(statusText()).toContain('1 punto(s) quedan fuera del territorio');
+
+      await click('Ajustar puntos');
+      mapState.renderedFeatures = [{ properties: { index: 2 } }];
+      await fireMap('mousedown', 5, 5);
+      await fireMap('mousemove', 60, 90);
+      await fireMap('mouseup', 60, 90);
+      mapState.renderedFeatures = [];
+      await click('Listo');
+
+      expect(buttonByText('Guardar sesión').disabled).toBe(false);
+      expect(statusText()).not.toContain('quedan fuera');
+    });
   });
 });

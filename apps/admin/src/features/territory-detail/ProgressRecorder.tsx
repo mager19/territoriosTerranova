@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX } from 'react';
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { Map as MapLibreMap, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -25,13 +25,17 @@ import {
   fitToPolygon,
   installEditorLayers,
   installSessionLayers,
+  installSnapIndicatorLayer,
   renderDraft,
   renderRemainingArea,
   renderSavedTerritory,
   renderSessions,
+  renderSnapIndicator,
   screenPointToCoordinate
 } from '../territory-editor/map-editor.js';
+import type { Coordinate } from '../territory-editor/draft.js';
 import { buildSessionRequest, sessionFeatureCollection, type CoverageSession } from './sessions.js';
+import { findOutsideVertexIndices, snapCoordinate } from './snap.js';
 import type { MultiPolygon, Polygon } from '@territorios/geo';
 
 export interface ProgressRecorderProps {
@@ -70,11 +74,32 @@ const RECORDER_ERRORS_ES: Record<string, string> = {
  * unless "Ajustar puntos" is on — TerritoryEditor's own gestures: drag to
  * move, click an edge to insert, double-click to remove.
  *
+ * Snapping (2026-10-03, snap.ts): a click while drawing, or a vertex drag
+ * while adjusting, that lands within ~12 px of the territory border or the
+ * current remaining area's border lands EXACTLY on it (vertices first,
+ * then edges), with a blue ring previewing where. Vertices outside the
+ * territory turn red and block saving until moved — a client pre-check of
+ * the server's own out_of_bounds rule. Insert-on-edge in "Ajustar puntos"
+ * does not snap: it inserts on the draft's own edge by design.
+ *
  * Baseline: when the cycle has no remaining area yet, the server answers
  * `baseline_required`. That turns into an in-page confirmation (never a
  * browser dialog); only an explicit "yes" resends the session with
  * `baseline: 'whole_territory'`.
  */
+type SnapSourcesValue = { boundary: Polygon | null; remainingArea: Polygon | MultiPolygon | null };
+
+/** The snapped coordinate under a screen point, or null when nothing is within tolerance. */
+function findSnap(map: MapLibreMap, point: { x: number; y: number }, sources: SnapSourcesValue): Coordinate | null {
+  const snap = snapCoordinate(point, sources, ([lng, lat]) => map.project([lng, lat]));
+  return snap?.coordinate ?? null;
+}
+
+/** Where a click lands: the snap target when one is in range, else the raw unprojected point. */
+function snappedCoordinate(map: MapLibreMap, point: { x: number; y: number }, sources: SnapSourcesValue): Coordinate {
+  return findSnap(map, point, sources) ?? screenPointToCoordinate(map, point);
+}
+
 export function ProgressRecorder({
   territoryId,
   boundary,
@@ -97,6 +122,11 @@ export function ProgressRecorder({
   useEffect(() => {
     coveredRef.current = covered;
   }, [covered]);
+  // Read by the map handlers, which are only re-bound when the mode changes.
+  const snapSourcesRef = useRef({ boundary, remainingArea });
+  useEffect(() => {
+    snapSourcesRef.current = { boundary, remainingArea };
+  }, [boundary, remainingArea]);
 
   // Same StrictMode-double-mount guard as TerritoryEditor — see that
   // component's comment for the full explanation.
@@ -114,6 +144,7 @@ export function ProgressRecorder({
     map.on('load', () => {
       installEditorLayers(map);
       installSessionLayers(map);
+      installSnapIndicatorLayer(map);
       setMapReady(true);
     });
     mapRef.current = map;
@@ -126,12 +157,22 @@ export function ProgressRecorder({
     const map = mapRef.current;
     if (!map || !mapReady || adjusting) return;
     const handleClick = (event: MapMouseEvent) => {
-      const coordinate = screenPointToCoordinate(map, event.point);
+      const coordinate = snappedCoordinate(map, event.point, snapSourcesRef.current);
       setCovered((current) => (current.isClosed ? current : addVertex(current, coordinate)));
     };
+    const handleMouseMove = (event: MapMouseEvent) => {
+      const snap = coveredRef.current.isClosed ? null : findSnap(map, event.point, snapSourcesRef.current);
+      renderSnapIndicator(map, snap);
+    };
+    const hideIndicator = () => renderSnapIndicator(map, null);
     map.on('click', handleClick);
+    map.on('mousemove', handleMouseMove);
+    map.on('mouseout', hideIndicator);
     return () => {
       map.off('click', handleClick);
+      map.off('mousemove', handleMouseMove);
+      map.off('mouseout', hideIndicator);
+      hideIndicator();
     };
   }, [mapReady, adjusting]);
 
@@ -163,7 +204,9 @@ export function ProgressRecorder({
         }
         return;
       }
-      const coordinate = screenPointToCoordinate(map, event.point);
+      const snap = findSnap(map, event.point, snapSourcesRef.current);
+      renderSnapIndicator(map, snap);
+      const coordinate = snap ?? screenPointToCoordinate(map, event.point);
       const index = draggingIndexRef.current;
       setCovered((current) => moveVertex(current, index, coordinate));
     };
@@ -171,6 +214,7 @@ export function ProgressRecorder({
     const endDrag = () => {
       if (draggingIndexRef.current === null) return;
       draggingIndexRef.current = null;
+      renderSnapIndicator(map, null);
       map.dragPan.enable();
       map.getCanvas().style.cursor = '';
     };
@@ -210,11 +254,16 @@ export function ProgressRecorder({
     };
   }, [mapReady, adjusting]);
 
+  const outsideIndices = useMemo(
+    () => findOutsideVertexIndices(covered.vertices, boundary),
+    [covered.vertices, boundary]
+  );
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    renderDraft(map, covered);
-  }, [covered, mapReady]);
+    renderDraft(map, covered, new Set(outsideIndices));
+  }, [covered, outsideIndices, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -238,7 +287,8 @@ export function ProgressRecorder({
   }, [boundary, mapReady]);
 
   const vertexCount = covered.vertices.length;
-  const coveredReady = draftToPolygonGeoJSON(covered) !== null;
+  const outsideCount = outsideIndices.length;
+  const coveredReady = draftToPolygonGeoJSON(covered) !== null && outsideCount === 0;
   const hasAnything = vertexCount > 0 || note.trim() !== '';
 
   function redraw(): void {
@@ -277,6 +327,15 @@ export function ProgressRecorder({
   }
 
   function statusText(): string {
+    const outside =
+      outsideCount > 0
+        ? `${outsideCount} punto(s) quedan fuera del territorio (en rojo). Muévelos hacia adentro o acércalos al borde para que se peguen.`
+        : null;
+    const base = baseStatusText();
+    return outside === null ? base : `${outside} ${base}`;
+  }
+
+  function baseStatusText(): string {
     if (adjusting) {
       return 'Arrastra un punto para moverlo, haz clic en un borde para agregar uno o doble clic en un punto para borrarlo. Pulsa “Listo” al terminar.';
     }

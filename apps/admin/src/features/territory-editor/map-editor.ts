@@ -213,26 +213,39 @@ export function installEditorLayers(map: MapLibreMap): void {
     // White halo + larger radius: a thin 5px dot in the project's teal/
     // orange palette was hard to pick out against busy OSM tiles at a
     // glance — this stays visible over any basemap color underneath it.
+    //
+    // `outside` (set only by the session recorder's client pre-check) turns
+    // a vertex red: it lies outside the territory and the server would
+    // reject the session. TerritoryEditor never sets it, so its vertices
+    // keep the plain orange.
     paint: {
       'circle-radius': 7,
-      'circle-color': '#e08a2e',
+      'circle-color': ['case', ['boolean', ['get', 'outside'], false], '#d32f2f', '#e08a2e'],
       'circle-stroke-width': 2,
       'circle-stroke-color': '#ffffff'
     }
   });
 }
 
-/** `index` is carried as a feature property so findVertexIndexAtPoint below can identify which vertex a click/drag hit — the only reason any draft feature has properties at all. */
-function pointFeature(coordinate: Coordinate, index: number): Feature {
-  return { type: 'Feature', properties: { index }, geometry: { type: 'Point', coordinates: coordinate } };
+/**
+ * `index` is carried as a feature property so findVertexIndexAtPoint below
+ * can identify which vertex a click/drag hit; `outside` drives the red
+ * data-driven vertex color (see installEditorLayers).
+ */
+function pointFeature(coordinate: Coordinate, index: number, outside: boolean): Feature {
+  return { type: 'Feature', properties: { index, outside }, geometry: { type: 'Point', coordinates: coordinate } };
 }
 
-/** Renders the current draft: vertex points always; a dashed line while open; a filled+outlined polygon once closed. */
-export function renderDraft(map: MapLibreMap, draft: DraftState): void {
+/**
+ * Renders the current draft: vertex points always; a dashed line while
+ * open; a filled+outlined polygon once closed. `outsideIndices` marks the
+ * vertices to paint red (session recorder only; empty by default).
+ */
+export function renderDraft(map: MapLibreMap, draft: DraftState, outsideIndices: ReadonlySet<number> = new Set()): void {
   const source = asGeoJsonSource(map.getSource('draft-territory'));
   if (!source) return;
 
-  const features: Feature[] = draft.vertices.map((vertex, index) => pointFeature(vertex, index));
+  const features: Feature[] = draft.vertices.map((vertex, index) => pointFeature(vertex, index, outsideIndices.has(index)));
 
   if (draft.vertices.length >= 2) {
     const geometry: Geometry = draft.isClosed
@@ -325,6 +338,38 @@ export function installSessionLayers(map: MapLibreMap): void {
     },
     'remaining-area-fill'
   );
+}
+
+/**
+ * Snap indicator for the session recorder, added on top of everything
+ * (call after installSessionLayers): a hollow blue ring where a click or
+ * drag would snap. A visual aid only — the snap itself happens on click,
+ * and nothing depends on seeing this ring.
+ */
+export function installSnapIndicatorLayer(map: MapLibreMap): void {
+  map.addSource('snap-indicator', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer({
+    id: 'snap-indicator-ring',
+    type: 'circle',
+    source: 'snap-indicator',
+    paint: {
+      'circle-radius': 9,
+      'circle-opacity': 0,
+      'circle-stroke-width': 3,
+      'circle-stroke-color': '#1d4ed8'
+    }
+  });
+}
+
+/** Shows the snap indicator at `coordinate`, or hides it when null. */
+export function renderSnapIndicator(map: MapLibreMap, coordinate: Coordinate | null): void {
+  const source = asGeoJsonSource(map.getSource('snap-indicator'));
+  if (!source) return;
+  source.setData({
+    type: 'FeatureCollection',
+    features:
+      coordinate === null ? [] : [{ type: 'Feature', properties: null, geometry: { type: 'Point', coordinates: coordinate } }]
+  });
 }
 
 /** Renders already-built session features (see territory-detail/sessions.ts), or clears the layer. */
