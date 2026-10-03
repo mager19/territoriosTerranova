@@ -32,6 +32,13 @@ describe('AdminShell (signed in)', () => {
     expect(html).toContain('Descartar borrador');
   });
 
+  it('sizes the editor map with the .editor-map class (viewport-filling on desktop), not an inline height', () => {
+    const html = renderToStaticMarkup(<TerritoryEditor selectedTerritory={null} onSaved={() => undefined} />);
+
+    expect(html).toMatch(/<div[^>]*class="editor-map"[^>]*role="img"/);
+    expect(html).not.toContain('height:420px');
+  });
+
   it('offers a way to switch to the overview', () => {
     const html = renderToStaticMarkup(<AdminShell email="ana@example.org" onLogout={() => undefined} />);
 

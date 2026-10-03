@@ -42,7 +42,7 @@
   --radius-buttons: 8px;
   --radius-largecards: 16px;
 
-  /* Map border (kept so the two inline `var(--map-border, #ccc)` refs in the .tsx resolve consistently) */
+  /* Hairline border shared by every map container (.editor-map, .session-map, ...) */
   --map-border: #e5e5e5;
 }
 
@@ -900,4 +900,20 @@ form > div {
 .login-card button[type='submit'] {
   margin-top: 20px;
   width: 100%;
+}
+
+/* Territory editor map. 420px on small screens; on desktop it fills most of
+   the viewport so drawing a territory has room. The height only changes with
+   the viewport, and MapLibre already resizes the map on window resize. */
+.editor-map {
+  width: 100%;
+  height: 420px;
+  border: 1px solid var(--map-border);
+}
+
+@media (min-width: 1024px) {
+  .editor-map {
+    height: calc(100vh - 200px);
+    min-height: 560px;
+  }
 }
