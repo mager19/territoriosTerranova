@@ -6,6 +6,7 @@ import {
   listTerritories,
   type TerritoryListItem
 } from '../../api/client.js';
+import { sortByTerritoryName } from './sort.js';
 import { polygonToThumbnail } from './thumbnail.js';
 
 export interface TerritoryListProps {
@@ -41,7 +42,7 @@ export function TerritoryList({ refreshToken }: TerritoryListProps): JSX.Element
     setLoading(true);
     listTerritories()
       .then((result) => {
-        if (!cancelled) setTerritories(result.territories);
+        if (!cancelled) setTerritories(sortByTerritoryName(result.territories));
       })
       .catch((caught) => {
         if (!cancelled) setError(caught instanceof ApiError ? describeApiError(caught) : 'No se pudieron cargar los territorios.');
