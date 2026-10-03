@@ -59,7 +59,7 @@ export function TerritoryList({ refreshToken }: TerritoryListProps): JSX.Element
       <h2 id="territory-list-heading">Territorios</h2>
       {error && <p role="alert">{error}</p>}
       {loading && <p role="status">Cargando territorios…</p>}
-      {!loading && territories.length === 0 && <p>Todavía no hay territorios. Creá el primero desde «Nuevo Territorio».</p>}
+      {!loading && territories.length === 0 && <p>Todavía no hay territorios. Crea el primero desde «Nuevo Territorio».</p>}
 
       <label htmlFor="operational-state-filter">Filtrar por estado operativo</label>
       <select id="operational-state-filter" value={stateFilter} onChange={(event) => setStateFilter(event.target.value as typeof stateFilter)}>

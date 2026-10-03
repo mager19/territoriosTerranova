@@ -85,7 +85,7 @@ void runApp(container, {
           );
         },
         () => {
-          elements.locationStatus.textContent = 'No pudimos acceder a tu ubicación. Revisá los permisos de ubicación del navegador.';
+          elements.locationStatus.textContent = 'No pudimos acceder a tu ubicación. Revisa los permisos de ubicación del navegador.';
         },
         { enableHighAccuracy: true, timeout: 10000 }
       );

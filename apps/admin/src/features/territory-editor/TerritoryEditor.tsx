@@ -526,7 +526,7 @@ export function TerritoryEditor({
         role="img"
         aria-label={`Mapa centrado en Bello, para dibujar el contorno de un territorio. ${
           editingVertices
-            ? 'Modo de edición de puntos: arrastrá un punto para moverlo, hacé clic en un borde para agregar uno, doble clic en un punto para borrarlo.'
+            ? 'Modo de edición de puntos: arrastra un punto para moverlo, haz clic en un borde para agregar uno, doble clic en un punto para borrarlo.'
             : draft.vertices.length > 0
               ? `${draft.vertices.length} punto(s) ubicado(s).`
               : 'Todavía no hay puntos ubicados.'
@@ -673,24 +673,24 @@ export function TerritoryEditor({
 
         {!draft.isClosed && (
           <p role="status">
-            {draft.vertices.length === 0 && 'Hacé clic en el mapa para ubicar el primer punto.'}
+            {draft.vertices.length === 0 && 'Haz clic en el mapa para ubicar el primer punto.'}
             {draft.vertices.length > 0 &&
               draft.vertices.length < 3 &&
               `${draft.vertices.length} punto(s) ubicado(s) — se necesitan al menos 3 para cerrar el contorno.`}
-            {draft.vertices.length >= 3 && `${draft.vertices.length} puntos ubicados. Cerrá el contorno para guardar.`}
+            {draft.vertices.length >= 3 && `${draft.vertices.length} puntos ubicados. Cierra el contorno para guardar.`}
           </p>
         )}
         {draft.isClosed && editingVertices && (
           <p role="status">
-            Arrastrá un punto para moverlo, hacé clic en un borde para agregar uno, doble clic en un punto para
-            borrarlo. Usá “Terminar edición de vértices” para conservar los cambios y guardar.
+            Arrastra un punto para moverlo, haz clic en un borde para agregar uno, doble clic en un punto para
+            borrarlo. Usa “Terminar edición de vértices” para conservar los cambios y guardar.
           </p>
         )}
         {draft.isClosed && !editingVertices && (
           <p role="status">
             {canSave
               ? `${draft.vertices.length} puntos. Listo para guardar, o Editar vértices para ajustar el contorno.`
-              : `${draft.vertices.length} puntos. Editá vértices para ajustar el contorno, o completá los campos requeridos abajo para guardar.`}
+              : `${draft.vertices.length} puntos. Edita vértices para ajustar el contorno, o completa los campos requeridos abajo para guardar.`}
           </p>
         )}
 
@@ -701,7 +701,7 @@ export function TerritoryEditor({
             save button did not respond). */}
         {geometry !== null && !canSave && !saving && !selectedTerritory && name.trim() === '' && (
           <p role="status" className="editor-hint">
-            Escribí un nombre de territorio arriba para guardar.
+            Escribe un nombre de territorio arriba para guardar.
           </p>
         )}
 

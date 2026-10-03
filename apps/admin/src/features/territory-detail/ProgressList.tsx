@@ -56,7 +56,7 @@ export function ProgressList({
       {error && <p role="alert">{error}</p>}
       {!loading && !error && entries.length === 0 && <p>Todavía no hay sesiones registradas para este territorio.</p>}
       {sessions.length > 0 && (
-        <p className="editor-hint">Pasá el cursor o hacé clic sobre una sesión para resaltarla en el mapa.</p>
+        <p className="editor-hint">Pasa el cursor o haz clic sobre una sesión para resaltarla en el mapa.</p>
       )}
       <ol className="session-list">
         {entries.map((entry) => {
