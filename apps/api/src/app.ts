@@ -92,6 +92,19 @@ export async function buildApp(
     trustProxy: trustProxyOption(options.trustProxy ?? false)
   });
 
+  // Unexpected (5xx) errors are logged in full but answered with a generic
+  // body: Fastify's default handler echoes error.message, which leaked
+  // PostgreSQL connection details to clients in production. Client errors
+  // (4xx, e.g. validation or rate limiting) keep Fastify's own response.
+  app.setErrorHandler((error: Error & { statusCode?: number }, request, reply) => {
+    const statusCode = error.statusCode ?? 500;
+    if (statusCode < 500) {
+      return reply.send(error);
+    }
+    request.log.error({ err: error }, 'unhandled error');
+    return reply.status(500).send({ error: 'internal_error' });
+  });
+
   // CORS is granted ONLY to the public share endpoint, ONLY for the public
   // app's origin(s), and never with credentials: apps/public calls it
   // cross-origin (docs/deploy-vercel.md). The admin app calls the API
