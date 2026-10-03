@@ -5,6 +5,7 @@ import {
   OSM_COPYRIGHT_URL,
   type BasemapKind
 } from './basemap.js';
+import { legendItems } from './layers.js';
 import { OSM_ATTRIBUTION } from './map.js';
 import { describeState, type ViewState } from './status.js';
 
@@ -20,7 +21,13 @@ export interface PageElements {
   /** Feedback for the locate button: searching / distance readout / permission-denied — separate from `status` so it never overwrites the territory's own coverage message. */
   readonly locationStatus: HTMLParagraphElement;
   readonly mapContainer: HTMLDivElement;
+  /** Map key listing ONLY the layers the resolved territory actually draws; hidden otherwise. */
+  readonly legend: HTMLUListElement;
+  /** The latest session's note (2026-10-03 decision) — shown above the map only when present. */
+  readonly note: HTMLElement;
 }
+
+export const NOTE_HEADING = 'Nota del último grupo';
 
 /**
  * Builds the page's static DOM skeleton once. The map is mounted into
@@ -61,16 +68,26 @@ export function mountPage(root: HTMLElement, basemap: BasemapKind = 'osm'): Page
   locationStatus.className = 'location-status';
   locationStatus.hidden = true;
 
+  const note = document.createElement('section');
+  note.className = 'session-note';
+  note.setAttribute('aria-label', NOTE_HEADING);
+  note.hidden = true;
+
   const mapContainer = document.createElement('div');
   mapContainer.id = 'map';
   mapContainer.setAttribute('role', 'img');
-  mapContainer.setAttribute('aria-label', 'Territory map');
+  mapContainer.setAttribute('aria-label', 'Mapa del territorio');
   mapContainer.hidden = true;
+
+  const legend = document.createElement('ul');
+  legend.className = 'legend';
+  legend.setAttribute('aria-label', 'Leyenda del mapa');
+  legend.hidden = true;
 
   const attribution = createAttribution(basemap);
 
-  root.replaceChildren(heading, status, actions, locationStatus, mapContainer, attribution);
-  return { heading, status, actions, directionsLink, locateButton, locationStatus, mapContainer };
+  root.replaceChildren(heading, status, actions, locationStatus, note, mapContainer, legend, attribution);
+  return { heading, status, actions, directionsLink, locateButton, locationStatus, mapContainer, legend, note };
 }
 
 function externalLink(href: string, text: string): HTMLAnchorElement {
@@ -119,4 +136,53 @@ export function renderStatus(elements: PageElements, state: ViewState): void {
   elements.status.textContent = described.body;
   elements.actions.hidden = state.status !== 'ok';
   elements.mapContainer.hidden = state.status !== 'ok';
+  renderLegend(elements.legend, state);
+  renderNote(elements.note, state);
+}
+
+/**
+ * Volunteer-written free text: set ONLY through textContent so markup in a
+ * note is displayed literally and can never be interpreted as HTML.
+ */
+function renderNote(container: HTMLElement, state: ViewState): void {
+  const text = state.status === 'ok' ? state.view.note : null;
+  if (!text) {
+    container.replaceChildren();
+    container.hidden = true;
+    return;
+  }
+
+  const title = document.createElement('p');
+  title.className = 'session-note-title';
+  title.textContent = NOTE_HEADING;
+
+  const body = document.createElement('p');
+  body.className = 'session-note-text';
+  body.textContent = text;
+
+  container.replaceChildren(title, body);
+  container.hidden = false;
+}
+
+function renderLegend(legend: HTMLUListElement, state: ViewState): void {
+  const items = state.status === 'ok' ? legendItems(state.view) : [];
+  legend.replaceChildren(
+    ...items.map((item) => {
+      const entry = document.createElement('li');
+      entry.className = `legend-item legend-${item.shape}`;
+      entry.dataset.layer = item.key;
+
+      const swatch = document.createElement('span');
+      swatch.className = 'legend-swatch';
+      swatch.style.background = item.color;
+      swatch.setAttribute('aria-hidden', 'true');
+
+      const label = document.createElement('span');
+      label.textContent = item.label;
+
+      entry.append(swatch, label);
+      return entry;
+    })
+  );
+  legend.hidden = items.length === 0;
 }

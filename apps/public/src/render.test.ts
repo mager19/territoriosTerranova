@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Polygon } from '@territorios/geo';
+import type { LineString, Polygon } from '@territorios/geo';
 
 import { mountPage, renderStatus } from './render.js';
 import { UNAVAILABLE_MESSAGE } from './status.js';
@@ -43,6 +43,116 @@ describe('mountPage', () => {
 
     expect(actions.hidden).toBe(true);
     expect(locationStatus.hidden).toBe(true);
+  });
+});
+
+const WEST_HALF: Polygon = {
+  type: 'Polygon',
+  coordinates: [[[-75.574, 6.357], [-75.573, 6.357], [-75.573, 6.359], [-75.574, 6.359], [-75.574, 6.357]]]
+};
+const ROUTE: LineString = { type: 'LineString', coordinates: [[-75.5738, 6.3575], [-75.5732, 6.3585]] };
+
+function baseView(overrides: Partial<PublicTerritoryView> = {}): PublicTerritoryView {
+  return {
+    territoryName: 'Navarra Norte',
+    boundary: BOUNDARY,
+    remainingArea: null,
+    remainingAreaStatus: 'unknown',
+    route: null,
+    note: null,
+    coveredArea: null,
+    ...overrides
+  };
+}
+
+function legendLabels(legend: HTMLUListElement): string[] {
+  return Array.from(legend.querySelectorAll('li')).map((item) => item.textContent ?? '');
+}
+
+describe('renderStatus — legend', () => {
+  it('lists every layer, in stacking order, when all of them are present', () => {
+    const elements = mountPage(document.createElement('div'));
+
+    renderStatus(elements, {
+      status: 'ok',
+      view: baseView({ coveredArea: WEST_HALF, remainingArea: WEST_HALF, remainingAreaStatus: 'recorded', route: ROUTE })
+    });
+
+    expect(elements.legend.hidden).toBe(false);
+    expect(legendLabels(elements.legend)).toEqual(['Hecho', 'Pendiente', 'Recorrido']);
+  });
+
+  it('lists only the layers present — no "Pendiente" once nothing is left', () => {
+    const elements = mountPage(document.createElement('div'));
+
+    renderStatus(elements, {
+      status: 'ok',
+      view: baseView({ coveredArea: BOUNDARY, remainingArea: { type: 'Polygon', coordinates: [] }, remainingAreaStatus: 'recorded' })
+    });
+
+    expect(legendLabels(elements.legend)).toEqual(['Hecho']);
+  });
+
+  it('hides the legend when the territory has no recorded layer at all', () => {
+    const elements = mountPage(document.createElement('div'));
+
+    renderStatus(elements, { status: 'ok', view: baseView() });
+
+    expect(elements.legend.hidden).toBe(true);
+    expect(elements.legend.children).toHaveLength(0);
+  });
+
+  it('clears and hides the legend for a non-ok state', () => {
+    const elements = mountPage(document.createElement('div'));
+    renderStatus(elements, { status: 'ok', view: baseView({ route: ROUTE }) });
+
+    renderStatus(elements, { status: 'unavailable' });
+
+    expect(elements.legend.hidden).toBe(true);
+    expect(elements.legend.children).toHaveLength(0);
+  });
+});
+
+describe('renderStatus — latest session note', () => {
+  it('shows the latest session note, labeled, when the territory has one', () => {
+    const elements = mountPage(document.createElement('div'));
+
+    renderStatus(elements, { status: 'ok', view: baseView({ note: 'Quedamos en la esquina de la Diagonal 57 con 19C' }) });
+
+    expect(elements.note.hidden).toBe(false);
+    expect(elements.note.textContent).toContain('Nota del último grupo');
+    expect(elements.note.textContent).toContain('Quedamos en la esquina de la Diagonal 57 con 19C');
+  });
+
+  it('renders the note as plain text, never as HTML', () => {
+    const elements = mountPage(document.createElement('div'));
+    const hostile = '<img src=x onerror="alert(1)"><b>bold</b>';
+
+    renderStatus(elements, { status: 'ok', view: baseView({ note: hostile }) });
+
+    expect(elements.note.querySelector('img')).toBeNull();
+    expect(elements.note.querySelector('b')).toBeNull();
+    expect(elements.note.textContent).toContain(hostile);
+  });
+
+  it('renders nothing when the note is absent', () => {
+    const elements = mountPage(document.createElement('div'));
+
+    renderStatus(elements, { status: 'ok', view: baseView() });
+
+    expect(elements.note.hidden).toBe(true);
+    expect(elements.note.textContent ?? '').not.toContain('Nota del último grupo');
+  });
+
+  it('starts hidden and hides the note again for a non-ok state', () => {
+    const elements = mountPage(document.createElement('div'));
+    expect(elements.note.hidden).toBe(true);
+    renderStatus(elements, { status: 'ok', view: baseView({ note: 'Quedamos en el parque' }) });
+
+    renderStatus(elements, { status: 'unavailable' });
+
+    expect(elements.note.hidden).toBe(true);
+    expect(elements.note.textContent ?? '').not.toContain('Quedamos en el parque');
   });
 });
 
@@ -95,7 +205,7 @@ describe('renderStatus', () => {
 
     renderStatus(elements, {
       status: 'ok',
-      view: { territoryName: 'Navarra Norte', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null }
+      view: { territoryName: 'Navarra Norte', boundary: BOUNDARY, remainingArea: null, remainingAreaStatus: 'unknown', route: null, note: null, coveredArea: null }
     });
 
     expect(elements.heading.textContent).toBe('Navarra Norte');

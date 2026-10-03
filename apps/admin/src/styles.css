@@ -195,7 +195,8 @@ label {
 
 /* Dub's signature input: black border (inputs feel important), 6px radius,
    compact padding, Inter. */
-input {
+input,
+textarea {
   font-family: var(--font-body);
   font-size: 14px;
   color: var(--color-charcoal);
@@ -223,7 +224,8 @@ select:focus-visible {
   outline-offset: 1px;
 }
 
-input:focus-visible {
+input:focus-visible,
+textarea:focus-visible {
   outline: 2px solid var(--color-electric-blue);
   outline-offset: 1px;
 }
@@ -317,22 +319,6 @@ button[aria-current='true'] {
   outline-offset: 2px;
 }
 
-.operational-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.operational-actions label {
-  margin: 0;
-}
-
-.operational-actions input {
-  width: auto;
-}
-
 [role='status'] {
   font-size: 12px;
   color: var(--color-fog);
@@ -354,6 +340,75 @@ button[aria-current='true'] {
 
 .editor-hint {
   font-size: 12px;
+  color: var(--color-fog);
+}
+
+textarea {
+  display: block;
+  resize: vertical;
+}
+
+/* Recorder footer: save is the primary action, cancel sits right beside it. */
+.session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Session recorder: the detail page's main map, sized for drawing vertex by
+   vertex rather than as a thumbnail. */
+.session-map {
+  width: 100%;
+  height: min(62vh, 560px);
+  min-height: 360px;
+  border: 1px solid var(--map-border);
+  border-radius: var(--radius-cards);
+}
+
+/* In-page baseline confirmation — an inline card, never a browser dialog.
+   The blue hairline marks it as a decision, not an error (tangerine). */
+.baseline-prompt {
+  background: #ffffff;
+  border: 1px solid var(--color-electric-blue);
+  border-radius: var(--radius-cards);
+  padding: 12px 16px;
+  margin: 8px 0;
+}
+
+.baseline-prompt p {
+  margin: 0 0 8px;
+}
+
+.baseline-prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Session timeline: each current-cycle session pairs its number with the
+   color of its covered area on the map. */
+.session-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  min-height: 0;
+}
+
+.session-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.session-item--highlighted {
+  background: var(--color-paper-mist);
+}
+
+.session-item--history {
   color: var(--color-fog);
 }
 
@@ -587,6 +642,101 @@ form > div {
 .detail-edit-link:focus-visible {
   outline: 2px solid var(--color-electric-blue);
   outline-offset: 1px;
+}
+
+/* Territory detail header: the heading and "Editar mapa" on one row. */
+.territory-detail-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+
+.territory-detail-header h2 {
+  margin: 0;
+}
+
+.territory-detail-header .detail-edit-link {
+  margin-bottom: 0;
+}
+
+/* Top bar: open/closed status on the left, "Compartir" and the one state
+   action on the right. A hairline card on the mist surface — compact, no
+   shadow. The status dot is green while open, silver otherwise, and the text
+   always names the state, so color is never the only signal. */
+.territory-topbar-wrap {
+  margin-bottom: 16px;
+}
+
+.territory-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  background: var(--color-paper-mist);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-cards);
+}
+
+.territory-topbar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-charcoal);
+}
+
+.territory-topbar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-tags);
+  background: var(--color-silver);
+}
+
+.territory-topbar-dot--open {
+  background: var(--color-vivid-green);
+}
+
+.territory-topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.territory-topbar-actions button:focus-visible {
+  outline: 2px solid var(--color-electric-blue);
+  outline-offset: 2px;
+}
+
+.territory-topbar-wrap > [id='territory-share-region'] > section {
+  margin-top: 8px;
+}
+
+/* Shown in the recorder's place while the territory is not open. */
+.recorder-closed {
+  padding: 12px 16px;
+  border: 1px dashed var(--color-smoke);
+  border-radius: var(--radius-cards);
+  color: var(--color-steel);
+  font-size: 14px;
+}
+
+/* Cycle history: one row per opening, newest first; the open cycle is
+   emphasized in near-black, closed ones in muted text. */
+.cycle-history li {
+  font-size: 14px;
+  color: var(--color-steel);
+}
+
+.cycle-history li.cycle-history-item--open {
+  color: var(--color-charcoal);
+  font-weight: 500;
 }
 
 /* Reference-barrio autocomplete: a search-as-you-type combobox with a

@@ -94,7 +94,8 @@ describe('mapProgressEntryError', () => {
   it.each([
     ['progress_entries_pause_point_valid', /pause point/],
     ['progress_entries_route_valid', /route/],
-    ['progress_entries_remaining_area_valid', /remaining-area/]
+    ['progress_entries_remaining_area_valid', /remaining-area/],
+    ['progress_entries_covered_area_valid', /covered-area/]
   ])('maps %s to InvalidGeometryError naming the field in the message', (constraint, expectedPattern) => {
     const mapped = mapProgressEntryError(checkViolation(constraint));
     expect(mapped).toBeInstanceOf(InvalidGeometryError);

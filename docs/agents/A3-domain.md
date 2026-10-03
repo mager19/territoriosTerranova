@@ -52,6 +52,32 @@ territory, enforced transactionally against the constraint A2 built.~~
 Append timestamped progress entries with optional pause point, route, and
 remaining-area geometry. Expose the full audit history for a territory.
 
+**Superseded in part 2026-09-26 (coverage sessions,
+`db/migrations/0007_progress_covered_area.sql`):** every new entry is a
+session that REQUIRES the area covered in it; the client no longer sends a
+remaining area. The server derives it as (latest remaining area of the current
+cycle) minus (covered area), under the territory row lock. When the cycle has
+no remaining area yet, the request must carry the explicit
+`baseline: 'whole_territory'` confirmation (otherwise `baseline_required`);
+reopened cycles need a new baseline. Covered area, pause point, and route must
+lie within the current revision. Full coverage stores an explicit empty
+polygon (0% left), never NULL. The admin operational state exposes
+`progressPercent` (geodesic areas; null = unknown). `covered_area` is admin
+only and never part of the public view.
+
+**Explicit open/close, 2026-10-03:** a territory is explicitly OPENED
+(`in_progress`, or `reopened` for a later cycle), sessions are recorded while
+it is open, and it is then CLOSED (`cycle_completed` with an effective
+completion date). Recording a session no longer opens cycle 1 implicitly: when
+the territory has no operational event, or its cycle is completed, the session
+is rejected with `territory_not_open` (409). A legacy `paused` cycle still
+counts as open. Reopening no longer requires a reason (stored as NULL when
+absent, `db/migrations/0008_optional_reopen_reason.sql`); every transition is
+still audited. `GET /admin/territories/:id/cycles` lists each cycle newest
+first with its opening and closing timestamps, effective completion date, and
+the number of sessions attributed to it — derived from the existing events
+and progress entries.
+
 ## Definition of done
 
 - [ ] Server-side geometry validation rejects invalid, zero-area, out-of-city, and

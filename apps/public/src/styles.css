@@ -1,0 +1,289 @@
+/**
+ * "Dub" design system, shared with the admin app (apps/admin/src/styles.css),
+ * adapted to the public volunteer share view: a mobile-first field page read
+ * on a phone, outdoors, one-handed (A6 brief DoD).
+ *
+ * Quiet editorial look: white canvas, hairline ash borders, Inter for text,
+ * JetBrains Mono only for small labels/metadata, monochrome palette. Fonts are
+ * self-hosted through @fontsource and bundled by Vite (same origin) — the A6
+ * brief forbids external font or asset loading on this public page, so the
+ * admin's Google Fonts link is deliberately NOT reused here. Only the latin
+ * subset is shipped (covers Spanish), to keep the page light on mobile data.
+ *
+ * Outdoor legibility overrides the admin's density: body text stays >= 16px,
+ * body copy uses charcoal (not fog) for contrast in sunlight, and every tap
+ * target is >= 44px tall.
+ */
+
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-600.css';
+@import '@fontsource/jetbrains-mono/latin-500.css';
+
+:root {
+  color-scheme: light;
+
+  /* Colors — same tokens and values as the admin app. */
+  --color-canvas-white: #ffffff;
+  --color-paper-mist: #f5f5f5;
+  --color-ash: #e5e5e5; /* hairline borders — THE structural line */
+  --color-smoke: #d4d4d4;
+  --color-midnight-ink: #0a0a0a;
+  --color-charcoal: #171717; /* body text, default headings */
+  --color-slate: #404040;
+  --color-steel: #525252; /* secondary text — still >= 7:1 on white */
+  --color-electric-blue: #2563eb; /* accent only — focus ring */
+  --color-primary-action-fill: #000000;
+
+  /* Typography */
+  --font-display: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-body: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Radii */
+  --radius-tags: 9999px;
+  --radius-cards: 12px;
+  --radius-buttons: 8px;
+
+  /* Page gutter: 16px side margin at phone width. */
+  --gutter: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas-white);
+  color: var(--color-charcoal);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+}
+
+#root {
+  max-width: 960px;
+  margin: 0 auto;
+  padding-bottom: 24px;
+}
+
+/* Territory title — Inter 600, tight tracking, near-black. */
+h1 {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: var(--color-midnight-ink);
+  margin: 24px var(--gutter) 4px;
+  overflow-wrap: anywhere;
+}
+
+/* Coverage / loading / error message: the non-map textual fallback, so it
+   stays large and high-contrast (charcoal, not a muted gray). */
+p.status {
+  font-size: 1.0625rem;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--color-charcoal);
+  margin: 0 var(--gutter) 16px;
+}
+
+/* Thumb-friendly actions. Full-width halves on a phone, natural width on
+   wider screens. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 var(--gutter) 12px;
+}
+
+.actions[hidden] {
+  display: none;
+}
+
+.action-button {
+  appearance: none;
+  flex: 1 1 160px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: 10px 16px;
+  border: 1px solid var(--color-smoke);
+  border-radius: var(--radius-buttons);
+  background: var(--color-canvas-white);
+  color: var(--color-charcoal);
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+/* Primary action (directions) — near-black fill, never blue (Dub CTA rule). */
+a.action-button {
+  background: var(--color-primary-action-fill);
+  border-color: var(--color-primary-action-fill);
+  color: var(--color-canvas-white);
+}
+
+.action-button:hover {
+  background: var(--color-paper-mist);
+}
+
+a.action-button:hover {
+  background: var(--color-slate);
+  border-color: var(--color-slate);
+}
+
+.action-button:active {
+  background: var(--color-ash);
+}
+
+a.action-button:active {
+  background: var(--color-steel);
+}
+
+.action-button:focus-visible {
+  outline: 2px solid var(--color-electric-blue);
+  outline-offset: 2px;
+}
+
+@media (min-width: 600px) {
+  .action-button {
+    flex: 0 0 auto;
+  }
+}
+
+/* Geolocation feedback — secondary text, still readable outdoors. */
+p.location-status {
+  font-size: 1rem;
+  color: var(--color-slate);
+  margin: 0 var(--gutter) 12px;
+}
+
+p.location-status[hidden] {
+  display: none;
+}
+
+/* Latest session note: a quiet card with a hairline border and a dark
+   left rule so it still stands out above the map. */
+.session-note {
+  margin: 0 var(--gutter) 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--color-ash);
+  border-left: 3px solid var(--color-charcoal);
+  border-radius: var(--radius-buttons);
+  background: var(--color-paper-mist);
+  color: var(--color-charcoal);
+}
+
+.session-note[hidden] {
+  display: none;
+}
+
+/* Small metadata label — JetBrains Mono, uppercase. */
+.session-note-title {
+  margin: 0 0 4px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-steel);
+}
+
+.session-note-text {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 500;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Map card: inset with the page gutter, hairline border, card radius. */
+#map {
+  height: 65vh;
+  min-height: 320px;
+  margin: 0 var(--gutter);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-cards);
+  overflow: hidden;
+  background: var(--color-paper-mist);
+}
+
+#map[hidden] {
+  display: none;
+}
+
+/* Map key: only the layers the territory actually draws (render.ts). */
+ul.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  list-style: none;
+  margin: 12px var(--gutter) 0;
+  padding: 0;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--color-charcoal);
+}
+
+ul.legend[hidden] {
+  display: none;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-swatch {
+  display: inline-block;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+}
+
+.legend-line .legend-swatch {
+  width: 20px;
+  height: 4px;
+  border: none;
+  border-radius: var(--radius-tags);
+}
+
+/* Basemap credit — technical metadata, so JetBrains Mono. Steel keeps it
+   above 7:1 contrast despite the small size. */
+p.attribution {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--color-steel);
+  margin: 12px var(--gutter) 0;
+}
+
+p.attribution a {
+  color: inherit;
+}
+
+/* MapTiler free-plan logo, only rendered when MapTiler is the basemap. */
+.maptiler-logo {
+  margin-right: 8px;
+}
+
+.maptiler-logo img {
+  vertical-align: middle;
+}

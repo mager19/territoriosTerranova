@@ -16,7 +16,7 @@
  */
 
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
-import type { Feature, FeatureCollection, Geometry, MultiPolygon, Point, Polygon, Position } from '@territorios/geo';
+import type { Feature, FeatureCollection, Geometry, MultiPolygon, Polygon, Position } from '@territorios/geo';
 
 import type { Coordinate, DraftState } from './draft.js';
 
@@ -158,22 +158,6 @@ export function installEditorLayers(map: MapLibreMap): void {
     paint: { 'line-color': '#8a5a2e', 'line-width': 2, 'line-dasharray': [3, 2] }
   });
 
-  // A single pause marker belongs to the in-progress progress entry. It is
-  // deliberately separate from the route draft source so clearing the route
-  // never silently clears the marker (or vice versa).
-  map.addSource('progress-pause-point', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
-  map.addLayer({
-    id: 'progress-pause-point-circle',
-    type: 'circle',
-    source: 'progress-pause-point',
-    paint: {
-      'circle-radius': 8,
-      'circle-color': '#7c3aed',
-      'circle-stroke-width': 2,
-      'circle-stroke-color': '#ffffff'
-    }
-  });
-
   map.addSource('saved-territory', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
   map.addLayer({
     id: 'saved-territory-fill',
@@ -189,7 +173,7 @@ export function installEditorLayers(map: MapLibreMap): void {
   });
 
   // Remaining-area, from the latest progress entry — visually distinct from
-  // both saved (teal) and draft (orange): a hatched magenta outline, since
+  // both saved (teal) and draft (orange): a dashed blue area (2026-10-03), since
   // it represents an ADMINISTRATOR-VIEWED estimate of what is left, never a
   // territory boundary or a drawing in progress. Absent (no progress entry
   // recorded a remaining area) means this layer simply stays empty — the UI
@@ -199,13 +183,13 @@ export function installEditorLayers(map: MapLibreMap): void {
     id: 'remaining-area-fill',
     type: 'fill',
     source: 'remaining-area',
-    paint: { 'fill-color': '#b0339a', 'fill-opacity': 0.18 }
+    paint: { 'fill-color': '#2563eb', 'fill-opacity': 0.28 }
   });
   map.addLayer({
     id: 'remaining-area-line',
     type: 'line',
     source: 'remaining-area',
-    paint: { 'line-color': '#7a1f6b', 'line-width': 2, 'line-dasharray': [1, 1] }
+    paint: { 'line-color': '#1d4ed8', 'line-width': 2, 'line-dasharray': [2, 1] }
   });
 
   map.addSource('draft-territory', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
@@ -229,26 +213,39 @@ export function installEditorLayers(map: MapLibreMap): void {
     // White halo + larger radius: a thin 5px dot in the project's teal/
     // orange palette was hard to pick out against busy OSM tiles at a
     // glance — this stays visible over any basemap color underneath it.
+    //
+    // `outside` (set only by the session recorder's client pre-check) turns
+    // a vertex red: it lies outside the territory and the server would
+    // reject the session. TerritoryEditor never sets it, so its vertices
+    // keep the plain orange.
     paint: {
       'circle-radius': 7,
-      'circle-color': '#e08a2e',
+      'circle-color': ['case', ['boolean', ['get', 'outside'], false], '#d32f2f', '#e08a2e'],
       'circle-stroke-width': 2,
       'circle-stroke-color': '#ffffff'
     }
   });
 }
 
-/** `index` is carried as a feature property so findVertexIndexAtPoint below can identify which vertex a click/drag hit — the only reason any draft feature has properties at all. */
-function pointFeature(coordinate: Coordinate, index: number): Feature {
-  return { type: 'Feature', properties: { index }, geometry: { type: 'Point', coordinates: coordinate } };
+/**
+ * `index` is carried as a feature property so findVertexIndexAtPoint below
+ * can identify which vertex a click/drag hit; `outside` drives the red
+ * data-driven vertex color (see installEditorLayers).
+ */
+function pointFeature(coordinate: Coordinate, index: number, outside: boolean): Feature {
+  return { type: 'Feature', properties: { index, outside }, geometry: { type: 'Point', coordinates: coordinate } };
 }
 
-/** Renders the current draft: vertex points always; a dashed line while open; a filled+outlined polygon once closed. */
-export function renderDraft(map: MapLibreMap, draft: DraftState): void {
+/**
+ * Renders the current draft: vertex points always; a dashed line while
+ * open; a filled+outlined polygon once closed. `outsideIndices` marks the
+ * vertices to paint red (session recorder only; empty by default).
+ */
+export function renderDraft(map: MapLibreMap, draft: DraftState, outsideIndices: ReadonlySet<number> = new Set()): void {
   const source = asGeoJsonSource(map.getSource('draft-territory'));
   if (!source) return;
 
-  const features: Feature[] = draft.vertices.map((vertex, index) => pointFeature(vertex, index));
+  const features: Feature[] = draft.vertices.map((vertex, index) => pointFeature(vertex, index, outsideIndices.has(index)));
 
   if (draft.vertices.length >= 2) {
     const geometry: Geometry = draft.isClosed
@@ -292,27 +289,124 @@ export function renderReferenceBarrios(map: MapLibreMap, barrios: readonly Refer
  * Renders the remaining-area geometry from the latest progress entry, or
  * clears the layer when there is none — an empty layer here is the visual
  * counterpart of the "unknown" status text; it never shows a guessed shape
- * (AGENTS.md: coverage is never inferred from a territory polygon).
+ * (AGENTS.md: coverage is never inferred from a territory polygon). An
+ * explicit EMPTY polygon ("nothing left", db/migrations/0007) also clears
+ * it: there is simply nothing to draw.
  */
-export function renderRemainingArea(map: MapLibreMap, geometry: Polygon | null): void {
+export function renderRemainingArea(map: MapLibreMap, geometry: Polygon | MultiPolygon | null): void {
   const source = asGeoJsonSource(map.getSource('remaining-area'));
   if (!source) return;
   source.setData(
-    geometry === null
+    geometry === null || geometry.coordinates.length === 0
       ? { type: 'FeatureCollection', features: [] }
       : { type: 'FeatureCollection', features: [{ type: 'Feature', properties: null, geometry }] }
   );
 }
 
-/** Renders one in-progress pause point for the admin-only progress recorder. */
-export function renderPausePoint(map: MapLibreMap, geometry: Point | null): void {
-  const source = asGeoJsonSource(map.getSource('progress-pause-point'));
-  if (!source) return;
-  source.setData(
-    geometry === null
-      ? { type: 'FeatureCollection', features: [] }
-      : { type: 'FeatureCollection', features: [{ type: 'Feature', properties: null, geometry }] }
+/**
+ * Session layers for the admin-only coverage recorder, added on top of
+ * installEditorLayers (call that first):
+ *
+ * - progress-sessions: each earlier session's covered area in its own color
+ *   (feature property `color`), with a stronger fill/outline for the one
+ *   highlighted from the session list (`highlighted`). Inserted below the
+ *   remaining-area and draft layers so what is being drawn stays on top.
+ */
+export function installSessionLayers(map: MapLibreMap): void {
+  map.addSource('progress-sessions', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer(
+    {
+      id: 'progress-sessions-fill',
+      type: 'fill',
+      source: 'progress-sessions',
+      paint: {
+        'fill-color': ['get', 'color'],
+        'fill-opacity': ['case', ['boolean', ['get', 'highlighted'], false], 0.65, 0.35]
+      }
+    },
+    'remaining-area-fill'
   );
+  map.addLayer(
+    {
+      id: 'progress-sessions-line',
+      type: 'line',
+      source: 'progress-sessions',
+      paint: {
+        'line-color': ['get', 'color'],
+        'line-width': ['case', ['boolean', ['get', 'highlighted'], false], 3, 1]
+      }
+    },
+    'remaining-area-fill'
+  );
+}
+
+/**
+ * The OTHER territories, for the territory editor (2026-10-03): a faint
+ * thin grey outline, no fill, below every other editor layer — just enough
+ * to show what the draft snaps to, never confusable with the saved (teal),
+ * remaining (blue), draft (orange), or barrio (brown dashed) layers.
+ * Call after installEditorLayers.
+ */
+export function installNeighborTerritoriesLayer(map: MapLibreMap): void {
+  map.addSource('neighbor-territories', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer(
+    {
+      id: 'neighbor-territories-line',
+      type: 'line',
+      source: 'neighbor-territories',
+      paint: { 'line-color': '#6b7280', 'line-width': 1, 'line-opacity': 0.7 }
+    },
+    'reference-barrios-line'
+  );
+}
+
+/** Renders the neighbouring territories' outlines, or clears the layer. */
+export function renderNeighborTerritories(map: MapLibreMap, geometries: readonly Polygon[]): void {
+  const source = asGeoJsonSource(map.getSource('neighbor-territories'));
+  if (!source) return;
+  source.setData({
+    type: 'FeatureCollection',
+    features: geometries.map((geometry) => ({ type: 'Feature', properties: null, geometry }))
+  });
+}
+
+/**
+ * Snap indicator for the session recorder and the territory editor, added
+ * on top of everything (call last): a hollow near-black ring where a click or
+ * drag would snap. A visual aid only — the snap itself happens on click,
+ * and nothing depends on seeing this ring.
+ */
+export function installSnapIndicatorLayer(map: MapLibreMap): void {
+  map.addSource('snap-indicator', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer({
+    id: 'snap-indicator-ring',
+    type: 'circle',
+    source: 'snap-indicator',
+    paint: {
+      'circle-radius': 9,
+      'circle-opacity': 0,
+      'circle-stroke-width': 3,
+      'circle-stroke-color': '#111827'
+    }
+  });
+}
+
+/** Shows the snap indicator at `coordinate`, or hides it when null. */
+export function renderSnapIndicator(map: MapLibreMap, coordinate: Coordinate | null): void {
+  const source = asGeoJsonSource(map.getSource('snap-indicator'));
+  if (!source) return;
+  source.setData({
+    type: 'FeatureCollection',
+    features:
+      coordinate === null ? [] : [{ type: 'Feature', properties: null, geometry: { type: 'Point', coordinates: coordinate } }]
+  });
+}
+
+/** Renders already-built session features (see territory-detail/sessions.ts), or clears the layer. */
+export function renderSessions(map: MapLibreMap, sessions: FeatureCollection): void {
+  const source = asGeoJsonSource(map.getSource('progress-sessions'));
+  if (!source) return;
+  source.setData(sessions);
 }
 
 /** Centers and fits the map to a polygon's bounding box, WGS84 in, WGS84 bounds out. */

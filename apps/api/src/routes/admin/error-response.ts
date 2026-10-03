@@ -14,7 +14,8 @@ import { isDomainError, type DomainError } from '../../domain/errors.js';
  * Status choice: 400 for a problem with the request's own input
  * (invalid/zero-area geometry, out of bounds, blank fields), 404 for a
  * missing territory, 409 for a real conflict with existing state
- * (unauthorized overlap), 503 for an operational precondition this request
+ * (unauthorized overlap, recording progress on a territory that is not
+ * open), 503 for an operational precondition this request
  * cannot fix (the boundary reference itself is missing).
  */
 export function statusForDomainError(error: DomainError): number {
@@ -23,11 +24,14 @@ export function statusForDomainError(error: DomainError): number {
     case 'zero_area_geometry':
     case 'out_of_bounds':
     case 'invalid_request':
+    case 'baseline_required':
+    case 'covered_area_not_remaining':
       return 400;
     case 'territory_not_found':
       return 404;
     case 'duplicate_territory_number':
     case 'unauthorized_overlap':
+    case 'territory_not_open':
       return 409;
     case 'boundary_reference_missing':
       return 503;

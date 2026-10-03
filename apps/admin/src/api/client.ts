@@ -61,29 +61,31 @@ export interface TerritoryWithRevisions extends Omit<Territory, 'currentRevision
   readonly revisions: readonly TerritoryRevision[];
 }
 
-export interface AuditEvent {
-  readonly id: number;
-  readonly entityType: string;
-  readonly entityId: number;
-  readonly action: string;
-  readonly actor: string;
-  readonly reason: string;
-  readonly payload: Record<string, unknown>;
-  readonly createdAt: string;
-}
-
+/**
+ * One recorded session. Since 2026-09-26 every new session carries the area
+ * COVERED in it and the server derives the remaining area; entries from
+ * before that have `coveredArea: null`.
+ */
 export interface ProgressEntry {
   readonly id: number;
   readonly territoryId: number;
+  /** Operational cycle the session belongs to (null only for entries predating cycles). */
+  readonly cycleNumber: number | null;
   readonly recordedBy: string;
   readonly recordedAt: string;
   readonly note: string | null;
   readonly pausePoint: Point | null;
   readonly route: LineString | null;
-  readonly remainingArea: Polygon | null;
+  readonly coveredArea: Polygon | MultiPolygon | null;
+  /** 'whole_territory' when the administrator confirmed that baseline for the cycle's first session. */
+  readonly baseline: CoverageBaseline | null;
+  /** An empty polygon (`coordinates: []`) means nothing is left; null means unknown. */
+  readonly remainingArea: Polygon | MultiPolygon | null;
   /** Explicit, never-inferred: 'unknown' means not recorded, never "fully covered" (AGENTS.md). */
   readonly remainingAreaStatus: 'recorded' | 'unknown';
 }
+
+export type CoverageBaseline = 'whole_territory';
 
 export type OperationalState = 'no_record' | 'in_progress' | 'paused' | 'cycle_completed' | 'reopened';
 
@@ -92,8 +94,11 @@ export interface TerritoryOperationalStatus {
   readonly state: OperationalState;
   readonly cycleNumber: number | null;
   readonly effectiveCompletionDate: string | null;
-  readonly remainingArea: Polygon | null;
+  /** Latest remaining area of the current cycle; an empty polygon means nothing is left, null means unknown. */
+  readonly remainingArea: Polygon | MultiPolygon | null;
   readonly remainingAreaStatus: 'recorded' | 'unknown';
+  /** Approximate progress of the current cycle, 0–100; null means unknown. */
+  readonly progressPercent: number | null;
 }
 
 /**
@@ -171,23 +176,48 @@ export function submitRevision(
   });
 }
 
-export function getTerritoryAudit(territoryId: number): Promise<{ territoryId: number; events: readonly AuditEvent[] }> {
-  return request(`/admin/territories/${territoryId}/audit`);
-}
-
 export function listProgress(territoryId: number): Promise<{ entries: readonly ProgressEntry[] }> {
   return request(`/admin/territories/${territoryId}/progress`);
 }
 
+/** A new session: the covered area is required; the remaining area is always computed by the server. */
+export interface RecordSessionInput {
+  readonly recordedBy: string;
+  readonly note?: string;
+  readonly coveredArea: Polygon;
+  readonly baseline?: CoverageBaseline;
+  readonly pausePoint?: Point;
+  readonly route?: LineString;
+}
+
 export function recordProgress(
   territoryId: number,
-  input: { recordedBy: string; note?: string; pausePoint?: Point; route?: LineString; remainingArea?: Polygon }
+  input: RecordSessionInput
 ): Promise<ProgressEntry> {
   return request(`/admin/territories/${territoryId}/progress`, { method: 'POST', body: JSON.stringify(input) });
 }
 
 export function getTerritoryOperationalStatus(territoryId: number): Promise<TerritoryOperationalStatus> {
   return request(`/admin/territories/${territoryId}/operational-state`);
+}
+
+/**
+ * One operational work cycle (2026-10-03: a territory is explicitly opened,
+ * worked, then closed; each opening starts a new cycle). Newest first.
+ */
+export interface TerritoryCycle {
+  readonly cycleNumber: number;
+  /** ISO timestamp of the opening. */
+  readonly openedAt: string;
+  /** ISO timestamp of the closing, or null while the cycle is open. */
+  readonly closedAt: string | null;
+  /** Declared completion date (YYYY-MM-DD), or null while the cycle is open. */
+  readonly effectiveCompletionDate: string | null;
+  readonly sessionCount: number;
+}
+
+export function listTerritoryCycles(territoryId: number): Promise<{ cycles: readonly TerritoryCycle[] }> {
+  return request(`/admin/territories/${territoryId}/cycles`);
 }
 
 export function changeTerritoryOperationalState(
@@ -277,6 +307,9 @@ const ERROR_MESSAGES_ES: Record<string, string> = {
   unauthorized_overlap: 'Esta forma se superpone con otro territorio activo.',
   boundary_reference_missing: 'Falta cargar el límite municipal de referencia.',
   duplicate_territory_number: 'Ese número ya lo tiene otro territorio.',
+  covered_area_not_remaining: 'El área cubierta no se superpone con el área pendiente del ciclo (quizás ya estaba cubierta).',
+  territory_not_open: 'El territorio está cerrado. Ábrelo para registrar progreso.',
+  baseline_required: 'Este ciclo todavía no tiene un área pendiente registrada; hay que confirmar desde dónde parte.',
   network_error: 'No se pudo conectar con el servidor.',
   unexpected_error: 'Ocurrió un error inesperado; no se guardó nada.'
 };

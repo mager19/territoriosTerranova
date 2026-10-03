@@ -55,11 +55,22 @@ reuse and freshness approval is still required before production use.
 ## Privacy rules
 
 - Public data must be minimized: expose only one territory's approved map
-  information. Exclude identity, notes, timestamps, pause points, history, other
-  territories, and municipal attributes by default. The one deliberate exception is
-  the progress route line (a LineString): exposed by explicit product decision
-  (2026-09-08) because a volunteer's own resume-progress use case needs it —
-  see docs/agents/A4-sharing.md and A6-public-web.md for the exact allowlist.
+  information. Exclude identity, notes, timestamps, history, other territories,
+  and municipal attributes by default. Deliberate exceptions, each exposed by
+  explicit product decision because volunteers need them to resume work:
+  - the current cycle's latest recorded progress route line (a LineString),
+    2026-09-08;
+  - the current cycle's covered area merged server-side into ONE
+    Polygon/MultiPolygon (ST_Union), 2026-09-26;
+  - the current cycle's latest session note, 2026-10-03 product decision,
+    exposed so volunteers know where to resume (it replaced the pause point,
+    which is no longer public). Only the single latest entry's note: if it
+    has none, nothing is shown — never an older note. Admins are warned in
+    the recording UI not to write personal data in it.
+  Older notes, per-session geometries, session count, timestamps, recordedBy,
+  pause points, cycle number, baseline, and progress percentage stay excluded,
+  so no history can be reconstructed.
+  See docs/agents/A4-sharing.md and A6-public-web.md for the exact allowlist.
 - Protect public endpoints with opaque high-entropy tokens, hash storage,
   revocation, optional expiry, HTTPS, rate limits, `no-store`, `noindex`, a
   restrictive referrer policy, and short justified access-log retention.

@@ -13,7 +13,10 @@
  */
 
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
-import type { Feature, FeatureCollection, Geometry, LineString, Polygon, Position } from '@territorios/geo';
+import type { Feature, FeatureCollection, Geometry, Polygon, Position } from '@territorios/geo';
+
+import { hasDrawableArea, LAYER_COLORS } from './layers.js';
+import type { PublicTerritoryView } from './public-api.js';
 
 export const BELLO_CENTER: [number, number] = [-75.5636, 6.3373];
 export const BELLO_ZOOM = 13;
@@ -148,6 +151,18 @@ export function installTerritoryLayers(map: MapLibreMap): void {
     paint: { 'line-color': '#9a9a9a', 'line-width': 2, 'line-dasharray': [2, 2] }
   });
 
+  // The area already done in the current cycle (2026-09-26 product
+  // decision): ONE server-merged shape, a muted green fill drawn under the
+  // remaining area and the route so "done" never hides what is pending.
+  // Empty when nothing was covered.
+  map.addSource('covered-area', { type: 'geojson', data: emptyFeatureCollection() as GeoJSON.GeoJSON });
+  map.addLayer({
+    id: 'covered-area-fill',
+    type: 'fill',
+    source: 'covered-area',
+    paint: { 'fill-color': LAYER_COLORS.covered, 'fill-opacity': 0.4 }
+  });
+
   // Understated on purpose (see doc comment above) — only meaningful when
   // progress is genuinely area-shaped rather than perimeter-shaped. Empty
   // when remainingArea is null; that is the visual counterpart of the
@@ -158,7 +173,7 @@ export function installTerritoryLayers(map: MapLibreMap): void {
     id: 'remaining-area-fill',
     type: 'fill',
     source: 'remaining-area',
-    paint: { 'fill-color': '#c9c9c9', 'fill-opacity': 0.35 }
+    paint: { 'fill-color': LAYER_COLORS.remaining, 'fill-opacity': 0.35 }
   });
 
   // The actual progress line — bold and near-black, the darkest element
@@ -173,7 +188,7 @@ export function installTerritoryLayers(map: MapLibreMap): void {
     type: 'line',
     source: 'progress-route',
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': '#161616', 'line-width': 4 }
+    paint: { 'line-color': LAYER_COLORS.route, 'line-width': 4 }
   });
 }
 
@@ -185,15 +200,14 @@ function setSource(map: MapLibreMap, sourceId: string, geometry: Geometry | null
   (source as { setData(data: GeoJSON.GeoJSON): void }).setData(data as unknown as GeoJSON.GeoJSON);
 }
 
-export function renderTerritory(
-  map: MapLibreMap,
-  boundary: Polygon,
-  remainingArea: Polygon | null,
-  route: LineString | null
-): void {
-  setSource(map, 'territory-boundary', boundary);
-  setSource(map, 'remaining-area', remainingArea);
-  setSource(map, 'progress-route', route);
+export type RenderableView = Pick<PublicTerritoryView, 'boundary' | 'coveredArea' | 'remainingArea' | 'route'>;
+
+export function renderTerritory(map: MapLibreMap, view: RenderableView): void {
+  setSource(map, 'territory-boundary', view.boundary);
+  // An explicit empty polygon ("nothing left" / "nothing done") has nothing to draw.
+  setSource(map, 'covered-area', hasDrawableArea(view.coveredArea) ? view.coveredArea : null);
+  setSource(map, 'remaining-area', hasDrawableArea(view.remainingArea) ? view.remainingArea : null);
+  setSource(map, 'progress-route', view.route);
 }
 
 export function fitToBoundingBox(map: MapLibreMap, box: BoundingBox): void {

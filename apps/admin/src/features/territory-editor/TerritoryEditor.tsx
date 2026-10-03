@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Map as MapLibreMap, NavigationControl, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -8,9 +8,11 @@ import {
   createTerritory,
   DEFAULT_ACTOR,
   describeApiError,
+  listTerritories,
   searchReferenceBarrios,
   submitRevision,
   type ReferenceBarrio,
+  type TerritoryListItem,
   type TerritoryWithRevisions
 } from '../../api/client.js';
 import {
@@ -24,6 +26,7 @@ import {
   removeVertexAt,
   resetDraft,
   undoVertex,
+  type Coordinate,
   type DraftState
 } from './draft.js';
 import {
@@ -34,21 +37,33 @@ import {
   fitToMultiPolygon,
   fitToPolygon,
   installEditorLayers,
+  installNeighborTerritoriesLayer,
+  installSnapIndicatorLayer,
   renderDraft,
+  renderNeighborTerritories,
   renderReferenceBarrios,
   renderRemainingArea,
   renderSavedTerritory,
+  renderSnapIndicator,
   screenPointToCoordinate
 } from './map-editor.js';
-import type { Polygon } from '@territorios/geo';
+import type { MultiPolygon, Polygon } from '@territorios/geo';
 import { formatKm2, nextActiveIndex } from './barrio.js';
+import { snapToGeometries, type SnapGeometry } from './snap.js';
+import { editorSnapTargets, neighborTerritoryGeometries } from './snap-targets.js';
 
 export interface TerritoryEditorProps {
   /** The territory to draw a new revision for, or null to draw a brand-new territory. */
   readonly selectedTerritory: TerritoryWithRevisions | null;
   readonly onSaved: (territory: TerritoryWithRevisions) => void;
   /** The latest recorded progress entry's remaining-area geometry, or null when unknown (slice 2: TerritoryDetail owns fetching this). */
-  readonly remainingAreaGeometry?: Polygon | null;
+  readonly remainingAreaGeometry?: Polygon | MultiPolygon | null;
+}
+
+/** The snapped coordinate under a screen point, or null when nothing is within tolerance. */
+function findSnap(map: MapLibreMap, point: { x: number; y: number }, targets: readonly SnapGeometry[]): Coordinate | null {
+  if (targets.length === 0) return null;
+  return snapToGeometries(point, targets, ([lng, lat]) => map.project([lng, lat]))?.coordinate ?? null;
 }
 
 /**
@@ -60,6 +75,15 @@ export interface TerritoryEditorProps {
  * focus ring, deliberately never suppressed. The territory LIST (a sibling
  * component, TerritoryList) is the accessible, non-map way to select and
  * review territories the A5 brief's DoD asks for.
+ *
+ * Snapping (2026-10-03, snap.ts / snap-targets.ts): a click while drawing,
+ * or a vertex drag in "edit vertices" mode, that lands within ~12 px of a
+ * NEIGHBOURING territory's border or the selected reference barrio's border
+ * lands exactly on it (vertices first, then edges), with a ring previewing
+ * where. The territory being edited is never a target. Insert-on-edge does
+ * not snap: it inserts on the draft's own edge by design. The neighbouring
+ * territories come from the admin list endpoint; until it loads, or if it
+ * fails, there is simply no territory snapping.
  */
 export function TerritoryEditor({
   selectedTerritory,
@@ -88,6 +112,24 @@ export function TerritoryEditor({
     draftRef.current = draft;
   }, [draft]);
 
+  // Every territory's current geometry, for snapping and the neighbour
+  // outline. null = not loaded yet, or the request failed.
+  const [territoryList, setTerritoryList] = useState<readonly TerritoryListItem[] | null>(null);
+  const [territoryListFailed, setTerritoryListFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    listTerritories()
+      .then(({ territories }) => {
+        if (!cancelled) setTerritoryList(territories);
+      })
+      .catch(() => {
+        if (!cancelled) setTerritoryListFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // AMVA barrio reference (2026-09-08: an admin expected one territory to
   // cover a whole barrio — Guasimalito — and found only a small fraction of
   // it, since a territory is one manzana/block by design). Purely a visual
@@ -108,6 +150,21 @@ export function TerritoryEditor({
   const barrioRequestSeqRef = useRef(0);
   // Wraps the combobox so a click elsewhere on the page closes the dropdown.
   const barrioComboboxRef = useRef<HTMLDivElement | null>(null);
+
+  const editingTerritoryId = selectedTerritory?.id ?? null;
+  const neighborGeometries = useMemo(
+    () => neighborTerritoryGeometries(territoryList, editingTerritoryId),
+    [territoryList, editingTerritoryId]
+  );
+  const snapTargets = useMemo(
+    () => editorSnapTargets(territoryList, editingTerritoryId, selectedBarrio?.geometry ?? null),
+    [territoryList, editingTerritoryId, selectedBarrio]
+  );
+  // Read by the map handlers, which are only re-bound when the mode changes.
+  const snapTargetsRef = useRef(snapTargets);
+  useEffect(() => {
+    snapTargetsRef.current = snapTargets;
+  }, [snapTargets]);
 
   // Map lifecycle: created once. React's StrictMode (development only)
   // deliberately mounts every effect twice — mount, synthetic cleanup,
@@ -135,6 +192,8 @@ export function TerritoryEditor({
     map.addControl(new NavigationControl({ showCompass: false }), 'top-right');
     map.on('load', () => {
       installEditorLayers(map);
+      installNeighborTerritoriesLayer(map);
+      installSnapIndicatorLayer(map);
       setMapReady(true);
     });
     mapRef.current = map;
@@ -148,14 +207,26 @@ export function TerritoryEditor({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
+    if (editingVertices) return;
     const handleClick = (event: MapMouseEvent) => {
-      if (editingVertices) return;
-      const coordinate = screenPointToCoordinate(map, event.point);
+      const coordinate = findSnap(map, event.point, snapTargetsRef.current) ?? screenPointToCoordinate(map, event.point);
       setDraft((current) => addVertex(current, coordinate));
     };
+    // The ring previews where the next vertex would land. A click on a
+    // closed draft starts a new shape (addVertex), so the preview applies
+    // to it too.
+    const handleMouseMove = (event: MapMouseEvent) => {
+      renderSnapIndicator(map, findSnap(map, event.point, snapTargetsRef.current));
+    };
+    const hideIndicator = () => renderSnapIndicator(map, null);
     map.on('click', handleClick);
+    map.on('mousemove', handleMouseMove);
+    map.on('mouseout', hideIndicator);
     return () => {
       map.off('click', handleClick);
+      map.off('mousemove', handleMouseMove);
+      map.off('mouseout', hideIndicator);
+      hideIndicator();
     };
   }, [mapReady, editingVertices]);
 
@@ -192,7 +263,9 @@ export function TerritoryEditor({
         }
         return;
       }
-      const coordinate = screenPointToCoordinate(map, event.point);
+      const snap = findSnap(map, event.point, snapTargetsRef.current);
+      renderSnapIndicator(map, snap);
+      const coordinate = snap ?? screenPointToCoordinate(map, event.point);
       const index = draggingIndexRef.current;
       setDraft((current) => moveVertex(current, index, coordinate));
     };
@@ -200,6 +273,7 @@ export function TerritoryEditor({
     const endDrag = () => {
       if (draggingIndexRef.current === null) return;
       draggingIndexRef.current = null;
+      renderSnapIndicator(map, null);
       map.dragPan.enable();
       map.getCanvas().style.cursor = '';
     };
@@ -241,6 +315,12 @@ export function TerritoryEditor({
       endDrag();
     };
   }, [mapReady, editingVertices]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    renderNeighborTerritories(map, neighborGeometries);
+  }, [neighborGeometries, mapReady]);
 
   // Re-render the draft layer whenever the draft state changes.
   useEffect(() => {
@@ -445,7 +525,7 @@ export function TerritoryEditor({
         role="img"
         aria-label={`Mapa centrado en Bello, para dibujar el contorno de un territorio. ${
           editingVertices
-            ? 'Modo de edición de puntos: arrastrá un punto para moverlo, hacé clic en un borde para agregar uno, doble clic en un punto para borrarlo.'
+            ? 'Modo de edición de puntos: arrastra un punto para moverlo, haz clic en un borde para agregar uno, doble clic en un punto para borrarlo.'
             : draft.vertices.length > 0
               ? `${draft.vertices.length} punto(s) ubicado(s).`
               : 'Todavía no hay puntos ubicados.'
@@ -453,6 +533,11 @@ export function TerritoryEditor({
         style={{ width: '100%', height: '420px', border: '1px solid var(--map-border, #ccc)' }}
       />
       <BasemapAttribution kind={ADMIN_BASEMAP.kind} />
+      {territoryListFailed && (
+        <p role="status" className="editor-hint">
+          No se pudieron cargar los otros territorios; los puntos no se ajustarán a sus bordes.
+        </p>
+      )}
 
       <div className="barrio-combobox" ref={barrioComboboxRef}>
         <label htmlFor="barrio-search">Barrio de referencia</label>
@@ -587,24 +672,24 @@ export function TerritoryEditor({
 
         {!draft.isClosed && (
           <p role="status">
-            {draft.vertices.length === 0 && 'Hacé clic en el mapa para ubicar el primer punto.'}
+            {draft.vertices.length === 0 && 'Haz clic en el mapa para ubicar el primer punto.'}
             {draft.vertices.length > 0 &&
               draft.vertices.length < 3 &&
               `${draft.vertices.length} punto(s) ubicado(s) — se necesitan al menos 3 para cerrar el contorno.`}
-            {draft.vertices.length >= 3 && `${draft.vertices.length} puntos ubicados. Cerrá el contorno para guardar.`}
+            {draft.vertices.length >= 3 && `${draft.vertices.length} puntos ubicados. Cierra el contorno para guardar.`}
           </p>
         )}
         {draft.isClosed && editingVertices && (
           <p role="status">
-            Arrastrá un punto para moverlo, hacé clic en un borde para agregar uno, doble clic en un punto para
-            borrarlo. Usá “Terminar edición de vértices” para conservar los cambios y guardar.
+            Arrastra un punto para moverlo, haz clic en un borde para agregar uno, doble clic en un punto para
+            borrarlo. Usa “Terminar edición de vértices” para conservar los cambios y guardar.
           </p>
         )}
         {draft.isClosed && !editingVertices && (
           <p role="status">
             {canSave
               ? `${draft.vertices.length} puntos. Listo para guardar, o Editar vértices para ajustar el contorno.`
-              : `${draft.vertices.length} puntos. Editá vértices para ajustar el contorno, o completá los campos requeridos abajo para guardar.`}
+              : `${draft.vertices.length} puntos. Edita vértices para ajustar el contorno, o completa los campos requeridos abajo para guardar.`}
           </p>
         )}
 
@@ -615,7 +700,7 @@ export function TerritoryEditor({
             save button did not respond). */}
         {geometry !== null && !canSave && !saving && !selectedTerritory && name.trim() === '' && (
           <p role="status" className="editor-hint">
-            Escribí un nombre de territorio arriba para guardar.
+            Escribe un nombre de territorio arriba para guardar.
           </p>
         )}
 

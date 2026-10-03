@@ -5,9 +5,9 @@
  * territories are shared to a group of volunteers, not assigned to one
  * named person (db/migrations/0004_remove_individual_assignment.sql).
  * `resolvePublicTerritoryView` therefore always resolves against the
- * territory's CURRENT (latest) revision and its latest progress entry —
- * there is no per-claim revision to pin against, so "current" is simply
- * "whatever the territory looks like right now".
+ * territory's CURRENT (latest) revision and its CURRENT cycle's progress
+ * entries — there is no per-claim revision to pin against, so "current" is
+ * simply "whatever the territory looks like right now".
  *
  * `resolvePublicTerritoryView` is written so a revoked, expired, wrong-
  * scope, and genuinely valid token all execute the SAME query and the
@@ -22,7 +22,7 @@
  * distinguishing signal.
  */
 
-import type { LineString, Polygon } from '@territorios/geo';
+import type { LineString, MultiPolygon, Polygon } from '@territorios/geo';
 
 import { generateShareToken, hashShareToken } from './token-crypto.js';
 import { recordAuditEvent } from '../domain/audit.js';
@@ -128,16 +128,32 @@ export async function revokeShareToken(pool: TransactionalPool, tokenId: number,
 export interface PublicTerritoryView {
   readonly territoryName: string;
   readonly boundary: Polygon;
-  readonly remainingArea: Polygon | null;
+  /** Polygon or MultiPolygon since coverage sessions (0007); an empty polygon means nothing is left, null means unknown. */
+  readonly remainingArea: Polygon | MultiPolygon | null;
   readonly remainingAreaStatus: 'recorded' | 'unknown';
   /**
-   * The latest progress entry's route line — deliberately exposed
+   * The current cycle's latest RECORDED route line — deliberately exposed
    * (2026-09-08 product decision, AGENTS.md "Privacy rules"): a volunteer
-   * needs to see the coverage line to know where to resume. Every other
-   * progress-entry field (note, pause point, recordedBy, recordedAt) stays
-   * excluded.
+   * needs to see the coverage line to know where to resume.
    */
   readonly route: LineString | null;
+  /**
+   * The note of the single LATEST progress entry of the current cycle, so
+   * volunteers know where to resume. Deliberately exposed (2026-10-03
+   * product decision, AGENTS.md "Privacy rules"; it replaced the pause
+   * point, which is no longer public). Null when that latest entry has no
+   * note — never a fallback to an older note, which could be stale.
+   */
+  readonly note: string | null;
+  /**
+   * The UNION of every coverage session's covered area in the current
+   * cycle, merged into ONE shape (2026-09-26 product decision). Per-session
+   * geometries, session count, and timestamps are never exposed, so the
+   * history cannot be reconstructed from it. Null when nothing was covered.
+   * Every other progress-entry field (older notes, pause point, recordedBy,
+   * recordedAt, baseline, cycle number) stays excluded.
+   */
+  readonly coveredArea: Polygon | MultiPolygon | null;
 }
 
 interface PublicViewRow {
@@ -145,8 +161,10 @@ interface PublicViewRow {
   readonly expires_at: string | null;
   readonly territory_name: string;
   readonly boundary: Polygon;
-  readonly remaining_area: Polygon | null;
+  readonly remaining_area: Polygon | MultiPolygon | null;
   readonly route: LineString | null;
+  readonly note: string | null;
+  readonly covered_area: Polygon | MultiPolygon | null;
 }
 
 /**
@@ -169,7 +187,9 @@ export async function resolvePublicTerritoryView(
          t.name AS territory_name,
          ST_AsGeoJSON(tr.geom)::json AS boundary,
          ST_AsGeoJSON(coverage.remaining_area)::json AS remaining_area,
-         ST_AsGeoJSON(pe.route)::json AS route
+         ST_AsGeoJSON(pe.route)::json AS route,
+         latest.note,
+         ST_AsGeoJSON(covered.covered_area)::json AS covered_area
        FROM share_tokens st
        JOIN territories t ON t.id = st.territory_id
        JOIN LATERAL (
@@ -201,10 +221,31 @@ export async function resolvePublicTerritoryView(
           SELECT route
           FROM progress_entries
           WHERE territory_id = t.id
+            AND route IS NOT NULL
             AND recorded_at >= cycle_start.started_at
-          ORDER BY recorded_at DESC
-         LIMIT 1
-       ) pe ON TRUE
+          ORDER BY recorded_at DESC, id DESC
+          LIMIT 1
+        ) pe ON TRUE
+        LEFT JOIN LATERAL (
+          -- The single latest entry of the current cycle, WITH OR WITHOUT a
+          -- note (2026-10-03 decision): a latest entry without a note yields
+          -- NULL rather than falling back to an older, possibly stale note.
+          SELECT NULLIF(btrim(note), '') AS note
+          FROM progress_entries
+          WHERE territory_id = t.id
+            AND recorded_at >= cycle_start.started_at
+          ORDER BY recorded_at DESC, id DESC
+          LIMIT 1
+        ) latest ON TRUE
+        LEFT JOIN LATERAL (
+          -- One merged shape, never per-session rows (2026-09-26 decision).
+          -- ST_CollectionExtract(..., 3) keeps the result Polygon/MultiPolygon.
+          SELECT ST_CollectionExtract(ST_Union(covered_area), 3) AS covered_area
+          FROM progress_entries
+          WHERE territory_id = t.id
+            AND covered_area IS NOT NULL
+            AND recorded_at >= cycle_start.started_at
+        ) covered ON TRUE
        WHERE st.token_hash = $1`,
       [tokenHash]
     );
@@ -225,7 +266,9 @@ export async function resolvePublicTerritoryView(
       boundary: row.boundary,
       remainingArea: row.remaining_area,
       remainingAreaStatus: row.remaining_area === null ? 'unknown' : 'recorded',
-      route: row.route
+      route: row.route,
+      note: row.note,
+      coveredArea: row.covered_area
     };
   });
 }

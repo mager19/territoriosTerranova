@@ -49,10 +49,23 @@ visually distinct from the drawn territory, and clearly labelled as reference.
 Territories are shared to the volunteer group, not assigned to one named person —
 there is no lifecycle to manage. What was actually built: a "Share this territory"
 action (SharePanel) that issues/revokes a link. Show the revision timeline and
-audit history. Show recorded progress, including remaining-area geometry when it
+audit history (2026-10-03: the audit history panel was removed from the territory
+detail; the cycle history replaces it in the UI and the audit trail stays stored
+and served by `GET /admin/territories/:id/audit`). Show recorded progress, including remaining-area geometry when it
 exists — this part is unchanged.
 
 ~~Assign, return, complete, and reopen with a reason.~~
+
+**Explicit open/close, 2026-10-03:** the territory detail starts with a compact
+top bar — "Sin abrir" / "Abierto desde el <fecha>" / "Cerrado el <fecha>" —
+with "Compartir" (reveals the SharePanel inline) and one state action:
+"Abrir territorio" (first cycle, or a new cycle after closing; no reason
+asked) or "Cerrar territorio" (today's local date as the effective
+completion date). The session recorder is rendered only while the territory
+is open; otherwise a short message asks to open it. A "Historial de ciclos"
+section lists every cycle with its open/close dates and session count. The
+old coverage/status panel (progress meter, pause/resume, completion date
+input, reopen reason) was removed.
 
 ## Definition of done
 
@@ -62,7 +75,9 @@ exists — this part is unchanged.
 - [ ] Server validation errors are surfaced with their specific cause — never a
       generic "something went wrong"
 - [ ] Revision history is visible and revisions are presented as immutable
-- [ ] Reopen requires a reason in the UI, matching the server rule
+- [ ] ~~Reopen requires a reason in the UI, matching the server rule~~ —
+      superseded 2026-10-03: the reason is optional on the server and the UI
+      opens a closed territory with a single "Abrir territorio" action
 - [ ] Where remaining-area geometry is absent, the UI says **unknown** — it never
       renders an assumed remaining area
 - [ ] AMVA reference layers, when shown, are visually and textually distinguishable

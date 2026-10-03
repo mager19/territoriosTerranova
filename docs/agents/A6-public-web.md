@@ -38,7 +38,11 @@ bundle, smaller attack surface, less to audit.
       page reads no other key
 - [ ] Revoked, expired, and invalid tokens all render the **same** neutral message
 - [ ] No analytics, no third-party scripts, no external font or asset loading
-      beyond the map tiles
+      beyond the basemap provider. With OSM raster (no `VITE_MAPTILER_KEY`) that
+      is the tiles only; with MapTiler it is the style JSON, its tiles, glyphs and
+      sprites, and the required MapTiler logo, all from `api.maptiler.com`
+      (2026-10-03, see docs/map-references.md "Basemap"). App fonts are
+      self-hosted.
 - [ ] The share token never appears in a referrer, an outbound request, or a
       logged URL beyond the initial load
 - [ ] `noindex` respected; no sitemap; no crawlable link to this app
@@ -55,13 +59,22 @@ bundle, smaller attack surface, less to audit.
   Design as if the viewer is a stranger, because eventually they are.
 - **Never fetch from an admin endpoint.** Not even for convenience during
   development. The bundle must contain no admin URL.
-- Do not render assignee identity, notes, timestamps, pause points, history,
-  other territories, or AMVA attributes — even if the API mistakenly returns
-  them. **Report an unexpected field to the orchestrator immediately**: that is
-  an A4 defect and it is severe.
-- The one exception is the progress **route** line (2026-09-08 product decision,
-  see AGENTS.md "Privacy rules"): render it as a distinct, bold progress line,
-  never confused with the territory boundary or the remaining-area fill.
+- Do not render assignee identity, older notes, timestamps, history, other
+  territories, or AMVA attributes — even if the API mistakenly returns them.
+  **Report an unexpected field to the orchestrator immediately**: that is an A4
+  defect and it is severe.
+- Deliberate exceptions (see AGENTS.md "Privacy rules"), the only fields read
+  beyond territoryName/boundary/remainingArea/remainingAreaStatus:
+  - the progress **route** line (2026-09-08): a distinct, bold progress line,
+    never confused with the territory boundary or the remaining-area fill;
+  - the merged current-cycle **coveredArea** (2026-09-26): a distinct muted
+    green "done" fill drawn under the remaining area and the route;
+  - the latest session **note** (2026-10-03): a clearly visible text box
+    labeled "Nota del último grupo" right above the map, rendered as plain
+    text (`textContent`, never HTML); nothing is rendered when it is null.
+  A legend (Hecho / Pendiente / Recorrido) lists only the layers present.
+  The **pausePoint** "Aquí quedamos" marker was removed on 2026-10-03; a
+  `pausePoint` field in a response is ignored like any unexpected field.
 - No client-side storage of the token beyond the session.
 - Coordinate order is `[longitude, latitude]`.
 

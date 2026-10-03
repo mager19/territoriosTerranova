@@ -9,7 +9,12 @@
 import type { FastifyInstance } from 'fastify';
 
 import { listProgressEntries, recordProgress } from '../../domain/progress.js';
-import { changeTerritoryOperationalState, getTerritoryOperationalStatus, type OperationalAction } from '../../domain/territory-operational-state.js';
+import {
+  changeTerritoryOperationalState,
+  getTerritoryOperationalStatus,
+  listTerritoryCycles,
+  type OperationalAction
+} from '../../domain/territory-operational-state.js';
 import { isRecord, trySendDomainError } from './error-response.js';
 import type { TransactionalPool } from '../../db/transaction.js';
 
@@ -50,6 +55,19 @@ export function registerAdminProgressRoutes(app: FastifyInstance, deps: AdminPro
     }
   });
 
+  app.get<{ Params: { id: string } }>('/admin/territories/:id/cycles', async (request, reply) => {
+    const territoryId = Number(request.params.id);
+    if (!Number.isInteger(territoryId) || territoryId < 1) {
+      return reply.status(400).send({ error: 'invalid_request', message: 'territory id must be a positive integer' });
+    }
+    try {
+      return reply.status(200).send({ cycles: await listTerritoryCycles(deps.pool, territoryId) });
+    } catch (error) {
+      if (trySendDomainError(reply, error)) return;
+      throw error;
+    }
+  });
+
   app.post<{ Params: { id: string } }>('/admin/territories/:id/progress', async (request, reply) => {
     const territoryId = Number(request.params.id);
     if (!Number.isInteger(territoryId) || territoryId < 1) {
@@ -60,6 +78,8 @@ export function registerAdminProgressRoutes(app: FastifyInstance, deps: AdminPro
       const entry = await recordProgress(deps.pool, territoryId, {
         recordedBy: typeof body.recordedBy === 'string' ? body.recordedBy : '',
         note: typeof body.note === 'string' ? body.note : undefined,
+        coveredArea: body.coveredArea,
+        baseline: body.baseline,
         pausePoint: body.pausePoint,
         route: body.route,
         remainingArea: body.remainingArea

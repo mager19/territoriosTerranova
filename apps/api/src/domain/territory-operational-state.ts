@@ -1,6 +1,6 @@
 /** Immutable, administrator-controlled operational work cycles. */
 
-import type { Polygon } from '@territorios/geo';
+import type { MultiPolygon, Polygon } from '@territorios/geo';
 import type { PoolClient } from 'pg';
 
 import { recordAuditEvent } from './audit.js';
@@ -14,8 +14,16 @@ export interface TerritoryOperationalStatus {
   readonly state: OperationalState;
   readonly cycleNumber: number | null;
   readonly effectiveCompletionDate: string | null;
-  readonly remainingArea: Polygon | null;
+  /** Latest remaining area of the current cycle; an empty polygon means nothing is left, null means unknown. */
+  readonly remainingArea: Polygon | MultiPolygon | null;
   readonly remainingAreaStatus: 'recorded' | 'unknown';
+  /**
+   * Approximate progress of the current cycle, 0–100:
+   * 100 × (1 − geodesic area(remaining) / geodesic area(current revision)),
+   * clamped to [0, 100]. null (unknown) when the cycle has no remaining
+   * area — never inferred from the territory polygon.
+   */
+  readonly progressPercent: number | null;
 }
 
 interface EventRow {
@@ -68,11 +76,26 @@ async function queryTerritoryOperationalStatus(
       action: OperationalAction | null;
       cycle_number: number | null;
       effective_completion_date: Date | string | null;
-      remaining_area: Polygon | null;
+      remaining_area: Polygon | MultiPolygon | null;
+      progress_percent: number | null;
     }>(
       `SELECT t.id, latest.action, latest.cycle_number, latest.effective_completion_date,
-              ST_AsGeoJSON(coverage.remaining_area)::json AS remaining_area
+              ST_AsGeoJSON(coverage.remaining_area)::json AS remaining_area,
+              CASE
+                WHEN coverage.remaining_area IS NULL OR current_revision.geom IS NULL THEN NULL
+                ELSE 100 * GREATEST(0, LEAST(1,
+                  1 - ST_Area(coverage.remaining_area::geography)
+                      / NULLIF(ST_Area(current_revision.geom::geography), 0)
+                ))
+              END AS progress_percent
        FROM territories t
+       LEFT JOIN LATERAL (
+         SELECT geom
+         FROM territory_revisions
+         WHERE territory_id = t.id
+         ORDER BY revision_number DESC
+         LIMIT 1
+       ) current_revision ON TRUE
        LEFT JOIN LATERAL (
          SELECT id, action, cycle_number, effective_completion_date, created_at
          FROM territory_operational_events
@@ -108,7 +131,8 @@ async function queryTerritoryOperationalStatus(
         ? row.effective_completion_date
         : row.effective_completion_date.toISOString().slice(0, 10),
     remainingArea: row.remaining_area,
-    remainingAreaStatus: row.remaining_area === null ? 'unknown' : 'recorded'
+    remainingAreaStatus: row.remaining_area === null ? 'unknown' : 'recorded',
+    progressPercent: row.progress_percent === null ? null : Number(row.progress_percent)
   };
 }
 
@@ -122,6 +146,7 @@ export async function getTerritoryOperationalStatus(
 export interface ChangeOperationalStateInput {
   readonly action: OperationalAction;
   readonly actor: string;
+  /** Optional for every action (2026-10-03: reopening no longer requires one); stored as NULL when absent. */
   readonly reason?: string;
   readonly effectiveCompletionDate?: string;
 }
@@ -134,7 +159,6 @@ export async function changeTerritoryOperationalState(
   const actor = input.actor.trim();
   const reason = input.reason?.trim() || null;
   if (actor === '') throw new ValidationError('actor must not be blank');
-  if (input.action === 'reopened' && reason === null) throw new ValidationError('reopening requires a reason');
   if (input.action === 'cycle_completed' && !/^\d{4}-\d{2}-\d{2}$/.test(input.effectiveCompletionDate ?? '')) {
     throw new ValidationError('cycle completion requires an effectiveCompletionDate in YYYY-MM-DD format');
   }
@@ -162,5 +186,80 @@ export async function changeTerritoryOperationalState(
     });
 
     return queryTerritoryOperationalStatus(client, territoryId);
+  });
+}
+
+/**
+ * One operational work cycle, derived from the append-only events: opened by
+ * its first event, closed by its cycle_completed event (null while open).
+ */
+export interface TerritoryCycle {
+  readonly cycleNumber: number;
+  /** ISO timestamp of the first operational event of the cycle. */
+  readonly openedAt: string;
+  /** ISO timestamp of the cycle_completed event, or null while the cycle is open. */
+  readonly closedAt: string | null;
+  /** The administrator-declared completion date (YYYY-MM-DD), or null while the cycle is open. */
+  readonly effectiveCompletionDate: string | null;
+  /**
+   * Progress entries attributed to this cycle — same attribution as the
+   * progress list: the latest operational event recorded no later than the
+   * entry. Entries recorded before the first cycle belong to none.
+   */
+  readonly sessionCount: number;
+}
+
+/** Every cycle of a territory, newest first. Read-only; derived from existing tables. */
+export async function listTerritoryCycles(
+  pool: TransactionalPool,
+  territoryId: number
+): Promise<readonly TerritoryCycle[]> {
+  return withTransaction(pool, async (client) => {
+    const { rows: territoryRows } = await client.query<{ id: string }>('SELECT id FROM territories WHERE id = $1', [territoryId]);
+    if (!territoryRows[0]) throw new TerritoryNotFoundError(territoryId);
+
+    const { rows } = await client.query<{
+      cycle_number: number;
+      opened_at: Date;
+      closed_at: Date | null;
+      effective_completion_date: string | null;
+      session_count: string;
+    }>(
+      `WITH cycles AS (
+         SELECT cycle_number,
+                min(created_at) AS opened_at,
+                max(created_at) FILTER (WHERE action = 'cycle_completed') AS closed_at,
+                to_char(max(effective_completion_date) FILTER (WHERE action = 'cycle_completed'), 'YYYY-MM-DD')
+                  AS effective_completion_date
+         FROM territory_operational_events
+         WHERE territory_id = $1
+         GROUP BY cycle_number
+       ), sessions AS (
+         SELECT attributed.cycle_number, count(*) AS session_count
+         FROM progress_entries pe
+         JOIN LATERAL (
+           SELECT cycle_number
+           FROM territory_operational_events
+           WHERE territory_id = pe.territory_id AND created_at <= pe.recorded_at
+           ORDER BY id DESC
+           LIMIT 1
+         ) attributed ON TRUE
+         WHERE pe.territory_id = $1
+         GROUP BY attributed.cycle_number
+       )
+       SELECT c.cycle_number, c.opened_at, c.closed_at, c.effective_completion_date,
+              COALESCE(s.session_count, 0) AS session_count
+       FROM cycles c
+       LEFT JOIN sessions s ON s.cycle_number = c.cycle_number
+       ORDER BY c.cycle_number DESC`,
+      [territoryId]
+    );
+    return rows.map((row) => ({
+      cycleNumber: row.cycle_number,
+      openedAt: row.opened_at.toISOString(),
+      closedAt: row.closed_at === null ? null : row.closed_at.toISOString(),
+      effectiveCompletionDate: row.effective_completion_date,
+      sessionCount: Number(row.session_count)
+    }));
   });
 }

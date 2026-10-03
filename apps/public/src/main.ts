@@ -1,4 +1,5 @@
 import 'maplibre-gl/dist/maplibre-gl.css';
+import './styles.css';
 
 import { runApp } from './app.js';
 import { selectBasemap } from './basemap.js';
@@ -56,7 +57,7 @@ void runApp(container, {
     }
     map.on('load', () => {
       installTerritoryLayers(map);
-      renderTerritory(map, result.view.boundary, result.view.remainingArea, result.view.route);
+      renderTerritory(map, result.view);
       fitToBoundingBox(map, box);
     });
 
@@ -97,7 +98,7 @@ void runApp(container, {
           );
         },
         () => {
-          elements.locationStatus.textContent = 'No pudimos acceder a tu ubicación. Revisá los permisos de ubicación del navegador.';
+          elements.locationStatus.textContent = 'No pudimos acceder a tu ubicación. Revisa los permisos de ubicación del navegador.';
         },
         { enableHighAccuracy: true, timeout: 10000 }
       );

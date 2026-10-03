@@ -1,15 +1,13 @@
-import { useEffect, useRef, useState, type JSX } from 'react';
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { Map as MapLibreMap, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 import { ADMIN_BASEMAP, BasemapAttribution, applyBasemap } from '../territory-editor/basemap-ui.js';
-import { ApiError, DEFAULT_ACTOR, describeApiError, recordProgress } from '../../api/client.js';
+import { ApiError, DEFAULT_ACTOR, describeApiError, recordProgress, type CoverageBaseline } from '../../api/client.js';
 import {
   addVertex,
   closeDraft,
-  coordinateToPointGeoJSON,
   createDraft,
-  draftToLineStringGeoJSON,
   draftToPolygonGeoJSON,
   insertVertex,
   moveVertex,
@@ -25,53 +23,109 @@ import {
   findVertexIndexAtPoint,
   fitToPolygon,
   installEditorLayers,
+  installSessionLayers,
+  installSnapIndicatorLayer,
   renderDraft,
-  renderPausePoint,
+  renderRemainingArea,
   renderSavedTerritory,
+  renderSessions,
+  renderSnapIndicator,
   screenPointToCoordinate
 } from '../territory-editor/map-editor.js';
-import type { Point, Polygon } from '@territorios/geo';
+import type { Coordinate } from '../territory-editor/draft.js';
+import { buildSessionRequest, sessionFeatureCollection, type CoverageSession } from './sessions.js';
+import { findOutsideVertexIndices, snapCoordinate } from '../territory-editor/snap.js';
+import type { MultiPolygon, Polygon } from '@territorios/geo';
 
 export interface ProgressRecorderProps {
   readonly territoryId: number;
   readonly boundary: Polygon | null;
+  /** Latest remaining area of the current cycle (empty polygon = nothing left, null = unknown). */
+  readonly remainingArea?: Polygon | MultiPolygon | null;
+  /** Earlier sessions of the current cycle, drawn in their own colors. */
+  readonly sessions?: readonly CoverageSession[];
+  readonly highlightedSessionId?: number | null;
   readonly onRecorded: () => void;
 }
 
-/** A route only ever needs RFC 7946's own LineString minimum — never the 3-vertex polygon-ring minimum. */
-const ROUTE_MIN_VERTICES = 2;
+const COVERED_MIN_VERTICES = 3;
+
+const NOTE_HELP_ID = 'progress-note-help';
+
+/** Progress-specific wording where the shared error text would mislead (it speaks of Bello's boundary). */
+const RECORDER_ERRORS_ES: Record<string, string> = {
+  out_of_bounds: 'Lo dibujado queda fuera del territorio. Ajusta los puntos para que queden dentro del borde.'
+};
 
 /**
- * Stands in for a real volunteer-facing recording tool, which doesn't
- * exist yet — "por ahora lo hace el admin" (2026-09-08): until there is
- * one, the admin draws the route with the established default admin actor.
- * Reuses TerritoryEditor's exact click-to-add-vertex draft
- * (draft.ts) and its rendering layer (map-editor.ts): a route is simply a
- * draft that never closes — draftToLineStringGeoJSON, not
- * draftToPolygonGeoJSON, converts it. Point editing (drag to move, click
- * an edge to add, double-click to remove) mirrors TerritoryEditor's own
- * "edit points" mode, with `findEdgeIndexAtPoint`'s `closed` argument set
- * to false — a route has no wraparound edge back to its start. The same map
- * places one optional pause Point; remaining area stays optional and unknown
- * unless a future explicit recorder adds it.
+ * "Draw what we covered today" (2026-09-26 product decision). Each session
+ * the administrator draws, vertex by vertex, the area covered in that
+ * session — it may end mid-block — and the server subtracts it from the
+ * cycle's remaining area. The covered area is the only geometry; an
+ * optional note tells the next group where to resume and is PUBLIC through
+ * the share link (2026-10-03 product decision — the field's help text warns
+ * against writing personal data). The pause point and the route were
+ * removed from this recorder on 2026-10-03; the API still accepts them.
+ *
+ * Drawing is active as soon as the recorder mounts: every map click adds a
+ * vertex to the covered-area draft (draft.ts, the same click-to-add model
+ * TerritoryEditor uses) until it is closed. Once closed, clicks are ignored
+ * unless "Ajustar puntos" is on — TerritoryEditor's own gestures: drag to
+ * move, click an edge to insert, double-click to remove.
+ *
+ * Snapping (2026-10-03, snap.ts): a click while drawing, or a vertex drag
+ * while adjusting, that lands within ~12 px of the territory border or the
+ * current remaining area's border lands EXACTLY on it (vertices first,
+ * then edges), with a blue ring previewing where. Vertices outside the
+ * territory turn red and block saving until moved — a client pre-check of
+ * the server's own out_of_bounds rule. Insert-on-edge in "Ajustar puntos"
+ * does not snap: it inserts on the draft's own edge by design.
+ *
+ * Baseline: when the cycle has no remaining area yet, the server answers
+ * `baseline_required`. That turns into an in-page confirmation (never a
+ * browser dialog); only an explicit "yes" resends the session with
+ * `baseline: 'whole_territory'`.
  */
-export function ProgressRecorder({ territoryId, boundary, onRecorded }: ProgressRecorderProps): JSX.Element {
+type SnapSourcesValue = { boundary: Polygon | null; remainingArea: Polygon | MultiPolygon | null };
+
+/** The snapped coordinate under a screen point, or null when nothing is within tolerance. */
+function findSnap(map: MapLibreMap, point: { x: number; y: number }, sources: SnapSourcesValue): Coordinate | null {
+  const snap = snapCoordinate(point, sources, ([lng, lat]) => map.project([lng, lat]));
+  return snap?.coordinate ?? null;
+}
+
+/** Where a click lands: the snap target when one is in range, else the raw unprojected point. */
+function snappedCoordinate(map: MapLibreMap, point: { x: number; y: number }, sources: SnapSourcesValue): Coordinate {
+  return findSnap(map, point, sources) ?? screenPointToCoordinate(map, point);
+}
+
+export function ProgressRecorder({
+  territoryId,
+  boundary,
+  remainingArea = null,
+  sessions = [],
+  highlightedSessionId = null,
+  onRecorded
+}: ProgressRecorderProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [mapReady, setMapReady] = useState(false);
-  const [draft, setDraft] = useState<DraftState>(createDraft());
-  const [pausePoint, setPausePoint] = useState<Point | null>(null);
-  const [activeTool, setActiveTool] = useState<'route' | 'remaining' | 'pause' | null>(null);
-  const [draftKind, setDraftKind] = useState<'route' | 'remaining' | null>(null);
+  const [covered, setCovered] = useState<DraftState>(createDraft());
+  const [adjusting, setAdjusting] = useState(false);
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editingPoints, setEditingPoints] = useState(false);
+  const [baselinePrompt, setBaselinePrompt] = useState(false);
   const draggingIndexRef = useRef<number | null>(null);
-  const draftRef = useRef(draft);
+  const coveredRef = useRef(covered);
   useEffect(() => {
-    draftRef.current = draft;
-  }, [draft]);
+    coveredRef.current = covered;
+  }, [covered]);
+  // Read by the map handlers, which are only re-bound when the mode changes.
+  const snapSourcesRef = useRef({ boundary, remainingArea });
+  useEffect(() => {
+    snapSourcesRef.current = { boundary, remainingArea };
+  }, [boundary, remainingArea]);
 
   // Same StrictMode-double-mount guard as TerritoryEditor — see that
   // component's comment for the full explanation.
@@ -88,41 +142,44 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
     applyBasemap(map, ADMIN_BASEMAP);
     map.on('load', () => {
       installEditorLayers(map);
+      installSessionLayers(map);
+      installSnapIndicatorLayer(map);
       setMapReady(true);
     });
     mapRef.current = map;
   }, []);
 
-  // Click-to-draw is explicitly tool-gated: one active tool places route
-  // vertices, the other replaces the single pause marker. This prevents a
-  // click intended for one geometry from mutating the other.
+  // Drawing mode: active while the area is open. Clicking a closed area is
+  // ignored rather than silently starting a new one (draft.ts's addVertex
+  // would do that) — "Borrar y volver a dibujar" is the explicit way back.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady) return;
+    if (!map || !mapReady || adjusting) return;
     const handleClick = (event: MapMouseEvent) => {
-      if (editingPoints || activeTool === null) return;
-      const coordinate = screenPointToCoordinate(map, event.point);
-      if (activeTool === 'route' || activeTool === 'remaining') {
-        setDraft((current) => addVertex(current, coordinate));
-      } else {
-        setPausePoint(coordinateToPointGeoJSON(coordinate));
-        setActiveTool(null);
-      }
+      const coordinate = snappedCoordinate(map, event.point, snapSourcesRef.current);
+      setCovered((current) => (current.isClosed ? current : addVertex(current, coordinate)));
     };
+    const handleMouseMove = (event: MapMouseEvent) => {
+      const snap = coveredRef.current.isClosed ? null : findSnap(map, event.point, snapSourcesRef.current);
+      renderSnapIndicator(map, snap);
+    };
+    const hideIndicator = () => renderSnapIndicator(map, null);
     map.on('click', handleClick);
+    map.on('mousemove', handleMouseMove);
+    map.on('mouseout', hideIndicator);
     return () => {
       map.off('click', handleClick);
+      map.off('mousemove', handleMouseMove);
+      map.off('mouseout', hideIndicator);
+      hideIndicator();
     };
-  }, [mapReady, editingPoints, activeTool]);
+  }, [mapReady, adjusting]);
 
-  // Point editing: drag to move, click an edge to insert, double-click a
-  // point to remove. `closed: false` throughout — a route never wraps
-  // back to its start. See TerritoryEditor's equivalent effect for the
-  // full rationale of each piece; identical here except the open-path
-  // distinction.
+  // "Ajustar puntos": drag a vertex to move it, click an edge to insert
+  // one, double-click a vertex to remove it (never below a 3-vertex ring).
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapReady || !editingPoints) return;
+    if (!map || !mapReady || !adjusting) return;
 
     map.doubleClickZoom.disable();
 
@@ -139,29 +196,32 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
       if (draggingIndexRef.current === null) {
         if (findVertexIndexAtPoint(map, event.point) !== null) {
           map.getCanvas().style.cursor = 'grab';
-        } else if (findEdgeIndexAtPoint(map, draftRef.current.vertices, event.point, false) !== null) {
+        } else if (findEdgeIndexAtPoint(map, coveredRef.current.vertices, event.point, true) !== null) {
           map.getCanvas().style.cursor = 'copy';
         } else {
           map.getCanvas().style.cursor = '';
         }
         return;
       }
-      const coordinate = screenPointToCoordinate(map, event.point);
+      const snap = findSnap(map, event.point, snapSourcesRef.current);
+      renderSnapIndicator(map, snap);
+      const coordinate = snap ?? screenPointToCoordinate(map, event.point);
       const index = draggingIndexRef.current;
-      setDraft((current) => moveVertex(current, index, coordinate));
+      setCovered((current) => moveVertex(current, index, coordinate));
     };
 
     const endDrag = () => {
       if (draggingIndexRef.current === null) return;
       draggingIndexRef.current = null;
+      renderSnapIndicator(map, null);
       map.dragPan.enable();
       map.getCanvas().style.cursor = '';
     };
 
     const handleClick = (event: MapMouseEvent) => {
       if (findVertexIndexAtPoint(map, event.point) !== null) return;
-      setDraft((current) => {
-        const edgeIndex = findEdgeIndexAtPoint(map, current.vertices, event.point, false);
+      setCovered((current) => {
+        const edgeIndex = findEdgeIndexAtPoint(map, current.vertices, event.point, true);
         if (edgeIndex === null) return current;
         return insertVertex(current, edgeIndex, screenPointToCoordinate(map, event.point));
       });
@@ -171,7 +231,7 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
       const index = findVertexIndexAtPoint(map, event.point);
       if (index === null) return;
       event.preventDefault();
-      setDraft((current) => removeVertexAt(current, index, ROUTE_MIN_VERTICES));
+      setCovered((current) => removeVertexAt(current, index, COVERED_MIN_VERTICES));
     };
 
     map.on('mousedown', handleMouseDown);
@@ -191,19 +251,30 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
       window.removeEventListener('mouseup', endDrag);
       endDrag();
     };
-  }, [mapReady, editingPoints]);
+  }, [mapReady, adjusting]);
+
+  const outsideIndices = useMemo(
+    () => findOutsideVertexIndices(covered.vertices, boundary),
+    [covered.vertices, boundary]
+  );
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    renderDraft(map, draft);
-  }, [draft, mapReady]);
+    renderDraft(map, covered, new Set(outsideIndices));
+  }, [covered, outsideIndices, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    renderPausePoint(map, pausePoint);
-  }, [pausePoint, mapReady]);
+    renderRemainingArea(map, remainingArea);
+  }, [remainingArea, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    renderSessions(map, sessionFeatureCollection(sessions, highlightedSessionId));
+  }, [sessions, highlightedSessionId, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -214,176 +285,155 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
     }
   }, [boundary, mapReady]);
 
-  const route = draftKind === 'route' ? draftToLineStringGeoJSON(draft) : null;
-  const remainingArea = draftKind === 'remaining' && draft.isClosed ? draftToPolygonGeoJSON(draft) : null;
-  const canSave = route !== null || remainingArea !== null || pausePoint !== null;
+  const vertexCount = covered.vertices.length;
+  const outsideCount = outsideIndices.length;
+  const coveredReady = draftToPolygonGeoJSON(covered) !== null && outsideCount === 0;
+  const hasAnything = vertexCount > 0 || note.trim() !== '';
 
-  async function handleSave(): Promise<void> {
-    if (!route && !remainingArea && !pausePoint) return;
+  function redraw(): void {
+    setCovered(resetDraft());
+    setAdjusting(false);
+  }
+
+  function cancel(): void {
+    redraw();
+    setNote('');
+    setBaselinePrompt(false);
+    setError(null);
+  }
+
+  async function save(baseline?: CoverageBaseline): Promise<void> {
+    const request = buildSessionRequest({ recordedBy: DEFAULT_ACTOR, covered, note, baseline });
+    if (request === null) return;
     setSaving(true);
     setError(null);
     try {
-      await recordProgress(territoryId, {
-        recordedBy: DEFAULT_ACTOR,
-        note: note.trim() === '' ? undefined : note.trim(),
-        ...(pausePoint === null ? {} : { pausePoint }),
-        ...(route === null ? {} : { route }),
-        ...(remainingArea === null ? {} : { remainingArea })
-      });
-      setDraft(resetDraft());
-      setPausePoint(null);
-      setEditingPoints(false);
-      setActiveTool(null);
-      setDraftKind(null);
-      setNote('');
+      await recordProgress(territoryId, request);
+      cancel();
       onRecorded();
     } catch (caught) {
-      setError(caught instanceof ApiError ? describeApiError(caught) : 'No se pudo registrar el progreso.');
+      if (caught instanceof ApiError && caught.code === 'baseline_required') {
+        setBaselinePrompt(true);
+      } else if (caught instanceof ApiError) {
+        setBaselinePrompt(false);
+        setError(RECORDER_ERRORS_ES[caught.code] ?? describeApiError(caught));
+      } else {
+        setError('No se pudo registrar la sesión.');
+      }
     } finally {
       setSaving(false);
     }
   }
 
+  function statusText(): string {
+    const outside =
+      outsideCount > 0
+        ? `${outsideCount} punto(s) quedan fuera del territorio (en rojo). Muévelos hacia adentro o acércalos al borde para que se peguen.`
+        : null;
+    const base = baseStatusText();
+    return outside === null ? base : `${outside} ${base}`;
+  }
+
+  function baseStatusText(): string {
+    if (adjusting) {
+      return 'Arrastra un punto para moverlo, haz clic en un borde para agregar uno o doble clic en un punto para borrarlo. Pulsa “Listo” al terminar.';
+    }
+    if (covered.isClosed) return 'Área lista. Ya puedes guardar la sesión.';
+    if (vertexCount === 0) return 'Haz clic en el mapa para marcar el primer punto del área cubierta.';
+    if (vertexCount < COVERED_MIN_VERTICES) {
+      const missing = COVERED_MIN_VERTICES - vertexCount;
+      return `Sigue marcando puntos: ${missing === 1 ? 'falta 1' : `faltan ${missing}`} para poder cerrar el área.`;
+    }
+    return 'Cuando termines de marcar, pulsa “Cerrar área” para poder guardar la sesión.';
+  }
+
   return (
     <section aria-labelledby="progress-recorder-heading">
-      <h3 id="progress-recorder-heading">Registrar área pendiente o evidencia</h3>
-      <p>El área pendiente es el registro principal. La ruta y el punto de pausa son evidencia opcional.</p>
+      <h3 id="progress-recorder-heading">Registrar sesión</h3>
+      <p>Marca en el mapa lo que cubrieron en esta sesión. Lo que falta se calcula solo.</p>
 
       <div
         ref={containerRef}
+        className="session-map"
         role="img"
-        aria-label={`Mapa para registrar una ruta de progreso. ${
-          editingPoints
-            ? 'Modo de edición de puntos: arrastrá un punto para moverlo, hacé clic en un borde para agregar uno, doble clic en un punto para borrarlo.'
-            : draft.vertices.length > 0
-              ? `${draft.vertices.length} punto(s) ubicado(s).`
-              : 'Todavía no hay puntos ubicados.'
+        aria-label={`Mapa de la sesión: territorio, área pendiente y sesiones anteriores. ${
+          vertexCount > 0
+            ? `Área cubierta: ${vertexCount} punto(s)${covered.isClosed ? ', cerrada' : ''}.`
+            : 'Todavía no hay área cubierta dibujada.'
         }`}
-        style={{ width: '100%', height: '280px', border: '1px solid var(--map-border, #ccc)' }}
       />
       <BasemapAttribution kind={ADMIN_BASEMAP.kind} />
 
-      <div role="toolbar" aria-label="Herramientas de progreso" className="map-toolbar">
-        <button
-          type="button"
-          onClick={() => {
-            setDraft(resetDraft());
-            setDraftKind('remaining');
-            setActiveTool('remaining');
-            setEditingPoints(false);
-          }}
-          aria-pressed={activeTool === 'remaining'}
-        >
-          Dibujar área pendiente
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setDraft(resetDraft());
-            setDraftKind('route');
-            setActiveTool('route');
-            setEditingPoints(false);
-          }}
-          aria-pressed={activeTool === 'route'}
-        >
-          Dibujar ruta
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setDraft((current) => closeDraft(current));
-            setActiveTool(null);
-          }}
-          disabled={draftKind !== 'remaining' || draft.vertices.length < 3 || draft.isClosed}
-        >
-          Cerrar área pendiente
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTool('pause');
-            setEditingPoints(false);
-          }}
-          aria-pressed={activeTool === 'pause'}
-        >
-          Colocar pausa
-        </button>
-        <button type="button" onClick={() => setPausePoint(null)} disabled={pausePoint === null}>
-          Quitar pausa
-        </button>
-        <button
-          type="button"
-          onClick={() => setDraft((current) => undoVertex(current))}
-          disabled={draft.vertices.length === 0 || editingPoints}
-        >
-          Deshacer punto
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setDraft(resetDraft());
-            setDraftKind(null);
-            setActiveTool(null);
-          }}
-          disabled={draft.vertices.length === 0}
-        >
-          Quitar dibujo
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-              setDraft(resetDraft());
-              setDraftKind(null);
-            setPausePoint(null);
-            setEditingPoints(false);
-            setActiveTool(null);
-          }}
-          disabled={draft.vertices.length === 0 && pausePoint === null}
-        >
-          Cancelar registro
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setEditingPoints((current) => !current);
-            setActiveTool(null);
-          }}
-          disabled={draftKind !== 'route' || draft.vertices.length < ROUTE_MIN_VERTICES}
-          aria-pressed={editingPoints}
-        >
-          Editar vértices
-        </button>
+      <div role="toolbar" aria-label="Herramientas de la sesión" className="map-toolbar">
+        {covered.isClosed ? (
+          <>
+            <button type="button" onClick={() => setAdjusting((current) => !current)} aria-pressed={adjusting}>
+              {adjusting ? 'Listo' : 'Ajustar puntos'}
+            </button>
+            <button type="button" onClick={redraw}>
+              Borrar y volver a dibujar
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" onClick={() => setCovered((current) => undoVertex(current))} disabled={vertexCount === 0}>
+              Deshacer punto
+            </button>
+            <button
+              type="button"
+              className="primary"
+              onClick={() => setCovered((current) => closeDraft(current))}
+              disabled={vertexCount < COVERED_MIN_VERTICES}
+            >
+              Cerrar área
+            </button>
+          </>
+        )}
       </div>
+
+      <p role="status">{statusText()}</p>
 
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          void handleSave();
+          void save();
         }}
         style={{ marginTop: '0.75rem' }}
       >
         <div>
-          <label htmlFor="progress-note">Nota (opcional)</label>
-          <input id="progress-note" value={note} onChange={(event) => setNote(event.target.value)} />
+          <label htmlFor="progress-note">Nota para el próximo grupo (opcional)</label>
+          <textarea
+            id="progress-note"
+            rows={2}
+            value={note}
+            aria-describedby={NOTE_HELP_ID}
+            onChange={(event) => setNote(event.target.value)}
+          />
+          <p id={NOTE_HELP_ID} className="editor-hint">
+            La verá quien tenga el enlace del territorio. Ej.: “Quedamos en la esquina de la Diagonal 57 con 19C”. No
+            escribas nombres ni datos de personas.
+          </p>
         </div>
 
-        <p role="status">
-          {editingPoints
-            ? 'Arrastrá un punto para moverlo, hacé clic en un borde para agregar uno, doble clic en un punto para borrarlo.'
-              : activeTool === 'route'
-                ? 'Hacé clic en el mapa para agregar puntos a la ruta.'
-                : activeTool === 'remaining'
-                  ? 'Hacé clic en el mapa para delimitar el área pendiente y después usá “Cerrar área pendiente”.'
-                : activeTool === 'pause'
-                ? 'Hacé clic en el mapa para colocar el punto de pausa.'
-                : draft.vertices.length === 0 && pausePoint === null
-                  ? 'Elegí “Dibujar ruta” o “Colocar pausa” para comenzar.'
-                  : draft.vertices.length === 1
-                    ? '1 punto ubicado — se necesitan al menos 2 para guardar una ruta.'
-                    : remainingArea !== null
-                      ? 'Área pendiente delimitada. Guardá para registrar esta cobertura.'
-                      : `${draft.vertices.length} puntos de ruta${pausePoint === null ? '' : ' y un punto de pausa'} registrados. Editá vértices para ajustar la ruta, o guardá.`}
-        </p>
+        {baselinePrompt && (
+          <div role="alertdialog" aria-labelledby="baseline-prompt-heading" className="baseline-prompt">
+            <p id="baseline-prompt-heading">
+              <strong>Este ciclo todavía no tiene un área pendiente registrada.</strong>
+            </p>
+            <p>
+              Para calcular el avance hay que confirmar desde dónde parte: ¿esta es la primera sesión del ciclo y
+              empieza desde todo el territorio?
+            </p>
+            <div className="baseline-prompt-actions">
+              <button type="button" className="primary" disabled={saving} onClick={() => void save('whole_territory')}>
+                Sí, partir de todo el territorio
+              </button>
+              <button type="button" disabled={saving} onClick={() => setBaselinePrompt(false)}>
+                No, cancelar
+              </button>
+            </div>
+          </div>
+        )}
 
         {error && (
           <p role="alert" className="editor-error">
@@ -391,9 +441,14 @@ export function ProgressRecorder({ territoryId, boundary, onRecorded }: Progress
           </p>
         )}
 
-        <button type="submit" disabled={!canSave || saving}>
-          {saving ? 'Guardando…' : 'Guardar progreso'}
-        </button>
+        <div className="session-actions">
+          <button type="submit" className="primary" disabled={!coveredReady || saving || baselinePrompt}>
+            {saving ? 'Guardando…' : 'Guardar sesión'}
+          </button>
+          <button type="button" onClick={cancel} disabled={!hasAnything || saving}>
+            Cancelar
+          </button>
+        </div>
       </form>
     </section>
   );

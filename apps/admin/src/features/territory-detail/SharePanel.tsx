@@ -80,7 +80,7 @@ export function SharePanel({ territoryId }: SharePanelProps): JSX.Element {
   return (
     <section aria-labelledby="share-heading">
       <h3 id="share-heading">Compartir</h3>
-      <p>Enviá este link al grupo de voluntarios. Cualquiera que lo tenga puede ver el territorio y registrar progreso.</p>
+      <p>Envía este link al grupo de voluntarios. Cualquiera que lo tenga puede ver el territorio y registrar progreso.</p>
 
       <button type="button" className="primary" onClick={() => void handleShare()} disabled={busy}>
         Compartir este territorio

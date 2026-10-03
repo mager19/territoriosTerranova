@@ -77,6 +77,51 @@ export class DuplicateTerritoryNumberError extends Error {
   }
 }
 
+/**
+ * The first coverage session of a cycle has no remaining area to subtract
+ * from, and the administrator has not explicitly confirmed a baseline
+ * (AGENTS.md: remaining coverage is never inferred from the territory
+ * polygon). Distinct code so the admin UI can turn it into an in-page
+ * confirmation prompt instead of a generic error.
+ */
+export class BaselineRequiredError extends Error {
+  readonly code = 'baseline_required' as const;
+  constructor() {
+    super(
+      "the current cycle has no recorded remaining area; confirm baseline 'whole_territory' to start this cycle from the whole territory"
+    );
+    this.name = 'BaselineRequiredError';
+  }
+}
+
+/**
+ * The covered area does not overlap what is still pending in the current
+ * cycle (including a cycle whose remaining area is already empty). Distinct
+ * code so the admin UI can say exactly that.
+ */
+export class CoveredAreaNotRemainingError extends Error {
+  readonly code = 'covered_area_not_remaining' as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'CoveredAreaNotRemainingError';
+  }
+}
+
+/**
+ * Progress can only be recorded while the territory is open (2026-10-03):
+ * the latest operational event must be in_progress, reopened, or (legacy)
+ * paused. A territory that was never opened, or whose cycle is completed,
+ * rejects the session. Distinct code so the admin UI can tell the
+ * administrator to open the territory first.
+ */
+export class TerritoryNotOpenError extends Error {
+  readonly code = 'territory_not_open' as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'TerritoryNotOpenError';
+  }
+}
+
 /** Every typed domain error a caller should catch and map to a distinct response. */
 export type DomainError =
   | InvalidGeometryError
@@ -86,7 +131,10 @@ export type DomainError =
   | UnauthorizedOverlapError
   | TerritoryNotFoundError
   | ValidationError
-  | DuplicateTerritoryNumberError;
+  | DuplicateTerritoryNumberError
+  | BaselineRequiredError
+  | CoveredAreaNotRemainingError
+  | TerritoryNotOpenError;
 
 export function isDomainError(error: unknown): error is DomainError {
   return (
@@ -97,6 +145,9 @@ export function isDomainError(error: unknown): error is DomainError {
     error instanceof UnauthorizedOverlapError ||
     error instanceof TerritoryNotFoundError ||
     error instanceof ValidationError ||
-    error instanceof DuplicateTerritoryNumberError
+    error instanceof DuplicateTerritoryNumberError ||
+    error instanceof BaselineRequiredError ||
+    error instanceof CoveredAreaNotRemainingError ||
+    error instanceof TerritoryNotOpenError
   );
 }

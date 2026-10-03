@@ -1,0 +1,58 @@
+/**
+ * Pure, WebGL-free description of what the public map draws: layer colors,
+ * which layers a given view actually has, and the legend derived from
+ * that. Kept out of map.ts (which drives a
+ * real MapLibre instance) so all of it is unit-testable in happy-dom — the
+ * same separation map.ts already keeps for computeBoundingBox.
+ */
+
+import type { MultiPolygon, Polygon } from '@territorios/geo';
+
+import type { PublicTerritoryView } from './public-api.js';
+
+/** One palette shared by the map layers and the legend swatches, so they can never drift apart. */
+export const LAYER_COLORS = {
+  /** Muted green: the area already done in the current cycle. */
+  covered: '#5f9e6e',
+  /** Neutral gray: what is still pending. */
+  remaining: '#c9c9c9',
+  /** Near-black: the recorded route line, the darkest element on the map. */
+  route: '#161616'
+} as const;
+
+/**
+ * An area worth drawing: present and not the API's explicit empty polygon
+ * ("nothing left" / "nothing done"), which has nothing to draw.
+ */
+export function hasDrawableArea(area: Polygon | MultiPolygon | null): area is Polygon | MultiPolygon {
+  // Truthiness, not `!== null`: a defensive read that also tolerates a
+  // field missing from a view object built outside public-api.ts parsing.
+  if (!area) return false;
+  return area.coordinates.length > 0;
+}
+
+export type LegendKey = 'covered' | 'remaining' | 'route';
+
+export interface LegendItem {
+  readonly key: LegendKey;
+  readonly label: string;
+  readonly color: string;
+  readonly shape: 'area' | 'line';
+}
+
+type LegendView = Pick<PublicTerritoryView, 'coveredArea' | 'remainingArea' | 'route'>;
+
+/** Legend entries for ONLY the layers this view actually draws, in map stacking order (bottom to top). */
+export function legendItems(view: LegendView): LegendItem[] {
+  const items: LegendItem[] = [];
+  if (hasDrawableArea(view.coveredArea)) {
+    items.push({ key: 'covered', label: 'Hecho', color: LAYER_COLORS.covered, shape: 'area' });
+  }
+  if (hasDrawableArea(view.remainingArea)) {
+    items.push({ key: 'remaining', label: 'Pendiente', color: LAYER_COLORS.remaining, shape: 'area' });
+  }
+  if (view.route) {
+    items.push({ key: 'route', label: 'Recorrido', color: LAYER_COLORS.route, shape: 'line' });
+  }
+  return items;
+}

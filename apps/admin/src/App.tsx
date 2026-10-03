@@ -4,14 +4,14 @@ import { TerritoryDetail } from './features/territory-detail/TerritoryDetail.js'
 import { TerritoryEditor } from './features/territory-editor/TerritoryEditor.js';
 import { TerritoryList } from './features/territory-list/TerritoryList.js';
 import { TerritoryOverview } from './features/territory-overview/TerritoryOverview.js';
-import type { Polygon } from '@territorios/geo';
+import type { MultiPolygon, Polygon } from '@territorios/geo';
 import { getTerritory, type TerritoryWithRevisions } from './api/client.js';
 import { matchPath, pathForView, type RouteMatch, type View } from './routes.js';
 
 /**
  * A5 brief, both slices: draw a territory over Bello and see its revision
- * history (slice 1); share it with the volunteer group, recorded progress,
- * and the full audit trail (slice 2). The app is URL-routed with the
+ * history (slice 1); share it with the volunteer group, recorded progress
+ * and cycle history (slice 2; the audit trail is API-only since 2026-10-03). The app is URL-routed with the
  * browser History API — five real routes (see routes.ts) replace the old
  * three-state view switcher, so the sidebar links are real `<a>` anchors,
  * card clicks deep-link straight to a territory, and back/forward stay
@@ -39,7 +39,7 @@ function activeNavItem(view: View): 'resumen' | 'territorios' | 'nuevo' {
 export function App(): JSX.Element {
   const [selected, setSelected] = useState<TerritoryWithRevisions | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [remainingAreaGeometry, setRemainingAreaGeometry] = useState<Polygon | null>(null);
+  const [remainingAreaGeometry, setRemainingAreaGeometry] = useState<Polygon | MultiPolygon | null>(null);
   const [route, setRoute] = useState<RouteMatch>(() => matchPath(currentPathname()));
 
   /**
