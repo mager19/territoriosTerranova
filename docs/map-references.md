@@ -109,8 +109,9 @@ and `apps/public/src/`), a pure, unit-tested function of `VITE_MAPTILER_KEY`.
 
 Configuration: both Vite apps set `envDir` to the repository root, so one
 root `.env.local` (git-ignored) serves admin and public. Only `VITE_`-prefixed
-variables reach client code; `VITE_API_BASE_URL` and `VITE_PUBLIC_APP_BASE_URL`
-are read from the same root files. The key is shipped to browsers by design
+variables reach client code; `VITE_API_BASE_URL` (public app only — the admin
+app always calls the API same-origin under `/api`, docs/admin-auth.md) and
+`VITE_PUBLIC_APP_BASE_URL` are read from the same root files. The key is shipped to browsers by design
 (MapTiler keys are public client keys) and must be domain-restricted in the
 MapTiler dashboard before launch. Only the style and its tiles/glyphs/sprites
 are fetched from MapTiler — no MapTiler geocoding or search is used.

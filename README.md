@@ -30,7 +30,9 @@ below assumes the database container is running.
 ## Environment
 
 Optional: `cp .env.example .env`. The defaults baked into the API match
-`docker-compose.yml`, so a plain local setup needs no `.env` at all.
+`docker-compose.yml`, so a plain local setup needs no `.env` at all. To sign in
+to the admin app, set an admin account in `.env.local` (git-ignored; the API
+loads it after `.env`). See [docs/admin-auth.md](docs/admin-auth.md).
 Variables actually read by code (all in `apps/api`):
 
 | Variable | Default | Purpose |
@@ -38,12 +40,19 @@ Variables actually read by code (all in `apps/api`):
 | `DATABASE_URL` | `postgres://territorios:territorios@127.0.0.1:5432/territorios` | PostgreSQL/PostGIS connection string |
 | `PORT` | `3000` | API listen port |
 | `HOST` | `127.0.0.1` | API bind host |
+| `ADMIN_1_EMAIL` / `ADMIN_1_PASSWORD` | unset (nobody can sign in) | First admin account. Required in production. Password at least 12 characters |
+| `ADMIN_2_EMAIL` / `ADMIN_2_PASSWORD` | unset | Optional second admin account |
+| `ADMIN_APP_ORIGIN` | `http://localhost:5173` | Admin app origin, used for the CSRF Origin check and the `Secure` cookie flag. Required (`https`) in production |
+| `TRUST_PROXY` | `false` | Proxy hops in front of the API, so the sign-in rate limit sees real client IPs |
+
+The admin app calls the API through a same-origin `/api` prefix (a Vite proxy
+locally, a Vercel rewrite in production). Open it at `http://localhost:5173`.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `pnpm dev` | API on `http://127.0.0.1:3000`, admin on `:5173`, public on `:5174` |
+| `pnpm dev` | API on `http://127.0.0.1:3000`, admin on `:5173` (proxies `/api` to the API), public on `:5174` |
 | `pnpm typecheck` | `tsc -b` over every workspace via project references |
 | `pnpm lint` | ESLint (flat config) over the repo |
 | `pnpm test` | Vitest in every workspace (real assertions; no placeholder scripts) |
