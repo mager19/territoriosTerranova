@@ -38,11 +38,13 @@ describe('App', () => {
     expect(html).toContain('Resumen');
   });
 
-  it('places the coverage and operational-status summary before the recorder on a territory detail page', () => {
+  it('puts the territory status bar with "Compartir" at the top of a territory detail page, replacing the old status panel', () => {
     const html = renderToStaticMarkup(
       <TerritoryDetail territoryId={1} boundary={null} refreshToken={0} onRemainingAreaChange={() => undefined} onEdit={() => undefined} />
     );
-    expect(html.indexOf('Cobertura y estado operativo')).toBeLessThan(html.indexOf('Registrar sesión'));
+    expect(html).not.toContain('Cobertura y estado operativo');
+    expect(html).toContain('aria-label="Estado del territorio"');
+    expect(html.indexOf('Compartir')).toBeLessThan(html.indexOf('Historial de auditoría'));
   });
 
   it('renders a sidebar nav with all three view links', () => {

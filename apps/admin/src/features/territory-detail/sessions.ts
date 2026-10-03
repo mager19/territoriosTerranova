@@ -1,8 +1,8 @@
 /**
  * Pure helpers for coverage sessions (2026-09-26 product decision): which
  * sessions belong to the current cycle, the color each one is drawn in, the
- * map features for them, the request a new session sends, and the progress
- * label. No MapLibre, no React — unit-tested in sessions.test.ts.
+ * map features for them, and the request a new session sends. No MapLibre,
+ * no React — unit-tested in sessions.test.ts.
  */
 
 import type { FeatureCollection, MultiPolygon, Polygon } from '@territorios/geo';
@@ -82,16 +82,6 @@ export function sessionFeatureCollection(
 /** "Nothing left" is an explicit empty polygon — never the same as unknown (null). */
 export function isNothingRemaining(geometry: Polygon | MultiPolygon | null): boolean {
   return geometry !== null && geometry.coordinates.length === 0;
-}
-
-/**
- * Progress label for the bar. Floors rather than rounds so 99.6% never
- * claims "100%" while a real remainder is still left; null is unknown.
- */
-export function formatProgressPercent(percent: number | null): string {
-  if (percent === null) return 'desconocido';
-  const clamped = Math.min(100, Math.max(0, percent));
-  return `${clamped >= 100 ? 100 : Math.floor(clamped)} %`;
 }
 
 export interface SessionDraftInput {

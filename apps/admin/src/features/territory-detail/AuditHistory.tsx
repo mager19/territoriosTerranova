@@ -13,10 +13,10 @@ const ACTION_LABELS: Record<string, string> = {
   shared: 'Compartido con el grupo de voluntarios',
   share_revoked: 'Link de compartir revocado',
   progress_recorded: 'Progreso registrado',
-  operational_in_progress: 'Ciclo de trabajo abierto o reanudado',
+  operational_in_progress: 'Territorio abierto',
   operational_paused: 'Trabajo pausado',
-  operational_cycle_completed: 'Ciclo marcado como completado',
-  operational_reopened: 'Ciclo reabierto'
+  operational_cycle_completed: 'Territorio cerrado',
+  operational_reopened: 'Territorio abierto de nuevo (ciclo nuevo)'
 };
 
 /**

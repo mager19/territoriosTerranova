@@ -216,6 +216,25 @@ export function getTerritoryOperationalStatus(territoryId: number): Promise<Terr
   return request(`/admin/territories/${territoryId}/operational-state`);
 }
 
+/**
+ * One operational work cycle (2026-10-03: a territory is explicitly opened,
+ * worked, then closed; each opening starts a new cycle). Newest first.
+ */
+export interface TerritoryCycle {
+  readonly cycleNumber: number;
+  /** ISO timestamp of the opening. */
+  readonly openedAt: string;
+  /** ISO timestamp of the closing, or null while the cycle is open. */
+  readonly closedAt: string | null;
+  /** Declared completion date (YYYY-MM-DD), or null while the cycle is open. */
+  readonly effectiveCompletionDate: string | null;
+  readonly sessionCount: number;
+}
+
+export function listTerritoryCycles(territoryId: number): Promise<{ cycles: readonly TerritoryCycle[] }> {
+  return request(`/admin/territories/${territoryId}/cycles`);
+}
+
 export function changeTerritoryOperationalState(
   territoryId: number,
   input: { action: Exclude<OperationalState, 'no_record'>; actor: string; reason?: string; effectiveCompletionDate?: string }
@@ -304,6 +323,7 @@ const ERROR_MESSAGES_ES: Record<string, string> = {
   boundary_reference_missing: 'Falta cargar el límite municipal de referencia.',
   duplicate_territory_number: 'Ese número ya lo tiene otro territorio.',
   covered_area_not_remaining: 'El área cubierta no se superpone con el área pendiente del ciclo (quizás ya estaba cubierta).',
+  territory_not_open: 'El territorio está cerrado. Ábrelo para registrar progreso.',
   baseline_required: 'Este ciclo todavía no tiene un área pendiente registrada; hay que confirmar desde dónde parte.',
   network_error: 'No se pudo conectar con el servidor.',
   unexpected_error: 'Ocurrió un error inesperado; no se guardó nada.'

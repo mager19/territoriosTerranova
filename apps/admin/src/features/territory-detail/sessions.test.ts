@@ -6,7 +6,6 @@ import {
   SESSION_COLORS,
   buildSessionRequest,
   currentCycleSessions,
-  formatProgressPercent,
   isNothingRemaining,
   sessionColor,
   sessionFeatureCollection
@@ -87,19 +86,6 @@ describe('isNothingRemaining', () => {
     expect(isNothingRemaining({ type: 'Polygon', coordinates: [] })).toBe(true);
     expect(isNothingRemaining(null)).toBe(false);
     expect(isNothingRemaining(SQUARE)).toBe(false);
-  });
-});
-
-describe('formatProgressPercent', () => {
-  it('says "desconocido" when progress is unknown', () => {
-    expect(formatProgressPercent(null)).toBe('desconocido');
-  });
-
-  it('floors so an unfinished territory never reads as 100 %', () => {
-    expect(formatProgressPercent(99.6)).toBe('99 %');
-    expect(formatProgressPercent(100)).toBe('100 %');
-    expect(formatProgressPercent(0)).toBe('0 %');
-    expect(formatProgressPercent(42.4)).toBe('42 %');
   });
 });
 

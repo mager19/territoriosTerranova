@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from 'react';
 
-import { ApiError, describeApiError, listProgress, type ProgressEntry, type TerritoryOperationalStatus } from '../../api/client.js';
+import {
+  ApiError,
+  describeApiError,
+  listProgress,
+  listTerritoryCycles,
+  type ProgressEntry,
+  type TerritoryCycle,
+  type TerritoryOperationalStatus
+} from '../../api/client.js';
 import { AuditHistory } from './AuditHistory.js';
+import { CycleHistory } from './CycleHistory.js';
+import { isOpenState } from './cycles.js';
 import { ProgressList } from './ProgressList.js';
 import { ProgressRecorder } from './ProgressRecorder.js';
-import { OperationalStatusPanel } from './OperationalStatusPanel.js';
-import { SharePanel } from './SharePanel.js';
+import { TerritoryTopBar } from './TerritoryTopBar.js';
 import { currentCycleSessions } from './sessions.js';
 import type { Polygon } from '@territorios/geo';
 
@@ -20,8 +29,10 @@ export interface TerritoryDetailProps {
 }
 
 /**
- * Composes the selected territory's four panels: sharing, recording
- * progress, recorded progress, and the full audit trail. Simpler than its
+ * Composes the selected territory: the top bar (open/closed status, the
+ * open/close action, and sharing — 2026-10-03), the session recorder (only
+ * while the territory is open), recorded sessions, the cycle history, and
+ * the full audit trail. Simpler than its
  * A5-original shape (2026-09-08: territories are shared to a group, not
  * assigned to one person) — progress and audit history are always
  * territory-scoped now, so they need only the same `refreshToken` the
@@ -40,6 +51,9 @@ export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemaini
   // Hover previews a session on the map; a click pins it until clicked again.
   const [hoveredSessionId, setHoveredSessionId] = useState<number | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
+  const [cycles, setCycles] = useState<readonly TerritoryCycle[]>([]);
+  const [cyclesLoading, setCyclesLoading] = useState(false);
+  const [cyclesError, setCyclesError] = useState<string | null>(null);
 
   // One load feeds both the session list and the recorder map, so the
   // colors and numbers in the list always match the map.
@@ -64,7 +78,29 @@ export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemaini
     };
   }, [territoryId, combinedRefreshToken]);
 
-  // Stable identity: OperationalStatusPanel refetches whenever this changes.
+  // Refreshed after every open, close, and recorded session (combinedRefreshToken).
+  useEffect(() => {
+    let cancelled = false;
+    setCyclesLoading(true);
+    setCyclesError(null);
+    listTerritoryCycles(territoryId)
+      .then((result) => {
+        if (!cancelled) setCycles(result.cycles);
+      })
+      .catch((caught) => {
+        if (cancelled) return;
+        setCycles([]);
+        setCyclesError(caught instanceof ApiError ? describeApiError(caught) : 'No se pudo cargar el historial de ciclos.');
+      })
+      .finally(() => {
+        if (!cancelled) setCyclesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [territoryId, combinedRefreshToken]);
+
+  // Stable identity: TerritoryTopBar refetches the status whenever this changes.
   const handleStatus = useCallback(
     (next: TerritoryOperationalStatus) => {
       setStatus(next);
@@ -75,33 +111,54 @@ export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemaini
 
   const sessions = useMemo(() => currentCycleSessions(entries, status?.cycleNumber ?? null), [entries, status]);
 
+  const bumpProgressVersion = useCallback(() => setProgressVersion((version) => version + 1), []);
+
+  function recorderSlot(): JSX.Element | null {
+    if (status === null) return null;
+    if (isOpenState(status.state)) {
+      return (
+        <ProgressRecorder
+          territoryId={territoryId}
+          boundary={boundary}
+          remainingArea={status.remainingArea}
+          sessions={sessions}
+          highlightedSessionId={hoveredSessionId ?? selectedSessionId}
+          onRecorded={bumpProgressVersion}
+        />
+      );
+    }
+    return (
+      <p className="recorder-closed" role="note">
+        {status.state === 'no_record'
+          ? 'Abre el territorio para empezar a registrar progreso.'
+          : 'El territorio está cerrado. Ábrelo para registrar progreso.'}
+      </p>
+    );
+  }
+
   return (
     <section aria-labelledby="territory-detail-heading">
-      <h2 id="territory-detail-heading">Territorio</h2>
-      <a
-        className="detail-edit-link"
-        href={`/territorios/${territoryId}/editar`}
-        onClick={(event) => {
-          event.preventDefault();
-          onEdit();
-        }}
-      >
-        Editar mapa
-      </a>
-      <OperationalStatusPanel
+      <div className="territory-detail-header">
+        <h2 id="territory-detail-heading">Territorio</h2>
+        <a
+          className="detail-edit-link"
+          href={`/territorios/${territoryId}/editar`}
+          onClick={(event) => {
+            event.preventDefault();
+            onEdit();
+          }}
+        >
+          Editar mapa
+        </a>
+      </div>
+      <TerritoryTopBar
         territoryId={territoryId}
         refreshToken={combinedRefreshToken}
-        onChanged={() => setProgressVersion((version) => version + 1)}
-        onRemainingAreaChange={handleStatus}
+        cycles={cycles}
+        onChanged={bumpProgressVersion}
+        onStatus={handleStatus}
       />
-      <ProgressRecorder
-        territoryId={territoryId}
-        boundary={boundary}
-        remainingArea={status?.remainingArea ?? null}
-        sessions={sessions}
-        highlightedSessionId={hoveredSessionId ?? selectedSessionId}
-        onRecorded={() => setProgressVersion((version) => version + 1)}
-      />
+      {recorderSlot()}
       <ProgressList
         entries={entries}
         sessions={sessions}
@@ -112,7 +169,7 @@ export function TerritoryDetail({ territoryId, boundary, refreshToken, onRemaini
         onHover={setHoveredSessionId}
         onSelect={setSelectedSessionId}
       />
-      <SharePanel territoryId={territoryId} />
+      <CycleHistory cycles={cycles} loading={cyclesLoading} error={cyclesError} />
       <AuditHistory territoryId={territoryId} refreshToken={combinedRefreshToken} />
     </section>
   );
