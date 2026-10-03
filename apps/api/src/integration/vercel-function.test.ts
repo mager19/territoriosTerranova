@@ -6,6 +6,7 @@
  * use the /api paths the browser uses.
  */
 
+import { execFileSync } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -114,8 +115,9 @@ describe('the API as a Vercel Function', () => {
 
 describe('apps/admin/api/index.js (the file Vercel deploys)', () => {
   it('exports the Node.js request handler as its default export', async () => {
-    // Resolves @territorios/api/vercel to apps/api/dist: needs `pnpm --filter
-    // @territorios/api build` (or the root `pnpm typecheck`) first.
+    // The entry imports ./_api.mjs, the self-contained bundle Vercel ships;
+    // build it from the current sources first (esbuild, well under a second).
+    execFileSync('pnpm', ['--filter', '@territorios/admin', 'bundle:api'], { stdio: 'ignore' });
     const entryPath = '../../../admin/api/index.js'; // untyped JavaScript: keep it out of tsc
     const entry = (await import(entryPath)) as { default: unknown };
     expect(typeof entry.default).toBe('function');
