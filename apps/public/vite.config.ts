@@ -15,6 +15,10 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true
   },
+  // The MapLibre worker is bundled as an ES module (src/maplibre-worker.ts).
+  worker: {
+    format: 'es'
+  },
   // Same fix as apps/admin/vite.config.ts: maplibre-gl loads its
   // tile-processing Web Worker as a separate chunk at runtime, which
   // Vite's esbuild dep pre-bundler does not follow, silently breaking
