@@ -157,3 +157,31 @@ describe('CORS', () => {
     expect(response.headers['access-control-allow-origin']).toBeUndefined();
   });
 });
+
+describe('unexpected errors', () => {
+  it('answers 500 with a generic body and never echoes the internal error message', async () => {
+    app = await buildApp({ queryPostgisVersion: async () => '3.4.3' }, { logger: false });
+    app.get('/boom', async () => {
+      throw Object.assign(new Error('connection is insecure (try using `sslmode=require`)'), { code: '28000' });
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/boom' });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({ error: 'internal_error' });
+    expect(response.body).not.toContain('sslmode');
+    expect(response.body).not.toContain('28000');
+  });
+
+  it('keeps client errors (4xx) as Fastify reports them', async () => {
+    app = await buildApp({ queryPostgisVersion: async () => '3.4.3' }, { logger: false });
+    app.get('/bad', async () => {
+      throw Object.assign(new Error('bad input'), { statusCode: 400 });
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/bad' });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ statusCode: 400, message: 'bad input' });
+  });
+});
