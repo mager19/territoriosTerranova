@@ -99,21 +99,50 @@ is the layer with usable identifying attributes.
 
 ## Basemap
 
-Selection lives in `basemap.ts` in each app (`apps/admin/src/features/territory-editor/`
-and `apps/public/src/`), a pure, unit-tested function of `VITE_MAPTILER_KEY`.
+Decision (2026-10-03): **OSM raster is the default everywhere.** MapTiler
+Streets v2 (vector, `https://api.maptiler.com/maps/streets-v2/style.json?key=<KEY>`)
+is an **admin-only** opt-in, because it shows the building footprints / 3D
+buildings that OSM lacks in Bello's Navarra area. The public volunteer view
+always uses OSM and never reads a MapTiler key (guarded by
+`apps/public/src/basemap-policy.test.ts`).
 
-| `VITE_MAPTILER_KEY` | Basemap |
-| --- | --- |
-| Set (non-empty) | MapTiler Streets v2 (vector): `https://api.maptiler.com/maps/streets-v2/style.json?key=<KEY>` |
-| Unset or empty | OSM raster fallback, byte-for-byte the pre-MapTiler style (below) |
+Selection lives in `basemap.ts` in each app (`apps/admin/src/features/territory-editor/`
+and `apps/public/src/`, kept identical): `selectBasemap(key, preferred)` is a
+pure, unit-tested function that returns MapTiler only when MapTiler is
+explicitly preferred **and** a key is present, and OSM otherwise.
+
+| Admin map | `VITE_MAPTILER_KEY` unset or empty | `VITE_MAPTILER_KEY` set |
+| --- | --- | --- |
+| Territory editor (`TerritoryEditor`) | OSM, no switch | OSM by default; "Calles" / "Construcciones" switch |
+| Session recorder (`ProgressRecorder`) | OSM, no switch | OSM by default; "Calles" / "Construcciones" switch |
+| Overview thumbnails, `TerritoryPreview` | OSM | OSM (no switch) |
+| Public volunteer view | OSM | OSM |
+
+The switch (`basemap-ui.tsx`, `BasemapSwitcher` + `useBasemapSwitch`) is a
+compact segmented control of native `aria-pressed` buttons over the map's
+top-left corner ("Calles" = OSM, "Construcciones" = MapTiler), disabled until
+the map has loaded. The admin's last choice is remembered per browser in
+`localStorage` (`territorios.admin.basemap`, `basemap-preference.ts`); missing
+or failing storage falls back to OSM. Switching calls
+`map.setStyle(style, { diff: false })` on the existing map — a full style
+reload, so `style.load` always fires. A full reload drops every app
+source/layer, so on `style.load` the component re-installs exactly the layers
+its `load` handler installs, and a `styleRevision` counter makes its render
+effects repaint the current state (draft and its parts, saved territory,
+neighbour outlines, reference barrio, remaining area, sessions). Drafts,
+selections and the camera are kept: fit-to-geometry and draft resets are
+separate effects not keyed on `styleRevision`. A second switch while a style
+is still loading unregisters the first `style.load` listener, so layers are
+installed once.
 
 Configuration: both Vite apps set `envDir` to the repository root, so one
 root `.env.local` (git-ignored) serves admin and public. Only `VITE_`-prefixed
 variables reach client code; `VITE_API_BASE_URL` (public app only — the admin
 app always calls the API same-origin under `/api`, docs/admin-auth.md) and
 `VITE_PUBLIC_APP_BASE_URL` are read from the same root files. The key is shipped to browsers by design
-(MapTiler keys are public client keys) and must be domain-restricted in the
-MapTiler dashboard before launch. Only the style and its tiles/glyphs/sprites
+(MapTiler keys are public client keys). Set it **only on the admin Vercel
+project** (docs/deploy-vercel.md), and restrict it in the MapTiler dashboard to
+`admin-territorios-flame.vercel.app`, `localhost` and `127.0.0.1`. Only the style and its tiles/glyphs/sprites
 are fetched from MapTiler — no MapTiler geocoding or search is used.
 
 ### OSM raster fallback — carried over from the archived attempt
@@ -133,9 +162,11 @@ traffic. It remains the development fallback and the rollback path.
   to `https://www.maptiler.com`) as the free plan requires. Admin: a MapLibre
   control in the map's bottom-left corner, and the explicit attribution string is
   set on the style's tiled sources so MapLibre's attribution control shows it.
-  Public: the page's own attribution line under the map (MapLibre's control is
-  disabled there).
-- OSM fallback: unchanged, plain "© OpenStreetMap contributors".
+  The admin attribution line under the map switches with the basemap, and the
+  logo control is removed again when switching back to OSM. (The public page
+  still has a MapTiler variant of its attribution line in `render.ts`, but
+  never selects it.)
+- OSM: unchanged, plain "© OpenStreetMap contributors".
 
 ### Pedestrian-path reinforcement
 
@@ -159,17 +190,15 @@ layer (including the OSM fallback) passes through unchanged.
   on a paused or rejected key is implemented yet; rollback is by config.
 - Free plan terms are for non-commercial use. **Written confirmation from
   MapTiler that this use qualifies is still pending and required before launch.**
-- **Key restriction must be verified before launch.** The public view sets
-  `<meta name="referrer" content="no-referrer">`, so MapTiler cannot rely on the
-  `Referer` header; restriction must work from the `Origin` header that CORS
-  fetches send. Verify in a real browser, on the production domain, with a
-  domain-restricted key. If Origin-based restriction fails, the fallback plan is
-  a `strict-origin` referrer policy for the public view — a product decision
-  that has not been made or applied.
+- **Key restriction must be verified before launch** on the admin domain, in a
+  real browser, with the restricted key (MapTiler checks the `Origin` header
+  that CORS fetches send). The public view no longer uses MapTiler at all, so
+  its referrer policy does not affect the key.
 
 ### Rollback
 
-- Config only: unset or empty `VITE_MAPTILER_KEY` and rebuild → OSM raster.
+- Config only: unset or empty `VITE_MAPTILER_KEY` on the admin project and
+  rebuild → OSM only, no switch.
 - Code: git tag `pre-maptiler` (main at `6f69dde`) is the last state before
   MapTiler.
 

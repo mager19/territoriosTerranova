@@ -117,7 +117,7 @@ that is not production, or no API variables at all.
 | `PG_POOL_MAX` | unset (3) | Optional. Connections per function instance. |
 | `PG_IDLE_TIMEOUT_MS` | unset (5000) | Optional. Idle time before a connection closes. |
 | `VITE_PUBLIC_APP_BASE_URL` | `https://publico-territorios.vercel.app` | Required. The base of the fixed share links the admin app shows (`<base>/t/<slug>`). No trailing slash. Read at build time. If it is unset, links point at `http://127.0.0.1:5174`. |
-| `VITE_MAPTILER_KEY` | MapTiler key | Optional. Admin basemap, read at build time. |
+| `VITE_MAPTILER_KEY` | MapTiler key | Optional. Read at build time. When set, the admin's drawing maps offer a "Calles" / "Construcciones" basemap switch (OSM stays the default). Add it with type **Config**, not Secret: Vercel refuses `VITE_` variables as secrets, and the key ships to browsers anyway. Restrict the key in the MapTiler dashboard to `admin-territorios-flame.vercel.app`, `localhost` and `127.0.0.1`. See docs/map-references.md "Basemap". |
 
 Notes on `TRUST_PROXY`:
 
@@ -134,7 +134,10 @@ Notes on `TRUST_PROXY`:
 | Variable | Value | Notes |
 | --- | --- | --- |
 | `VITE_API_BASE_URL` | `https://admin-territorios-flame.vercel.app/api` | Read at build time. The client calls `${VITE_API_BASE_URL}/public/t/<slug>` (legacy links: `/public/territories/<token>`). A trailing slash is fine. |
-| `VITE_MAPTILER_KEY` | MapTiler key | Optional. Without it, the app uses the OSM raster basemap. |
+
+Do **not** set `VITE_MAPTILER_KEY` here. The public volunteer view always uses
+the OSM basemap and its code never reads the key (2026-10-03,
+docs/map-references.md "Basemap").
 
 ## Database connection
 
