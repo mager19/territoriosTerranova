@@ -2,7 +2,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 
 import { runApp } from './app.js';
-import { selectBasemap } from './basemap.js';
+import { createOsmBasemap } from './basemap.js';
 import { createTerritoryLabelElement, territoryLabelPoint, territoryStartPoint } from './layers.js';
 import { MAPLIBRE_WORKER_URL } from './maplibre-worker.js';
 import {
@@ -21,10 +21,10 @@ if (container === null) {
   throw new Error('root container #root not found');
 }
 
-// MapTiler Streets v2 when VITE_MAPTILER_KEY is set, otherwise the OSM
-// raster fallback (docs/map-references.md "Basemap"). Only the style is
-// fetched from MapTiler — no geocoding/search.
-const basemap = selectBasemap(import.meta.env.VITE_MAPTILER_KEY);
+// Always the OSM raster basemap: the MapTiler "Construcciones" basemap is an
+// admin-only drafting aid, and this app never reads a MapTiler key
+// (docs/map-references.md "Basemap"; guarded by basemap-policy.test.ts).
+const basemap = createOsmBasemap();
 
 void runApp(container, {
   locationPathname: window.location.pathname,
@@ -52,14 +52,7 @@ void runApp(container, {
       zoom: BELLO_ZOOM,
       attributionControl: false
     });
-    // Style set right after construction (what the constructor's `style`
-    // option does internally) so the MapTiler style can go through
-    // transformStyle; 'load' still fires once for either basemap.
-    if (basemap.kind === 'maptiler') {
-      map.setStyle(basemap.style, { transformStyle: basemap.transformStyle });
-    } else {
-      map.setStyle(basemap.style);
-    }
+    map.setStyle(basemap.style);
     map.on('load', () => {
       installTerritoryLayers(map);
       renderTerritory(map, result.view);

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { Map as MapLibreMap, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-import { ADMIN_BASEMAP, BasemapAttribution, applyBasemap } from '../territory-editor/basemap-ui.js';
+import { BasemapAttribution, BasemapSwitcher, useBasemapSwitch } from '../territory-editor/basemap-ui.js';
 import { ApiError, describeApiError, recordProgress, type CoverageBaseline } from '../../api/client.js';
 import {
   addVertex,
@@ -106,6 +106,13 @@ function snappedCoordinate(map: MapLibreMap, point: { x: number; y: number }, so
   return findSnap(map, point, sources) ?? screenPointToCoordinate(map, point);
 }
 
+/** Every app source/layer the session map owns — on 'load', and again after a basemap switch. */
+function installRecorderMapLayers(map: MapLibreMap): void {
+  installEditorLayers(map);
+  installSessionLayers(map);
+  installSnapIndicatorLayer(map);
+}
+
 export function ProgressRecorder({
   territoryId,
   boundary,
@@ -117,6 +124,10 @@ export function ProgressRecorder({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  // Same "Calles" / "Construcciones" switch as TerritoryEditor: layers are
+  // re-installed after a switch and `styleRevision` repaints them.
+  const basemap = useBasemapSwitch(mapRef, installRecorderMapLayers);
+  const { styleRevision } = basemap;
   const [covered, setCovered] = useState<DraftState>(createDraft());
   const [adjusting, setAdjusting] = useState(false);
   const [note, setNote] = useState('');
@@ -146,11 +157,9 @@ export function ProgressRecorder({
       center: BELLO_CENTER,
       zoom: BELLO_ZOOM
     });
-    applyBasemap(map, ADMIN_BASEMAP);
+    basemap.apply(map);
     map.on('load', () => {
-      installEditorLayers(map);
-      installSessionLayers(map);
-      installSnapIndicatorLayer(map);
+      installRecorderMapLayers(map);
       setMapReady(true);
     });
     mapRef.current = map;
@@ -269,27 +278,31 @@ export function ProgressRecorder({
     const map = mapRef.current;
     if (!map || !mapReady) return;
     renderDraft(map, covered, new Set(outsideIndices));
-  }, [covered, outsideIndices, mapReady]);
+  }, [covered, outsideIndices, mapReady, styleRevision]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
     renderRemainingArea(map, remainingArea);
-  }, [remainingArea, mapReady]);
+  }, [remainingArea, mapReady, styleRevision]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
     renderSessions(map, sessionFeatureCollection(sessions, highlightedSessionId));
-  }, [sessions, highlightedSessionId, mapReady]);
+  }, [sessions, highlightedSessionId, mapReady, styleRevision]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
     renderSavedTerritory(map, boundary);
-    if (boundary) {
-      fitToGeometry(map, boundary);
-    }
+  }, [boundary, mapReady, styleRevision]);
+
+  // Fit only when the boundary changes — never on a basemap switch.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !boundary) return;
+    fitToGeometry(map, boundary);
   }, [boundary, mapReady]);
 
   const vertexCount = covered.vertices.length;
@@ -359,17 +372,20 @@ export function ProgressRecorder({
       <h3 id="progress-recorder-heading">Registrar sesión</h3>
       <p>Marca en el mapa lo que cubrieron en esta sesión. Lo que falta se calcula solo.</p>
 
-      <div
-        ref={containerRef}
-        className="session-map"
-        role="img"
-        aria-label={`Mapa de la sesión: territorio, área pendiente y sesiones anteriores. ${
-          vertexCount > 0
-            ? `Área cubierta: ${vertexCount} punto(s)${covered.isClosed ? ', cerrada' : ''}.`
-            : 'Todavía no hay área cubierta dibujada.'
-        }`}
-      />
-      <BasemapAttribution kind={ADMIN_BASEMAP.kind} />
+      <div className="map-frame">
+        <div
+          ref={containerRef}
+          className="session-map"
+          role="img"
+          aria-label={`Mapa de la sesión: territorio, área pendiente y sesiones anteriores. ${
+            vertexCount > 0
+              ? `Área cubierta: ${vertexCount} punto(s)${covered.isClosed ? ', cerrada' : ''}.`
+              : 'Todavía no hay área cubierta dibujada.'
+          }`}
+        />
+        <BasemapSwitcher basemap={basemap} disabled={!mapReady} />
+      </div>
+      <BasemapAttribution kind={basemap.kind} />
 
       <div role="toolbar" aria-label="Herramientas de la sesión" className="map-toolbar">
         {covered.isClosed ? (

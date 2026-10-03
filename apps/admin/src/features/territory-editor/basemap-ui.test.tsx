@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Map as MapLibreMap } from 'maplibre-gl';
 
 import { selectBasemap } from './basemap.js';
-import { BasemapAttribution, applyBasemap, createMapTilerLogoControl } from './basemap-ui.js';
+import { BasemapAttribution, applyBasemap, createMapTilerLogoControl, swapBasemap } from './basemap-ui.js';
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
@@ -24,7 +24,13 @@ function renderAttribution(kind: 'osm' | 'maptiler'): HTMLElement {
 function fakeMap() {
   const setStyle = vi.fn();
   const addControl = vi.fn();
-  return { map: { setStyle, addControl } as unknown as MapLibreMap, setStyle, addControl };
+  const removeControl = vi.fn();
+  return {
+    map: { setStyle, addControl, removeControl } as unknown as MapLibreMap,
+    setStyle,
+    addControl,
+    removeControl
+  };
 }
 
 describe('BasemapAttribution', () => {
@@ -71,8 +77,17 @@ describe('applyBasemap', () => {
     expect(addControl).not.toHaveBeenCalled();
   });
 
+  it('returns the MapTiler logo control it added, or null for OSM', () => {
+    expect(applyBasemap(fakeMap().map, selectBasemap('k'))).toBeNull();
+
+    const { map, addControl } = fakeMap();
+    const logo = applyBasemap(map, selectBasemap('k', 'maptiler'));
+    expect(logo).not.toBeNull();
+    expect(addControl).toHaveBeenCalledWith(logo, 'bottom-left');
+  });
+
   it('loads the MapTiler style through transformStyle and adds the logo control', () => {
-    const basemap = selectBasemap('k');
+    const basemap = selectBasemap('k', 'maptiler');
     if (basemap.kind !== 'maptiler') throw new Error('expected maptiler');
     const { map, setStyle, addControl } = fakeMap();
 
@@ -80,5 +95,32 @@ describe('applyBasemap', () => {
 
     expect(setStyle).toHaveBeenCalledWith(basemap.style, { transformStyle: basemap.transformStyle });
     expect(addControl).toHaveBeenCalledWith(expect.objectContaining({ onAdd: expect.any(Function) }), 'bottom-left');
+  });
+});
+
+describe('swapBasemap', () => {
+  it('replaces the style without diffing, through transformStyle, and adds the MapTiler logo', () => {
+    const basemap = selectBasemap('k', 'maptiler');
+    if (basemap.kind !== 'maptiler') throw new Error('expected maptiler');
+    const { map, setStyle, addControl, removeControl } = fakeMap();
+
+    const logo = swapBasemap(map, basemap, null);
+
+    expect(setStyle).toHaveBeenCalledWith(basemap.style, { diff: false, transformStyle: basemap.transformStyle });
+    expect(addControl).toHaveBeenCalledWith(logo, 'bottom-left');
+    expect(removeControl).not.toHaveBeenCalled();
+  });
+
+  it('removes the MapTiler logo when swapping back to OSM', () => {
+    const basemap = selectBasemap('k');
+    const { map, setStyle, addControl, removeControl } = fakeMap();
+    const previousLogo = createMapTilerLogoControl();
+
+    const logo = swapBasemap(map, basemap, previousLogo);
+
+    expect(logo).toBeNull();
+    expect(removeControl).toHaveBeenCalledWith(previousLogo);
+    expect(setStyle).toHaveBeenCalledWith(basemap.style, { diff: false });
+    expect(addControl).not.toHaveBeenCalled();
   });
 });

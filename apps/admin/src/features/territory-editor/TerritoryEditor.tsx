@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type JSX, type KeyboardEvent as R
 import { Map as MapLibreMap, NavigationControl, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-import { ADMIN_BASEMAP, BasemapAttribution, applyBasemap } from './basemap-ui.js';
+import { BasemapAttribution, BasemapSwitcher, useBasemapSwitch } from './basemap-ui.js';
 import {
   ApiError,
   createTerritory,
@@ -102,6 +102,14 @@ function findSnap(map: MapLibreMap, point: { x: number; y: number }, targets: re
  * parte" act on. Save sends a Polygon for one part, a MultiPolygon for
  * several; the server rejects parts that overlap or share a border.
  */
+/** Every app source/layer the editor map owns — on 'load', and again after a basemap switch. */
+function installEditorMapLayers(map: MapLibreMap): void {
+  installEditorLayers(map);
+  installDraftPartsLayer(map);
+  installNeighborTerritoriesLayer(map);
+  installSnapIndicatorLayer(map);
+}
+
 export function TerritoryEditor({
   selectedTerritory,
   onSaved,
@@ -110,6 +118,12 @@ export function TerritoryEditor({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  // Admin-only "Calles" / "Construcciones" switch. A switch reloads the
+  // style, which drops every app layer: they are re-installed on
+  // 'style.load', and `styleRevision` makes the render effects below
+  // repaint the current state — no draft or selection is reset.
+  const basemap = useBasemapSwitch(mapRef, installEditorMapLayers);
+  const { styleRevision } = basemap;
   const [partsDraft, setPartsDraft] = useState<PartsDraftState>(createPartsDraft());
   // The ACTIVE part — every single-shape tool below acts on it alone.
   const draft = activePart(partsDraft);
@@ -217,13 +231,10 @@ export function TerritoryEditor({
       center: BELLO_CENTER,
       zoom: BELLO_ZOOM
     });
-    applyBasemap(map, ADMIN_BASEMAP);
+    basemap.apply(map);
     map.addControl(new NavigationControl({ showCompass: false }), 'top-right');
     map.on('load', () => {
-      installEditorLayers(map);
-      installDraftPartsLayer(map);
-      installNeighborTerritoriesLayer(map);
-      installSnapIndicatorLayer(map);
+      installEditorMapLayers(map);
       setMapReady(true);
     });
     mapRef.current = map;
@@ -367,7 +378,7 @@ export function TerritoryEditor({
     const map = mapRef.current;
     if (!map || !mapReady) return;
     renderNeighborTerritories(map, neighborGeometries);
-  }, [neighborGeometries, mapReady]);
+  }, [neighborGeometries, mapReady, styleRevision]);
 
   // Re-render the draft layers whenever the draft state changes: the active
   // part with its vertices, the other finished parts without.
@@ -376,11 +387,10 @@ export function TerritoryEditor({
     if (!map || !mapReady) return;
     renderDraft(map, draft);
     renderDraftOtherParts(map, otherParts);
-  }, [draft, otherParts, mapReady]);
+  }, [draft, otherParts, mapReady, styleRevision]);
 
   // Re-render the AMVA reference-barrio overlay: the single selected barrio
-  // (or nothing once cleared). Fitting is done here too, so selection and
-  // camera move together from one state source.
+  // (or nothing once cleared) — also after a basemap switch.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
@@ -388,9 +398,14 @@ export function TerritoryEditor({
       map,
       selectedBarrio === null ? [] : [{ name: selectedBarrio.name, geometry: selectedBarrio.geometry }]
     );
-    if (selectedBarrio !== null) {
-      fitToGeometry(map, selectedBarrio.geometry);
-    }
+  }, [selectedBarrio, mapReady, styleRevision]);
+
+  // Fit to a newly selected barrio — only on selection, never on a basemap
+  // switch, so the camera stays where the admin left it.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || selectedBarrio === null) return;
+    fitToGeometry(map, selectedBarrio.geometry);
   }, [selectedBarrio, mapReady]);
 
   // Debounced barrio search: fires ~250ms after typing stops, never on
@@ -455,15 +470,23 @@ export function TerritoryEditor({
     const map = mapRef.current;
     if (!map || !mapReady) return;
     renderRemainingArea(map, remainingAreaGeometry);
-  }, [remainingAreaGeometry, mapReady]);
+  }, [remainingAreaGeometry, mapReady, styleRevision]);
 
   // Show the selected territory's current revision as the "saved" layer,
-  // distinct from the in-progress draft; fit the view to it.
+  // distinct from the in-progress draft — also after a basemap switch.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    renderSavedTerritory(map, selectedTerritory?.revisions.at(-1)?.geometry ?? null);
+  }, [selectedTerritory, mapReady, styleRevision]);
+
+  // A newly selected territory: fit the view to it and start a fresh draft.
+  // Deliberately not keyed on styleRevision — a basemap switch must keep
+  // the draft and the camera.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
     const currentRevision = selectedTerritory?.revisions.at(-1) ?? null;
-    renderSavedTerritory(map, currentRevision?.geometry ?? null);
     if (currentRevision) {
       fitToGeometry(map, currentRevision.geometry);
     }
@@ -571,19 +594,22 @@ export function TerritoryEditor({
         {selectedTerritory ? `Nueva revisión para ${selectedTerritory.name}` : 'Dibujar un territorio nuevo'}
       </h2>
 
-      <div
-        ref={containerRef}
-        className="editor-map"
-        role="img"
-        aria-label={`Mapa centrado en Bello, para dibujar el contorno de un territorio. ${
-          editingVertices
-            ? 'Modo de edición de puntos: arrastra un punto para moverlo, haz clic en un borde para agregar uno, doble clic en un punto para borrarlo.'
-            : draft.vertices.length > 0
-              ? `${draft.vertices.length} punto(s) ubicado(s).`
-              : 'Todavía no hay puntos ubicados.'
-        }${partCount > 1 ? ` Territorio de ${partCount} partes; editando la parte ${activePartNumber}.` : ''}`}
-      />
-      <BasemapAttribution kind={ADMIN_BASEMAP.kind} />
+      <div className="map-frame">
+        <div
+          ref={containerRef}
+          className="editor-map"
+          role="img"
+          aria-label={`Mapa centrado en Bello, para dibujar el contorno de un territorio. ${
+            editingVertices
+              ? 'Modo de edición de puntos: arrastra un punto para moverlo, haz clic en un borde para agregar uno, doble clic en un punto para borrarlo.'
+              : draft.vertices.length > 0
+                ? `${draft.vertices.length} punto(s) ubicado(s).`
+                : 'Todavía no hay puntos ubicados.'
+          }${partCount > 1 ? ` Territorio de ${partCount} partes; editando la parte ${activePartNumber}.` : ''}`}
+        />
+        <BasemapSwitcher basemap={basemap} disabled={!mapReady} />
+      </div>
+      <BasemapAttribution kind={basemap.kind} />
       {territoryListFailed && (
         <p role="status" className="editor-hint">
           No se pudieron cargar los otros territorios; los puntos no se ajustarán a sus bordes.

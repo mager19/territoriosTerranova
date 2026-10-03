@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import { Map as MapLibreMap } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-import { ADMIN_BASEMAP, BasemapAttribution, applyBasemap } from '../territory-editor/basemap-ui.js';
+import { BasemapAttribution, PREVIEW_BASEMAP, applyBasemap } from '../territory-editor/basemap-ui.js';
 import { ApiError, describeApiError, getTerritory, type TerritoryWithRevisions } from '../../api/client.js';
 import {
   BELLO_CENTER,
@@ -54,7 +54,7 @@ export function TerritoryPreview({ territoryId, onClose }: TerritoryPreviewProps
       center: BELLO_CENTER,
       zoom: BELLO_ZOOM
     });
-    applyBasemap(map, ADMIN_BASEMAP);
+    applyBasemap(map, PREVIEW_BASEMAP);
     map.on('load', () => {
       installEditorLayers(map);
       setMapReady(true);
@@ -144,7 +144,7 @@ export function TerritoryPreview({ territoryId, onClose }: TerritoryPreviewProps
         aria-label="Mapa de vista previa del territorio seleccionado."
         className="territory-preview-map"
       />
-      <BasemapAttribution kind={ADMIN_BASEMAP.kind} />
+      <BasemapAttribution kind={PREVIEW_BASEMAP.kind} />
     </section>
   );
 }

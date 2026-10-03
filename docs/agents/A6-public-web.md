@@ -56,11 +56,9 @@ bundle, smaller attack surface, less to audit.
 - [ ] Revoked, expired, and invalid tokens, and unknown or malformed slugs, all
       render the **same** neutral message
 - [ ] No analytics, no third-party scripts, no external font or asset loading
-      beyond the basemap provider. With OSM raster (no `VITE_MAPTILER_KEY`) that
-      is the tiles only; with MapTiler it is the style JSON, its tiles, glyphs and
-      sprites, and the required MapTiler logo, all from `api.maptiler.com`
-      (2026-10-03, see docs/map-references.md "Basemap"). App fonts are
-      self-hosted.
+      beyond the basemap provider: the OSM raster tiles only. The public view
+      always uses OSM and never reads a MapTiler key (2026-10-03, see
+      docs/map-references.md "Basemap"). App fonts are self-hosted.
 - [ ] A legacy share token never appears in a referrer, an outbound request, or
       a logged URL beyond the initial load. (A slug is in the path by design.
       The page uses `strict-origin` (2026-10-03): outbound requests carry only

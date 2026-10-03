@@ -53,8 +53,10 @@ exist; if you cite a file here, create it in the same change.
 ## Map provider policy
 
 The provider-approval gate is a **production** requirement, not a development
-blocker. Development proceeds on MapLibre GL JS with MapTiler Streets v2 when
-`VITE_MAPTILER_KEY` is set, and OpenStreetMap raster tiles otherwise (see
+blocker. Development proceeds on MapLibre GL JS with OpenStreetMap raster
+tiles as the default everywhere. When `VITE_MAPTILER_KEY` is set (admin project
+only), the admin's drawing maps offer an opt-in MapTiler Streets v2
+"Construcciones" basemap; the public view is always OSM (see
 `docs/map-references.md` "Basemap"). The production tile-service candidate is
 MapTiler, pending written confirmation of its terms (non-commercial free plan)
 and verification of Origin-based key restriction; that decision must be
