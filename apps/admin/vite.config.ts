@@ -26,6 +26,10 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true
   },
+  // The MapLibre worker is bundled as an ES module (src/maplibre-worker.ts).
+  worker: {
+    format: 'es'
+  },
   // maplibre-gl loads its tile-processing Web Worker as a separate chunk at
   // runtime. Vite's esbuild-based dep pre-bundler does not follow that
   // dynamic worker reference, so it never gets pre-bundled — the dev

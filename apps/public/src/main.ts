@@ -3,6 +3,7 @@ import './styles.css';
 
 import { runApp } from './app.js';
 import { selectBasemap } from './basemap.js';
+import { MAPLIBRE_WORKER_URL } from './maplibre-worker.js';
 import {
   BELLO_CENTER,
   BELLO_ZOOM,
@@ -40,7 +41,8 @@ void runApp(container, {
     // maplibre-gl is loaded only once a territory actually resolves — the
     // unavailable/error/loading states never pull in the map bundle or
     // touch WebGL at all.
-    const { Map, Marker } = await import('maplibre-gl');
+    const { Map, Marker, setWorkerUrl } = await import('maplibre-gl');
+    setWorkerUrl(MAPLIBRE_WORKER_URL); // see maplibre-worker.ts
     const map = new Map({
       container: elements.mapContainer,
       center: BELLO_CENTER,
