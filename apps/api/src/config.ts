@@ -22,10 +22,29 @@ export interface AdminAuthConfig {
   readonly cookieSecure: boolean;
 }
 
+/**
+ * node-postgres Pool sizing. Undefined means "the caller's default": main.ts
+ * (a long-running local server) and the Vercel Function (many small
+ * instances sharing Neon's pooler, docs/deploy-vercel.md) want different ones.
+ */
+export interface DatabasePoolConfig {
+  /** PG_POOL_MAX: most connections one API instance may hold. */
+  readonly max: number | undefined;
+  /** PG_IDLE_TIMEOUT_MS: how long an idle connection stays open. */
+  readonly idleTimeoutMillis: number | undefined;
+}
+
 export interface ApiConfig {
   readonly host: string;
   readonly port: number;
   readonly databaseUrl: string;
+  readonly databasePool: DatabasePoolConfig;
+  /**
+   * Origins allowed to call the public share endpoint cross-origin (CORS,
+   * no credentials). PUBLIC_APP_ORIGIN in production; the local public dev
+   * server otherwise.
+   */
+  readonly publicAppOrigins: readonly string[];
   /** Fastify `trustProxy`: false, true, or the number of trusted proxy hops (TRUST_PROXY). */
   readonly trustProxy: boolean | number;
   readonly auth: AdminAuthConfig;
@@ -38,6 +57,8 @@ const DEFAULT_DATABASE_URL = 'postgres://territorios:territorios@127.0.0.1:5432/
 /** apps/admin's Vite dev server (vite.config.ts), reachable under both loopback names. */
 const DEV_ADMIN_ORIGIN = 'http://localhost:5173';
 const DEV_ADMIN_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+/** apps/public's Vite dev server (vite.config.ts). */
+const DEV_PUBLIC_ORIGINS = ['http://127.0.0.1:5174', 'http://localhost:5174'];
 export const MIN_ADMIN_PASSWORD_LENGTH = 12;
 const ADMIN_ACCOUNT_SLOTS = [1, 2] as const;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -61,6 +82,11 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     host: env.HOST ?? DEFAULT_HOST,
     port,
     databaseUrl: env.DATABASE_URL ?? DEFAULT_DATABASE_URL,
+    databasePool: {
+      max: readPositiveInteger(env, 'PG_POOL_MAX'),
+      idleTimeoutMillis: readPositiveInteger(env, 'PG_IDLE_TIMEOUT_MS')
+    },
+    publicAppOrigins: readPublicAppOrigins(env),
     trustProxy: readTrustProxy(env.TRUST_PROXY),
     auth: readAdminAuthConfig(env)
   };
@@ -69,6 +95,35 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
 function nonBlank(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed === '' ? undefined : trimmed;
+}
+
+function readPositiveInteger(env: NodeJS.ProcessEnv, name: string): number | undefined {
+  const value = nonBlank(env[name]);
+  if (value === undefined) return undefined;
+  if (!/^\d+$/.test(value) || Number(value) < 1) {
+    throw new Error(`${name} must be a positive integer, got: ${JSON.stringify(env[name])}`);
+  }
+  return Number(value);
+}
+
+function readPublicAppOrigins(env: NodeJS.ProcessEnv): string[] {
+  const production = env.NODE_ENV === 'production';
+  const raw = nonBlank(env.PUBLIC_APP_ORIGIN);
+  if (raw === undefined) {
+    if (production) {
+      throw new Error('PUBLIC_APP_ORIGIN is required when NODE_ENV=production (docs/deploy-vercel.md)');
+    }
+    return [...DEV_PUBLIC_ORIGINS];
+  }
+  const origins = raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '')
+    .map((entry) => parseOrigin(entry, 'PUBLIC_APP_ORIGIN'));
+  if (production && origins.some((origin) => !origin.startsWith('https://'))) {
+    throw new Error('PUBLIC_APP_ORIGIN must use https when NODE_ENV=production');
+  }
+  return [...new Set(origins)];
 }
 
 function readTrustProxy(raw: string | undefined): boolean | number {
@@ -96,7 +151,7 @@ function readAdminAuthConfig(env: NodeJS.ProcessEnv): AdminAuthConfig {
   if (production && rawOrigin === undefined) {
     throw new Error('ADMIN_APP_ORIGIN is required when NODE_ENV=production (docs/admin-auth.md)');
   }
-  const adminAppOrigin = parseOrigin(rawOrigin ?? DEV_ADMIN_ORIGIN);
+  const adminAppOrigin = parseOrigin(rawOrigin ?? DEV_ADMIN_ORIGIN, 'ADMIN_APP_ORIGIN');
   if (production && !adminAppOrigin.startsWith('https://')) {
     throw new Error('ADMIN_APP_ORIGIN must use https when NODE_ENV=production');
   }
@@ -129,16 +184,16 @@ function readAdminAccount(env: NodeJS.ProcessEnv, slot: number): AdminAccount[] 
   return [{ email, password }];
 }
 
-function parseOrigin(raw: string): string {
+function parseOrigin(raw: string, name: string): string {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(`ADMIN_APP_ORIGIN must be an origin like https://admin.example.org, got: ${JSON.stringify(raw)}`);
+    throw new Error(`${name} must be an origin like https://app.example.org, got: ${JSON.stringify(raw)}`);
   }
   const normalized = raw.replace(/\/$/, '');
   if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.origin !== normalized) {
-    throw new Error(`ADMIN_APP_ORIGIN must be a bare origin (scheme://host[:port]), got: ${JSON.stringify(raw)}`);
+    throw new Error(`${name} must be a bare origin (scheme://host[:port]), got: ${JSON.stringify(raw)}`);
   }
   return url.origin;
 }

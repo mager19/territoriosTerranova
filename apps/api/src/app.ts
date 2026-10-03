@@ -46,7 +46,12 @@ export interface BuildAppOptions {
   readonly logger?: boolean;
   /** Fastify `trustProxy` (config.trustProxy): needed for per-IP rate limits behind a proxy. */
   readonly trustProxy?: boolean | number;
+  /** Origins allowed to call the public share endpoint cross-origin (config.publicAppOrigins). */
+  readonly publicAppOrigins?: readonly string[];
 }
+
+/** apps/public's local dev server, the default when no origin is configured. */
+const DEV_PUBLIC_APP_ORIGINS = ['http://127.0.0.1:5174', 'http://localhost:5174'];
 
 /**
  * Async because @fastify/rate-limit and @fastify/cookie are registered here
@@ -68,13 +73,18 @@ export async function buildApp(
     trustProxy: (options.trustProxy ?? false) as boolean
   });
 
-  // The admin app calls the API same-origin through a /api proxy (Vite in
-  // development, a Vercel rewrite in production — docs/admin-auth.md), so it
-  // needs no CORS entry; its session cookie is never sent cross-origin.
-  // Only apps/public's local dev server (:5174) is cross-origin. Never '*'.
-  // A production public-app origin is a still-open deployment decision.
+  // CORS is granted ONLY to the public share endpoint, ONLY for the public
+  // app's origin(s), and never with credentials: apps/public calls it
+  // cross-origin (docs/deploy-vercel.md). The admin app calls the API
+  // same-origin through /api (docs/admin-auth.md), so admin routes need — and
+  // get — no CORS grant; its session cookie is never sent cross-origin.
+  // Never '*'.
+  const publicAppOrigins = [...(options.publicAppOrigins ?? DEV_PUBLIC_APP_ORIGINS)];
   void app.register(cors, {
-    origin: ['http://127.0.0.1:5174', 'http://localhost:5174']
+    delegator: (request, callback) => {
+      const isPublicRoute = request.url.startsWith('/public/');
+      callback(null, isPublicRoute ? { origin: publicAppOrigins, methods: ['GET'], credentials: false } : { origin: false });
+    }
   });
 
   // Registered once, non-global: only routes that attach a limit are limited

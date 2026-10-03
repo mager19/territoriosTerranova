@@ -6,14 +6,18 @@ import { queryPostgisVersion } from './health.js';
 import { createShutdown } from './shutdown.js';
 
 const config = readConfig();
-const pool = new Pool({ connectionString: config.databaseUrl, max: 5 });
+const pool = new Pool({
+  connectionString: config.databaseUrl,
+  max: config.databasePool.max ?? 5,
+  ...(config.databasePool.idleTimeoutMillis === undefined ? {} : { idleTimeoutMillis: config.databasePool.idleTimeoutMillis })
+});
 const app = await buildApp(
   {
     queryPostgisVersion: () => queryPostgisVersion(pool),
     pool,
     auth: { config: config.auth }
   },
-  { trustProxy: config.trustProxy }
+  { trustProxy: config.trustProxy, publicAppOrigins: config.publicAppOrigins }
 );
 
 const shutdown = createShutdown(app, pool);

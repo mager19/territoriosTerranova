@@ -8,7 +8,8 @@ const PRODUCTION_ENV = {
   ADMIN_1_PASSWORD: 'correct horse battery',
   ADMIN_2_EMAIL: 'beto@example.org',
   ADMIN_2_PASSWORD: 'staple-gun-42-orchid',
-  ADMIN_APP_ORIGIN: 'https://admin.example.org'
+  ADMIN_APP_ORIGIN: 'https://admin.example.org',
+  PUBLIC_APP_ORIGIN: 'https://public.example.org'
 } as const;
 
 describe('readConfig', () => {
@@ -50,6 +51,53 @@ describe('readConfig', () => {
     expect(readConfig({ TRUST_PROXY: '2' }).trustProxy).toBe(2);
     expect(readConfig({ TRUST_PROXY: 'false' }).trustProxy).toBe(false);
     expect(() => readConfig({ TRUST_PROXY: 'yes' })).toThrow(/TRUST_PROXY/);
+  });
+
+  it('leaves the pg pool size and idle timeout to the caller unless configured', () => {
+    expect(readConfig({}).databasePool).toEqual({ max: undefined, idleTimeoutMillis: undefined });
+    expect(readConfig({ PG_POOL_MAX: '2', PG_IDLE_TIMEOUT_MS: '5000' }).databasePool).toEqual({
+      max: 2,
+      idleTimeoutMillis: 5000
+    });
+  });
+
+  it('rejects a pg pool size or idle timeout that is not a positive integer', () => {
+    expect(() => readConfig({ PG_POOL_MAX: '0' })).toThrow(/PG_POOL_MAX/);
+    expect(() => readConfig({ PG_POOL_MAX: 'three' })).toThrow(/PG_POOL_MAX/);
+    expect(() => readConfig({ PG_IDLE_TIMEOUT_MS: '-5' })).toThrow(/PG_IDLE_TIMEOUT_MS/);
+  });
+});
+
+describe('readConfig — public app origins (CORS)', () => {
+  it('allows the local public dev server under both loopback names by default', () => {
+    expect(readConfig({}).publicAppOrigins).toEqual(['http://127.0.0.1:5174', 'http://localhost:5174']);
+  });
+
+  it('reads PUBLIC_APP_ORIGIN as the only allowed origin in production', () => {
+    const config = readConfig({ ...PRODUCTION_ENV, PUBLIC_APP_ORIGIN: 'https://public.example.org/' });
+    expect(config.publicAppOrigins).toEqual(['https://public.example.org']);
+  });
+
+  it('accepts a comma-separated list of public origins', () => {
+    const config = readConfig({
+      ...PRODUCTION_ENV,
+      PUBLIC_APP_ORIGIN: 'https://public.example.org, https://www.public.example.org'
+    });
+    expect(config.publicAppOrigins).toEqual(['https://public.example.org', 'https://www.public.example.org']);
+  });
+
+  it('refuses to start in production without an https PUBLIC_APP_ORIGIN', () => {
+    const env: Record<string, string> = { ...PRODUCTION_ENV };
+    delete env.PUBLIC_APP_ORIGIN;
+    expect(() => readConfig(env)).toThrow(/PUBLIC_APP_ORIGIN/);
+    expect(() => readConfig({ ...PRODUCTION_ENV, PUBLIC_APP_ORIGIN: 'http://public.example.org' })).toThrow(
+      /PUBLIC_APP_ORIGIN/
+    );
+  });
+
+  it('rejects a public origin that is not a bare origin', () => {
+    expect(() => readConfig({ PUBLIC_APP_ORIGIN: 'https://public.example.org/share' })).toThrow(/PUBLIC_APP_ORIGIN/);
+    expect(() => readConfig({ PUBLIC_APP_ORIGIN: '*' })).toThrow(/PUBLIC_APP_ORIGIN/);
   });
 });
 
@@ -100,7 +148,8 @@ describe('readConfig — admin auth', () => {
         NODE_ENV: 'production',
         ADMIN_2_EMAIL: 'beto@example.org',
         ADMIN_2_PASSWORD: 'staple-gun-42-orchid',
-        ADMIN_APP_ORIGIN: 'https://admin.example.org'
+        ADMIN_APP_ORIGIN: 'https://admin.example.org',
+        PUBLIC_APP_ORIGIN: 'https://public.example.org'
       })
     ).toThrow(/ADMIN_1_EMAIL/);
   });
