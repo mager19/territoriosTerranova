@@ -38,7 +38,11 @@ bundle, smaller attack surface, less to audit.
       page reads no other key
 - [ ] Revoked, expired, and invalid tokens all render the **same** neutral message
 - [ ] No analytics, no third-party scripts, no external font or asset loading
-      beyond the map tiles
+      beyond the basemap provider. With OSM raster (no `VITE_MAPTILER_KEY`) that
+      is the tiles only; with MapTiler it is the style JSON, its tiles, glyphs and
+      sprites, and the required MapTiler logo, all from `api.maptiler.com`
+      (2026-10-03, see docs/map-references.md "Basemap"). App fonts are
+      self-hosted.
 - [ ] The share token never appears in a referrer, an outbound request, or a
       logged URL beyond the initial load
 - [ ] `noindex` respected; no sitemap; no crawlable link to this app
