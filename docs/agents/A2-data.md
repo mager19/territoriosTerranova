@@ -27,6 +27,9 @@ derived, never mutated.
 - `territories` — identity and lifecycle state only
 - `territory_revisions` — **immutable**. One row per geometry version, with
   `geometry geometry(Polygon, 4326)`, revision number, author, created_at. Never updated.
+  **Superseded 2026-10-03** (db/migrations/0012_multipart_territories.sql): the
+  column is `geometry(MultiPolygon, 4326)` so a territory can have several
+  disjoint parts; existing rows were converted losslessly with `ST_Multi`.
 - `assignments` — references a specific `territory_revision_id`, not a territory
 - `progress_entries` — append-only. Optional pause point, route, remaining-area geometry
 - `audit_events` — append-only record of every state transition with actor and reason
@@ -39,7 +42,10 @@ derived, never mutated.
 Application code is not the last line of defense.
 
 - SRID 4326 enforced on every geometry column
-- Reject non-simple, zero-area, and invalid polygons (`ST_IsValid`, `ST_Area`)
+- Reject non-simple, zero-area, and invalid polygons (`ST_IsValid`, `ST_Area`).
+  For a multi-part territory (0012) `ST_IsValid` on the MultiPolygon rejects parts
+  that overlap or share an edge, and `territory_revisions_geom_parts_have_area`
+  requires every part — not just the total — to clear the zero-area epsilon
 - Containment check against the Bello municipal boundary
 - Overlap detection between active territories via `ST_Intersects` /
   `ST_Overlaps`, with an explicit authorized-exception path

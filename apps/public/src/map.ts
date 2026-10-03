@@ -13,7 +13,7 @@
  */
 
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
-import type { Feature, FeatureCollection, Geometry, Polygon, Position } from '@territorios/geo';
+import type { Feature, FeatureCollection, Geometry, Position, TerritoryGeometry } from '@territorios/geo';
 
 import { hasDrawableArea, LAYER_COLORS } from './layers.js';
 import type { PublicTerritoryView } from './public-api.js';
@@ -45,9 +45,10 @@ export interface BoundingBox {
   readonly north: number;
 }
 
-/** Pure WGS84 bounding-box math over a polygon's positions — no map instance needed. */
-export function computeBoundingBox(geometry: Polygon): BoundingBox {
-  const positions: readonly Position[] = geometry.coordinates.flat();
+/** Pure WGS84 bounding-box math over every part's positions — no map instance needed. */
+export function computeBoundingBox(geometry: TerritoryGeometry): BoundingBox {
+  const positions: readonly Position[] =
+    geometry.type === 'Polygon' ? geometry.coordinates.flat() : geometry.coordinates.flat(2);
   const first = positions[0];
   if (!first) {
     throw new Error('cannot compute a bounding box for an empty polygon');
@@ -69,18 +70,6 @@ export function computeBoundingBox(geometry: Polygon): BoundingBox {
 export interface LatLon {
   readonly lat: number;
   readonly lon: number;
-}
-
-/**
- * A single reference point for "where does this territory start" — the
- * bounding box's center, not any particular vertex (no vertex is
- * privileged as "the start" in the data model, and for a block-sized
- * territory the difference from any real point on it is a few dozen
- * meters at most — irrelevant for walking directions or a distance
- * readout).
- */
-export function boundingBoxCenter(box: BoundingBox): LatLon {
-  return { lat: (box.south + box.north) / 2, lon: (box.west + box.east) / 2 };
 }
 
 /**

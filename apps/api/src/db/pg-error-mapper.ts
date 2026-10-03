@@ -25,7 +25,9 @@ import {
 
 const ZERO_AREA_CONSTRAINTS = new Set([
   'territory_revisions_geom_not_empty',
-  'territory_revisions_geom_has_area'
+  'territory_revisions_geom_has_area',
+  // 0012: every part of a multi-part territory must have area of its own.
+  'territory_revisions_geom_parts_have_area'
 ]);
 const INVALID_GEOMETRY_CONSTRAINTS = new Set(['territory_revisions_geom_valid']);
 
@@ -44,7 +46,9 @@ export function mapTerritoryGeometryError(error: unknown): DomainError | undefin
   // SQLSTATE 23514 = check_violation.
   if (error.code === '23514' && error.constraint) {
     if (INVALID_GEOMETRY_CONSTRAINTS.has(error.constraint)) {
-      return new InvalidGeometryError(`geometry is not a valid, simple polygon (${error.constraint})`);
+      return new InvalidGeometryError(
+        `geometry is not valid: a part is not a simple polygon, or two parts overlap or share an edge (${error.constraint})`
+      );
     }
     if (ZERO_AREA_CONSTRAINTS.has(error.constraint)) {
       return new ZeroAreaGeometryError(`geometry has zero or negligible area (${error.constraint})`);

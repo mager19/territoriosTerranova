@@ -7,7 +7,7 @@ import {
   type TerritoryListItem
 } from '../../api/client.js';
 import { sortByTerritoryName } from './sort.js';
-import { polygonToThumbnail } from './thumbnail.js';
+import { geometryToThumbnail } from './thumbnail.js';
 
 export interface TerritoryListProps {
   /** Bumped by the parent after a successful save, to force a refetch. */
@@ -73,7 +73,7 @@ export function TerritoryList({ refreshToken }: TerritoryListProps): JSX.Element
       </select>
       <ul className="territory-grid">
         {territories.filter((territory) => stateFilter === 'all' || territory.operationalState === stateFilter).map((territory) => {
-          const thumbnail = territory.geometry === null ? null : polygonToThumbnail(territory.geometry);
+          const thumbnail = territory.geometry === null ? null : geometryToThumbnail(territory.geometry);
           return (
             <li key={territory.id}>
               <a className="territory-card" href={`/territorios/${territory.id}`}>
@@ -85,7 +85,9 @@ export function TerritoryList({ refreshToken }: TerritoryListProps): JSX.Element
                     aria-label={`Contorno de ${territory.name}`}
                     focusable="false"
                   >
-                    <polygon points={thumbnail.points} />
+                    {thumbnail.parts.map((points, index) => (
+                      <polygon key={index} points={points} />
+                    ))}
                   </svg>
                 ) : (
                   <div className="territory-thumbnail territory-thumbnail--empty">Sin contorno</div>

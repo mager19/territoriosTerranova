@@ -3,12 +3,11 @@ import './styles.css';
 
 import { runApp } from './app.js';
 import { selectBasemap } from './basemap.js';
-import { createTerritoryLabelElement, territoryLabelPoint } from './layers.js';
+import { createTerritoryLabelElement, territoryLabelPoint, territoryStartPoint } from './layers.js';
 import { MAPLIBRE_WORKER_URL } from './maplibre-worker.js';
 import {
   BELLO_CENTER,
   BELLO_ZOOM,
-  boundingBoxCenter,
   computeBoundingBox,
   directionsUrl,
   fitToBoundingBox,
@@ -33,7 +32,9 @@ void runApp(container, {
   basemap: basemap.kind,
   onTerritoryResolved: async (elements, result) => {
     const box = computeBoundingBox(result.view.boundary);
-    const territoryStart = boundingBoxCenter(box);
+    // Inside the territory (its largest part, for a multi-part one) — never
+    // a bounding-box center that could fall between parts.
+    const territoryStart = territoryStartPoint(result.view.boundary);
 
     // Independent of the map/WebGL below — a plain link that works even
     // if MapLibre fails to load (old device, no WebGL): the field worker

@@ -69,10 +69,12 @@ vi.mock('maplibre-gl', () => ({
 
 const listTerritories = vi.hoisted(() => vi.fn());
 const searchReferenceBarrios = vi.hoisted(() => vi.fn());
+const createTerritory = vi.hoisted(() => vi.fn());
+const submitRevision = vi.hoisted(() => vi.fn());
 
 vi.mock('../../api/client.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../api/client.js')>();
-  return { ...original, listTerritories, searchReferenceBarrios };
+  return { ...original, listTerritories, searchReferenceBarrios, createTerritory, submitRevision };
 });
 
 /** Inverse of the mock's projection: the exact coordinate a screen pixel unprojects to. */
@@ -149,6 +151,14 @@ beforeEach(() => {
   listTerritories.mockResolvedValue({ territories: [listItem(1, EDITED_GEOMETRY), listItem(2, NEIGHBOR_GEOMETRY)] });
   searchReferenceBarrios.mockReset();
   searchReferenceBarrios.mockResolvedValue({ barrios: [barrio] });
+  createTerritory.mockReset();
+  createTerritory.mockImplementation(async (input: { name: string; geometry: unknown }) => ({
+    ...selectedTerritory,
+    id: 99,
+    name: input.name,
+    revisions: []
+  }));
+  submitRevision.mockReset();
 });
 
 afterEach(async () => {
@@ -310,6 +320,136 @@ describe('TerritoryEditor', () => {
 
       expect(draftVertices()).toEqual([at(104, 104)]);
       expect(host?.textContent).toContain('No se pudieron cargar los otros territorios');
+    });
+  });
+
+  describe('multi-part territories (2026-10-03, option A)', () => {
+    async function drawTriangle(x: number, y: number): Promise<void> {
+      await fireMap('click', x, y);
+      await fireMap('click', x + 40, y);
+      await fireMap('click', x + 40, y + 40);
+      await act(async () => buttonByText('Cerrar contorno').click());
+    }
+
+    async function typeName(value: string): Promise<void> {
+      const input = host?.querySelector('#territory-name');
+      if (!(input instanceof HTMLInputElement)) throw new Error('Could not find the name input');
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
+
+    function otherParts(): FeatureData['features'] {
+      return lastData('draft-other-parts').features;
+    }
+
+    it('offers "Agregar otra parte" only once the current part is closed', async () => {
+      await renderEditor(null);
+      expect(buttonByText('Agregar otra parte').disabled).toBe(true);
+      await fireMap('click', 600, 600);
+      expect(buttonByText('Agregar otra parte').disabled).toBe(true);
+      await fireMap('click', 640, 600);
+      await fireMap('click', 640, 640);
+      await act(async () => buttonByText('Cerrar contorno').click());
+      expect(buttonByText('Agregar otra parte').disabled).toBe(false);
+    });
+
+    it('draws a second part, keeps the first visible, shows the part count, and saves a MultiPolygon', async () => {
+      await renderEditor(null);
+      await drawTriangle(600, 600);
+      await act(async () => buttonByText('Agregar otra parte').click());
+
+      expect(host?.textContent).toContain('Territorio de 2 partes · editando la parte 2');
+      expect(otherParts()).toHaveLength(1);
+      expect(draftVertices()).toEqual([]);
+      // Unfinished second part: nothing to save yet.
+      await typeName('Dos partes');
+      expect(buttonByText('Guardar territorio').disabled).toBe(true);
+
+      await drawTriangle(800, 600);
+      expect(buttonByText('Guardar territorio').disabled).toBe(false);
+      await act(async () => buttonByText('Guardar territorio').click());
+
+      expect(createTerritory).toHaveBeenCalledTimes(1);
+      const sent = createTerritory.mock.calls[0]![0] as { geometry: MultiPolygon };
+      expect(sent.geometry.type).toBe('MultiPolygon');
+      expect(sent.geometry.coordinates).toEqual([
+        [[at(600, 600), at(640, 600), at(640, 640), at(600, 600)]],
+        [[at(800, 600), at(840, 600), at(840, 640), at(800, 600)]]
+      ]);
+    });
+
+    it('selects another part by clicking inside it, and never replaces a finished part on a stray click', async () => {
+      await renderEditor(null);
+      await drawTriangle(600, 600);
+      await act(async () => buttonByText('Agregar otra parte').click());
+      await drawTriangle(800, 600);
+
+      // A stray click outside every part changes nothing.
+      await fireMap('click', 700, 900);
+      expect(draftVertices()).toEqual([at(800, 600), at(840, 600), at(840, 640)]);
+
+      // Inside the first triangle: it becomes the active part.
+      await fireMap('click', 630, 610);
+      expect(host?.textContent).toContain('editando la parte 1');
+      expect(draftVertices()).toEqual([at(600, 600), at(640, 600), at(640, 640)]);
+      expect(otherParts().map((feature) => feature.properties?.partIndex)).toEqual([1]);
+    });
+
+    it('"Quitar esta parte" removes the active part and saves a Polygon when one part remains', async () => {
+      await renderEditor(null);
+      await drawTriangle(600, 600);
+      await act(async () => buttonByText('Agregar otra parte').click());
+      await drawTriangle(800, 600);
+
+      await act(async () => buttonByText('Quitar esta parte').click());
+      expect(host?.textContent).not.toContain('partes');
+      expect(() => buttonByText('Quitar esta parte')).toThrow();
+
+      await typeName('Una parte');
+      await act(async () => buttonByText('Guardar territorio').click());
+      const sent = createTerritory.mock.calls[0]![0] as { geometry: Polygon };
+      expect(sent.geometry).toEqual({
+        type: 'Polygon',
+        coordinates: [[at(600, 600), at(640, 600), at(640, 640), at(600, 600)]]
+      });
+    });
+
+    it('snaps a new part onto a vertex of the territory\'s own other part', async () => {
+      await renderEditor(null);
+      await drawTriangle(600, 600);
+      await act(async () => buttonByText('Agregar otra parte').click());
+
+      await fireMap('click', 644, 603);
+
+      expect(draftVertices()).toEqual([at(640, 600)]);
+    });
+
+    it('"Editar forma actual" loads every saved part and edits the one clicked', async () => {
+      const multi: MultiPolygon = {
+        type: 'MultiPolygon',
+        coordinates: [EDITED_GEOMETRY.coordinates, square(500, 300, 60).coordinates]
+      };
+      await renderEditor({
+        ...selectedTerritory,
+        revisions: [{ ...selectedTerritory.revisions[0]!, geometry: multi }]
+      });
+      expect(lastData('saved-territory').features[0]?.geometry).toEqual(multi);
+
+      await act(async () => buttonByText('Editar forma actual').click());
+      expect(host?.textContent).toContain('Territorio de 2 partes · editando la parte 1');
+      expect(draftVertices()).toHaveLength(4);
+      expect(otherParts()).toHaveLength(1);
+
+      // In "edit vertices" mode a click inside the second part selects it.
+      await fireMap('click', 530, 330);
+      expect(host?.textContent).toContain('editando la parte 2');
+      expect(draftVertices()[0]).toEqual(at(500, 300));
+
+      await act(async () => buttonByText('Terminar edición de vértices').click());
+      await act(async () => buttonByText('Guardar nueva revisión').click());
+      expect(submitRevision).toHaveBeenCalledWith(1, { geometry: multi });
     });
   });
 });

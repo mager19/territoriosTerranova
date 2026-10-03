@@ -725,6 +725,18 @@ describe('GET /public/t/:slug', () => {
     expect(body).not.toHaveProperty('number');
   });
 
+  it('serves a multi-part territory boundary as one MultiPolygon, with the same allowlisted keys', async () => {
+    const west = [[[-75.52, 6.31], [-75.518, 6.31], [-75.518, 6.312], [-75.52, 6.312], [-75.52, 6.31]]];
+    const east = [[[-75.516, 6.31], [-75.514, 6.31], [-75.514, 6.312], [-75.516, 6.312], [-75.516, 6.31]]];
+    const { slug } = await createTerritoryAndShare({ type: 'MultiPolygon', coordinates: [west, east] });
+
+    const response = await slugApp.inject({ method: 'GET', url: `/public/t/${slug}` });
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(Object.keys(body).sort()).toEqual(PUBLIC_KEYS);
+    expect(body.boundary).toEqual({ type: 'MultiPolygon', coordinates: [west, east] });
+  });
+
   it('sets every required security header on a valid response and on a 404', async () => {
     const { slug } = await createTerritoryAndShare();
     for (const url of [`/public/t/${slug}`, '/public/t/no-such-territory']) {

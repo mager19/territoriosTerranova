@@ -17,28 +17,38 @@ import {
 import {
   addVertex,
   closeDraft,
-  createDraft,
-  draftFromPolygon,
-  draftToPolygonGeoJSON,
   insertVertex,
   moveVertex,
   removeVertexAt,
-  resetDraft,
   undoVertex,
   type Coordinate,
   type DraftState
 } from './draft.js';
 import {
+  activePart,
+  addPart,
+  canAddPart,
+  createPartsDraft,
+  inactivePartPolygons,
+  partsDraftFromGeometry,
+  partsDraftToGeometry,
+  removeActivePart,
+  selectPart,
+  updateActivePart,
+  type PartsDraftState
+} from './parts-draft.js';
+import {
   BELLO_CENTER,
   BELLO_ZOOM,
   findEdgeIndexAtPoint,
   findVertexIndexAtPoint,
-  fitToMultiPolygon,
-  fitToPolygon,
+  fitToGeometry,
+  installDraftPartsLayer,
   installEditorLayers,
   installNeighborTerritoriesLayer,
   installSnapIndicatorLayer,
   renderDraft,
+  renderDraftOtherParts,
   renderNeighborTerritories,
   renderReferenceBarrios,
   renderRemainingArea,
@@ -48,7 +58,7 @@ import {
 } from './map-editor.js';
 import type { MultiPolygon, Polygon } from '@territorios/geo';
 import { formatKm2, nextActiveIndex } from './barrio.js';
-import { snapToGeometries, type SnapGeometry } from './snap.js';
+import { isInsideGeometry, snapToGeometries, type SnapGeometry } from './snap.js';
 import { editorSnapTargets, neighborTerritoryGeometries } from './snap-targets.js';
 
 export interface TerritoryEditorProps {
@@ -83,6 +93,14 @@ function findSnap(map: MapLibreMap, point: { x: number; y: number }, targets: re
  * not snap: it inserts on the draft's own edge by design. The neighbouring
  * territories come from the admin list endpoint; until it loads, or if it
  * fails, there is simply no territory snapping.
+ *
+ * Multi-part territories (2026-10-03, option A; parts-draft.ts): once the
+ * active part is closed, "Agregar otra parte" starts a new part; finished
+ * parts stay visible (lighter orange) and are snap targets too. Clicking
+ * inside a finished part selects it as the active part — the one that
+ * "Editar vértices", "Deshacer vértice", "Cerrar contorno" and "Quitar esta
+ * parte" act on. Save sends a Polygon for one part, a MultiPolygon for
+ * several; the server rejects parts that overlap or share a border.
  */
 export function TerritoryEditor({
   selectedTerritory,
@@ -92,7 +110,11 @@ export function TerritoryEditor({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [mapReady, setMapReady] = useState(false);
-  const [draft, setDraft] = useState<DraftState>(createDraft());
+  const [partsDraft, setPartsDraft] = useState<PartsDraftState>(createPartsDraft());
+  // The ACTIVE part — every single-shape tool below acts on it alone.
+  const draft = activePart(partsDraft);
+  const setDraft = (update: (current: DraftState) => DraftState): void =>
+    setPartsDraft((current) => updateActivePart(current, update));
   const [name, setName] = useState('');
   const [number, setNumber] = useState('');
   const [saving, setSaving] = useState(false);
@@ -110,6 +132,8 @@ export function TerritoryEditor({
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
+  // The territory's other finished parts: drawn, selectable, and snap targets.
+  const otherParts = useMemo(() => inactivePartPolygons(partsDraft), [partsDraft]);
 
   // Every territory's current geometry, for snapping and the neighbour
   // outline. null = not loaded yet, or the request failed.
@@ -156,8 +180,14 @@ export function TerritoryEditor({
     [territoryList, editingTerritoryId]
   );
   const snapTargets = useMemo(
-    () => editorSnapTargets(territoryList, editingTerritoryId, selectedBarrio?.geometry ?? null),
-    [territoryList, editingTerritoryId, selectedBarrio]
+    () =>
+      editorSnapTargets(
+        territoryList,
+        editingTerritoryId,
+        selectedBarrio?.geometry ?? null,
+        otherParts.map((part) => part.polygon)
+      ),
+    [territoryList, editingTerritoryId, selectedBarrio, otherParts]
   );
   // Read by the map handlers, which are only re-bound when the mode changes.
   const snapTargetsRef = useRef(snapTargets);
@@ -191,6 +221,7 @@ export function TerritoryEditor({
     map.addControl(new NavigationControl({ showCompass: false }), 'top-right');
     map.on('load', () => {
       installEditorLayers(map);
+      installDraftPartsLayer(map);
       installNeighborTerritoriesLayer(map);
       installSnapIndicatorLayer(map);
       setMapReady(true);
@@ -208,8 +239,19 @@ export function TerritoryEditor({
     if (!map || !mapReady) return;
     if (editingVertices) return;
     const handleClick = (event: MapMouseEvent) => {
-      const coordinate = findSnap(map, event.point, snapTargetsRef.current) ?? screenPointToCoordinate(map, event.point);
-      setDraft((current) => addVertex(current, coordinate));
+      const raw = screenPointToCoordinate(map, event.point);
+      const coordinate = findSnap(map, event.point, snapTargetsRef.current) ?? raw;
+      setPartsDraft((current) => {
+        if (activePart(current).isClosed) {
+          // A click inside another finished part selects it.
+          const hit = inactivePartPolygons(current).find((part) => isInsideGeometry(raw, part.polygon));
+          if (hit) return selectPart(current, hit.index);
+          // With several parts a stray click must never replace a finished
+          // part: new parts start only through "Agregar otra parte".
+          if (current.parts.length > 1) return current;
+        }
+        return updateActivePart(current, (part) => addVertex(part, coordinate));
+      });
     };
     // The ring previews where the next vertex would land. A click on a
     // closed draft starts a new shape (addVertex), so the preview applies
@@ -282,10 +324,16 @@ export function TerritoryEditor({
     // spent starting/continuing the drag above).
     const handleClick = (event: MapMouseEvent) => {
       if (findVertexIndexAtPoint(map, event.point) !== null) return;
-      setDraft((current) => {
-        const edgeIndex = findEdgeIndexAtPoint(map, current.vertices, event.point);
-        if (edgeIndex === null) return current;
-        return insertVertex(current, edgeIndex, screenPointToCoordinate(map, event.point));
+      const raw = screenPointToCoordinate(map, event.point);
+      setPartsDraft((current) => {
+        const edgeIndex = findEdgeIndexAtPoint(map, activePart(current).vertices, event.point);
+        if (edgeIndex !== null) {
+          return updateActivePart(current, (part) => insertVertex(part, edgeIndex, raw));
+        }
+        // Not on the active part's border: a click inside another part
+        // makes that part the one being edited.
+        const hit = inactivePartPolygons(current).find((part) => isInsideGeometry(raw, part.polygon));
+        return hit ? selectPart(current, hit.index) : current;
       });
     };
 
@@ -321,12 +369,14 @@ export function TerritoryEditor({
     renderNeighborTerritories(map, neighborGeometries);
   }, [neighborGeometries, mapReady]);
 
-  // Re-render the draft layer whenever the draft state changes.
+  // Re-render the draft layers whenever the draft state changes: the active
+  // part with its vertices, the other finished parts without.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
     renderDraft(map, draft);
-  }, [draft, mapReady]);
+    renderDraftOtherParts(map, otherParts);
+  }, [draft, otherParts, mapReady]);
 
   // Re-render the AMVA reference-barrio overlay: the single selected barrio
   // (or nothing once cleared). Fitting is done here too, so selection and
@@ -339,7 +389,7 @@ export function TerritoryEditor({
       selectedBarrio === null ? [] : [{ name: selectedBarrio.name, geometry: selectedBarrio.geometry }]
     );
     if (selectedBarrio !== null) {
-      fitToMultiPolygon(map, selectedBarrio.geometry);
+      fitToGeometry(map, selectedBarrio.geometry);
     }
   }, [selectedBarrio, mapReady]);
 
@@ -415,22 +465,25 @@ export function TerritoryEditor({
     const currentRevision = selectedTerritory?.revisions.at(-1) ?? null;
     renderSavedTerritory(map, currentRevision?.geometry ?? null);
     if (currentRevision) {
-      fitToPolygon(map, currentRevision.geometry);
+      fitToGeometry(map, currentRevision.geometry);
     }
-    setDraft(createDraft());
+    setPartsDraft(createPartsDraft());
     setEditingVertices(false);
     setError(null);
   }, [selectedTerritory, mapReady]);
 
   const currentRevisionGeometry = selectedTerritory?.revisions.at(-1)?.geometry ?? null;
-  const geometry = draftToPolygonGeoJSON(draft);
+  const geometry = partsDraftToGeometry(partsDraft);
+  const partCount = partsDraft.parts.length;
+  const activePartNumber = partsDraft.activeIndex + 1;
+  const unfinishedPartNumber = partsDraft.parts.findIndex((part) => !part.isClosed) + 1;
   const canClose = !draft.isClosed && draft.vertices.length >= 3;
   const canUndo = !draft.isClosed && draft.vertices.length > 0;
   const canSave = geometry !== null && (selectedTerritory !== null || name.trim() !== '');
 
   function handleEditCurrentShape(): void {
     if (!currentRevisionGeometry) return;
-    setDraft(draftFromPolygon(currentRevisionGeometry.coordinates));
+    setPartsDraft(partsDraftFromGeometry(currentRevisionGeometry));
     setEditingVertices(true);
     setError(null);
   }
@@ -502,7 +555,7 @@ export function TerritoryEditor({
             geometry,
             ...(trimmedNumber === '' ? {} : { number: trimmedNumber })
           });
-      setDraft(resetDraft());
+      setPartsDraft(createPartsDraft());
       setNumber('');
       onSaved(saved);
     } catch (caught) {
@@ -528,7 +581,7 @@ export function TerritoryEditor({
             : draft.vertices.length > 0
               ? `${draft.vertices.length} punto(s) ubicado(s).`
               : 'Todavía no hay puntos ubicados.'
-        }`}
+        }${partCount > 1 ? ` Territorio de ${partCount} partes; editando la parte ${activePartNumber}.` : ''}`}
       />
       <BasemapAttribution kind={ADMIN_BASEMAP.kind} />
       {territoryListFailed && (
@@ -602,7 +655,7 @@ export function TerritoryEditor({
         <button
           type="button"
           onClick={() => {
-            setDraft(createDraft());
+            setPartsDraft(createPartsDraft());
             setEditingVertices(false);
           }}
         >
@@ -633,10 +686,25 @@ export function TerritoryEditor({
         <button
           type="button"
           onClick={() => {
-            setDraft(resetDraft());
+            setEditingVertices(false);
+            setPartsDraft((current) => addPart(current));
+          }}
+          disabled={!canAddPart(partsDraft)}
+        >
+          Agregar otra parte
+        </button>
+        {partCount > 1 && (
+          <button type="button" onClick={() => setPartsDraft((current) => removeActivePart(current))}>
+            Quitar esta parte
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setPartsDraft(createPartsDraft());
             setEditingVertices(false);
           }}
-          disabled={draft.vertices.length === 0}
+          disabled={partCount === 1 && draft.vertices.length === 0}
         >
           Descartar borrador
         </button>
@@ -668,6 +736,14 @@ export function TerritoryEditor({
           </div>
         )}
 
+        {partCount > 1 && (
+          <p role="status" className="editor-parts-status">
+            {`Territorio de ${partCount} partes · editando la parte ${activePartNumber}. `}
+            {draft.isClosed
+              ? 'Haz clic dentro de otra parte para editarla, o usa “Quitar esta parte”.'
+              : 'Termina de cerrar esta parte, o usa “Quitar esta parte”.'}
+          </p>
+        )}
         {!draft.isClosed && (
           <p role="status">
             {draft.vertices.length === 0 && 'Haz clic en el mapa para ubicar el primer punto.'}
@@ -680,14 +756,17 @@ export function TerritoryEditor({
         {draft.isClosed && editingVertices && (
           <p role="status">
             Arrastra un punto para moverlo, haz clic en un borde para agregar uno, doble clic en un punto para
-            borrarlo. Usa “Terminar edición de vértices” para conservar los cambios y guardar.
+            borrarlo.{partCount > 1 && ' Solo se edita la parte activa; haz clic dentro de otra parte para editarla.'}{' '}
+            Usa “Terminar edición de vértices” para conservar los cambios y guardar.
           </p>
         )}
         {draft.isClosed && !editingVertices && (
           <p role="status">
             {canSave
-              ? `${draft.vertices.length} puntos. Listo para guardar, o Editar vértices para ajustar el contorno.`
-              : `${draft.vertices.length} puntos. Edita vértices para ajustar el contorno, o completa los campos requeridos abajo para guardar.`}
+              ? `${draft.vertices.length} puntos. Listo para guardar, o Editar vértices para ajustar el contorno. Si el territorio tiene otra parte separada (por ejemplo, al otro lado de una quebrada), usa “Agregar otra parte”.`
+              : geometry === null && unfinishedPartNumber > 0
+                ? `${draft.vertices.length} puntos. La parte ${unfinishedPartNumber} no está cerrada: ciérrala o quítala para guardar.`
+                : `${draft.vertices.length} puntos. Edita vértices para ajustar el contorno, o completa los campos requeridos abajo para guardar.`}
           </p>
         )}
 

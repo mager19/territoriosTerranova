@@ -28,6 +28,14 @@ exist; if you cite a file here, create it in the same change.
   Derive current state rather than mutating history.
 - Validate geometry server-side. Reject invalid, zero-area, out-of-city, or
   unauthorized overlapping geometry rather than repairing it silently.
+- A territory's geometry is a Polygon or a MultiPolygon: several disjoint parts
+  (e.g. blocks on both sides of a creek) worked as ONE territory — one name, one
+  slug, one progress/cycle history (2026-10-03 product decision,
+  db/migrations/0012_multipart_territories.sql). Storage is always MultiPolygon;
+  the API returns a Polygon for one part and a MultiPolygon for two or more, and
+  accepts either. Every part must be valid, have area, and lie inside Bello;
+  parts that overlap or share an edge are rejected (never unioned), and no part
+  may overlap another active territory.
 - Territories are shared to the volunteer group, not assigned to one named person
   (2026-09-08 product decision, db/migrations/0004_remove_individual_assignment.sql
   — superseding the original "one active assignment per territory" invariant this

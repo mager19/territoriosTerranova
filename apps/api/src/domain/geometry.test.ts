@@ -33,9 +33,27 @@ describe('validateTerritoryGeometry', () => {
     expect(() => validateTerritoryGeometry(point)).toThrow(/Polygon/);
   });
 
-  it('rejects a MultiPolygon (application territory geometry is single-Polygon only)', () => {
+  it('accepts a MultiPolygon of several parts (multi-part territories, 0012)', () => {
+    const second = VALID_SQUARE.coordinates.map((ring) => ring.map(([x, y]) => [x + 0.01, y]));
+    const multi = { type: 'MultiPolygon', coordinates: [VALID_SQUARE.coordinates, second] };
+    expect(validateTerritoryGeometry(multi)).toEqual(multi);
+  });
+
+  it('normalizes a one-part MultiPolygon to its Polygon (one canonical shape per territory)', () => {
     const multi = { type: 'MultiPolygon', coordinates: [VALID_SQUARE.coordinates] };
+    expect(validateTerritoryGeometry(multi)).toEqual(VALID_SQUARE);
+  });
+
+  it('rejects a MultiPolygon with an unclosed ring in any part', () => {
+    const open = [[[-75.574, 6.357], [-75.572, 6.357], [-75.572, 6.359]]];
+    const multi = { type: 'MultiPolygon', coordinates: [VALID_SQUARE.coordinates, open] };
     expect(() => validateTerritoryGeometry(multi)).toThrow(InvalidGeometryError);
+  });
+
+  it('rejects a MultiPolygon with an out-of-range position in any part', () => {
+    const bad = [[[-200, 6.357], [-75.572, 6.357], [-75.572, 6.359], [-200, 6.357]]];
+    const multi = { type: 'MultiPolygon', coordinates: [VALID_SQUARE.coordinates, bad] };
+    expect(() => validateTerritoryGeometry(multi)).toThrow(/WGS84 range/);
   });
 
   it('rejects an open (unclosed) ring', () => {

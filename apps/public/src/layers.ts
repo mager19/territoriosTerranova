@@ -6,7 +6,7 @@
  * same separation map.ts already keeps for computeBoundingBox.
  */
 
-import type { MultiPolygon, Polygon } from '@territorios/geo';
+import { largestPart, type MultiPolygon, type Polygon, type TerritoryGeometry } from '@territorios/geo';
 import polylabel from 'polylabel';
 
 import type { PublicTerritoryView } from './public-api.js';
@@ -65,11 +65,23 @@ const LABEL_PRECISION_DEGREES = 0.00001;
  * Where the territory name sits on the map: the pole of inaccessibility
  * (the interior point farthest from every edge), not the centroid or the
  * bounding-box center, both of which can fall outside an L- or U-shaped
- * territory. Planar lon/lat math is fine at this scale.
+ * territory. Planar lon/lat math is fine at this scale. A multi-part
+ * territory (0012) gets ONE label, on its largest part.
  */
-export function territoryLabelPoint(boundary: Polygon): [number, number] {
-  const [lon, lat] = polylabel(boundary.coordinates, LABEL_PRECISION_DEGREES);
+export function territoryLabelPoint(boundary: TerritoryGeometry): [number, number] {
+  const [lon, lat] = polylabel(largestPart(boundary).coordinates, LABEL_PRECISION_DEGREES);
   return [lon as number, lat as number];
+}
+
+/**
+ * "Where the territory starts" for the directions link and the distance
+ * readout: the same point the name label sits on — inside the territory
+ * (inside its largest part for a multi-part territory), never in the gap
+ * between parts the way a bounding-box center could be.
+ */
+export function territoryStartPoint(boundary: TerritoryGeometry): { readonly lat: number; readonly lon: number } {
+  const [lon, lat] = territoryLabelPoint(boundary);
+  return { lat, lon };
 }
 
 /**

@@ -46,6 +46,11 @@ describe('mapTerritoryGeometryError', () => {
     expect(mapped).toBeInstanceOf(ZeroAreaGeometryError);
   });
 
+  it('maps territory_revisions_geom_parts_have_area (0012, a zero-area part) to ZeroAreaGeometryError', () => {
+    const mapped = mapTerritoryGeometryError(checkViolation('territory_revisions_geom_parts_have_area'));
+    expect(mapped).toBeInstanceOf(ZeroAreaGeometryError);
+  });
+
   it('maps the containment trigger message to OutOfBoundsError', () => {
     const mapped = mapTerritoryGeometryError(
       raiseException('territory revision 7 is not contained by the Bello municipal boundary')

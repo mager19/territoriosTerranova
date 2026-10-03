@@ -120,7 +120,7 @@ async function insertRevision(
 ): Promise<number> {
   const { rows } = await client.query<{ id: string }>(
     `INSERT INTO territory_revisions (territory_id, revision_number, geom, author)
-     VALUES ($1, $2, ST_SetSRID(ST_GeomFromText($3), 4326), $4)
+     VALUES ($1, $2, ST_Multi(ST_SetSRID(ST_GeomFromText($3), 4326)), $4)
      RETURNING id`,
     [territoryId, revisionNumber, wkt, author]
   );
@@ -244,7 +244,7 @@ describe('geometry constraints are enforced by the database', () => {
       try {
         await client.query(
           `INSERT INTO territory_revisions (territory_id, revision_number, geom, author)
-           VALUES ($1, 1, ST_GeomFromText($2, 3857), 'integration-test')`,
+           VALUES ($1, 1, ST_Multi(ST_GeomFromText($2, 3857)), 'integration-test')`,
           [territoryId, VALID_SQUARE]
         );
         expect.unreachable('SRID 3857 geometry was accepted');
@@ -261,7 +261,7 @@ describe('geometry constraints are enforced by the database', () => {
       const territoryId = await createTerritory(client, 'geom-srid-zero');
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO territory_revisions (territory_id, revision_number, geom, author)
-         VALUES ($1, 1, ST_GeomFromText($2, 0), 'integration-test')
+         VALUES ($1, 1, ST_Multi(ST_GeomFromText($2, 0)), 'integration-test')
          RETURNING id`,
         [territoryId, VALID_SQUARE]
       );
@@ -535,7 +535,7 @@ describe('overlap between active territories (database-enforced)', () => {
       );
       await client.query(
         `INSERT INTO territory_revisions (territory_id, revision_number, geom, author)
-         VALUES ($1, 1, ST_SetSRID(ST_GeomFromText($2), 4326), 'integration-test')`,
+         VALUES ($1, 1, ST_Multi(ST_SetSRID(ST_GeomFromText($2), 4326)), 'integration-test')`,
         [Number(rows[0]?.id), OVERLAP_A]
       );
       // Hold the transaction open: the advisory lock taken by the overlap
@@ -581,6 +581,206 @@ describe('overlap between active territories (database-enforced)', () => {
     );
 
     expect(survivors).toBe(1);
+  });
+});
+
+describe('multi-part territories (0012, database-enforced)', () => {
+  // Two disjoint squares ~200 m apart (a creek between them).
+  const TWO_PARTS =
+    'MULTIPOLYGON(((-75.5600 6.3300, -75.5590 6.3300, -75.5590 6.3310, -75.5600 6.3310, -75.5600 6.3300)),' +
+    '((-75.5570 6.3300, -75.5560 6.3300, -75.5560 6.3310, -75.5570 6.3310, -75.5570 6.3300)))';
+  const OVERLAPPING_PARTS =
+    'MULTIPOLYGON(((-75.5600 6.3300, -75.5590 6.3300, -75.5590 6.3310, -75.5600 6.3310, -75.5600 6.3300)),' +
+    '((-75.5595 6.3305, -75.5585 6.3305, -75.5585 6.3315, -75.5595 6.3315, -75.5595 6.3305)))';
+  const EDGE_SHARING_PARTS =
+    'MULTIPOLYGON(((-75.5600 6.3300, -75.5590 6.3300, -75.5590 6.3310, -75.5600 6.3310, -75.5600 6.3300)),' +
+    '((-75.5590 6.3300, -75.5580 6.3300, -75.5580 6.3310, -75.5590 6.3310, -75.5590 6.3300)))';
+  const ONE_DEGENERATE_PART =
+    'MULTIPOLYGON(((-75.5600 6.3300, -75.5590 6.3300, -75.5590 6.3310, -75.5600 6.3310, -75.5600 6.3300)),' +
+    '((-75.5570 6.3300, -75.5565 6.3305, -75.5560 6.3310, -75.5570 6.3300)))';
+  const ONE_PART_OUTSIDE_BELLO =
+    'MULTIPOLYGON(((-75.5600 6.3300, -75.5590 6.3300, -75.5590 6.3310, -75.5600 6.3310, -75.5600 6.3300)),' +
+    '((-76.10 6.90, -76.09 6.90, -76.09 6.91, -76.10 6.91, -76.10 6.90)))';
+
+  it('stores a single polygon as a one-part MultiPolygon', async () => {
+    await withClient(async (client) => {
+      const territoryId = await createTerritory(client, 'multipart-single');
+      const revisionId = await insertRevision(client, territoryId, 1, VALID_SQUARE);
+      const { rows } = await client.query<{ type: string; parts: number; unwrapped: string }>(
+        `SELECT GeometryType(geom) AS type, ST_NumGeometries(geom) AS parts,
+                GeometryType(territory_geometry_unwrap(geom)) AS unwrapped
+         FROM territory_revisions WHERE id = $1`,
+        [revisionId]
+      );
+      expect(rows[0]).toEqual({ type: 'MULTIPOLYGON', parts: 1, unwrapped: 'POLYGON' });
+    });
+  });
+
+  it('accepts disjoint parts inside Bello and keeps every part', async () => {
+    await withClient(async (client) => {
+      const territoryId = await createTerritory(client, 'multipart-two');
+      const revisionId = await insertRevision(client, territoryId, 1, TWO_PARTS);
+      const { rows } = await client.query<{ parts: number; unwrapped: string }>(
+        `SELECT ST_NumGeometries(geom) AS parts, GeometryType(territory_geometry_unwrap(geom)) AS unwrapped
+         FROM territory_revisions WHERE id = $1`,
+        [revisionId]
+      );
+      expect(rows[0]).toEqual({ parts: 2, unwrapped: 'MULTIPOLYGON' });
+    });
+  });
+
+  it('rejects parts that overlap or share an edge — never unions them', async () => {
+    await withClient(async (client) => {
+      const territoryId = await createTerritory(client, 'multipart-invalid');
+      for (const wkt of [OVERLAPPING_PARTS, EDGE_SHARING_PARTS]) {
+        try {
+          await insertRevision(client, territoryId, 1, wkt);
+          expect.unreachable(`invalid multipolygon was accepted: ${wkt}`);
+        } catch (error) {
+          const pgError = asPgError(error);
+          expect(pgError.code).toBe('23514');
+          expect(pgError.constraint).toBe('territory_revisions_geom_valid');
+        }
+      }
+    });
+  });
+
+  it('rejects a zero-area part even when the other part has real area', async () => {
+    await withClient(async (client) => {
+      const territoryId = await createTerritory(client, 'multipart-degenerate');
+      try {
+        await insertRevision(client, territoryId, 1, ONE_DEGENERATE_PART);
+        expect.unreachable('a degenerate part was accepted');
+      } catch (error) {
+        const pgError = asPgError(error);
+        expect(pgError.code).toBe('23514');
+        expect(pgError.constraint).toBe('territory_revisions_geom_parts_have_area');
+      }
+    });
+  });
+
+  it('rejects a revision with any part outside the Bello boundary', async () => {
+    await withClient(async (client) => {
+      const territoryId = await createTerritory(client, 'multipart-outside');
+      await expect(insertRevision(client, territoryId, 1, ONE_PART_OUTSIDE_BELLO)).rejects.toThrow(
+        /is not contained by the Bello municipal boundary/
+      );
+    });
+  });
+
+  it('rejects a multi-part revision when any part overlaps another active territory', async () => {
+    await withClient(async (client) => {
+      const neighbour = await createTerritory(client, 'multipart-neighbour');
+      // Overlaps only the SECOND part of TWO_PARTS.
+      await insertRevision(
+        client,
+        neighbour,
+        1,
+        'POLYGON((-75.5568 6.3302, -75.5550 6.3302, -75.5550 6.3320, -75.5568 6.3320, -75.5568 6.3302))'
+      );
+      const territoryId = await createTerritory(client, 'multipart-overlapping');
+      await expect(insertRevision(client, territoryId, 1, TWO_PARTS)).rejects.toThrow(/overlaps active territory/);
+    });
+  });
+
+  it('promotes a bare Polygon to a one-part MultiPolygon (PostGIS typmod auto-promotion)', async () => {
+    // Pinned observed behaviour on postgis 16-3.4: a single Polygon assigned
+    // to a geometry(MultiPolygon) column is promoted, not rejected. Writers
+    // that predate 0012 therefore keep working; the API still normalizes
+    // with ST_Multi explicitly.
+    await withClient(async (client) => {
+      const territoryId = await createTerritory(client, 'multipart-bare-polygon');
+      const { rows } = await client.query<{ type: string; parts: number }>(
+        `INSERT INTO territory_revisions (territory_id, revision_number, geom, author)
+         VALUES ($1, 1, ST_SetSRID(ST_GeomFromText($2), 4326), 'integration-test')
+         RETURNING GeometryType(geom) AS type, ST_NumGeometries(geom) AS parts`,
+        [territoryId, VALID_SQUARE]
+      );
+      expect(rows[0]).toEqual({ type: 'MULTIPOLYGON', parts: 1 });
+    });
+  });
+});
+
+describe('migration 0012 upgrades existing single-polygon revisions in place', () => {
+  it('keeps every pre-0012 revision, unchanged in shape, and immutable', async () => {
+    const upgradeDb = 'territorios_upgrade_0012';
+    await withClient((client) => client.query(`CREATE DATABASE ${upgradeDb}`));
+    const upgradeUrl = databaseUrl.replace(/\/territorios_test(\?|$)/, `/${upgradeDb}$1`);
+    expect(upgradeUrl).toContain(upgradeDb);
+
+    const tmp = mkdtempSync(path.join(tmpdir(), 'territorios-upgrade-'));
+    const upgradeClient = async <T>(run: (client: Client) => Promise<T>): Promise<T> => {
+      const client = new Client({ connectionString: upgradeUrl });
+      await client.connect();
+      try {
+        return await run(client);
+      } finally {
+        await client.end();
+      }
+    };
+    try {
+      const all = listMigrationFiles();
+      const before = all.filter((filename) => filename < '0012');
+      expect(all).toContain('0012_multipart_territories.sql');
+      for (const filename of before) {
+        copyFileSync(path.join(DEFAULT_MIGRATIONS_DIR, filename), path.join(tmp, filename));
+      }
+      await runMigrations(upgradeUrl, { migrationsDir: tmp });
+
+      const revisionIds = await upgradeClient(async (client) => {
+        await client.query(FIXTURE_BOUNDARY_SQL);
+        const { rows } = await client.query<{ id: string }>(
+          `INSERT INTO territories (name) VALUES ('pre-0012') RETURNING id`
+        );
+        const territoryId = Number(rows[0]?.id);
+        const ids: number[] = [];
+        for (const [number, wkt] of [
+          [1, VALID_SQUARE],
+          [2, TOUCHING_WEST]
+        ] as const) {
+          const inserted = await client.query<{ id: string }>(
+            `INSERT INTO territory_revisions (territory_id, revision_number, geom, author)
+             VALUES ($1, $2, ST_SetSRID(ST_GeomFromText($3), 4326), 'pre-0012')
+             RETURNING id`,
+            [territoryId, number, wkt]
+          );
+          ids.push(Number(inserted.rows[0]?.id));
+        }
+        return ids;
+      });
+
+      copyFileSync(
+        path.join(DEFAULT_MIGRATIONS_DIR, '0012_multipart_territories.sql'),
+        path.join(tmp, '0012_multipart_territories.sql')
+      );
+      const upgrade = await runMigrations(upgradeUrl, { migrationsDir: tmp });
+      expect(upgrade.applied).toEqual(['0012_multipart_territories.sql']);
+
+      await upgradeClient(async (client) => {
+        const { rows } = await client.query<{ id: string; type: string; parts: number; same: boolean }>(
+          `SELECT id, GeometryType(geom) AS type, ST_NumGeometries(geom) AS parts,
+                  ST_Equals(geom, ST_SetSRID(ST_GeomFromText(
+                    CASE revision_number WHEN 1 THEN $1 ELSE $2 END), 4326)) AS same
+           FROM territory_revisions ORDER BY revision_number`,
+          [VALID_SQUARE, TOUCHING_WEST]
+        );
+        expect(rows.map((row) => Number(row.id))).toEqual(revisionIds);
+        for (const row of rows) {
+          expect(row).toMatchObject({ type: 'MULTIPOLYGON', parts: 1, same: true });
+        }
+
+        // The append-only trigger survived the column rewrite.
+        try {
+          await client.query(`UPDATE territory_revisions SET author = 'tampered' WHERE id = $1`, [revisionIds[0]]);
+          expect.unreachable('UPDATE was allowed after 0012');
+        } catch (error) {
+          expect(asPgError(error).code).toBe('P0001');
+          expect(asPgError(error).message).toMatch(/append-only/);
+        }
+      });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 

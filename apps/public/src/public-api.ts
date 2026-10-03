@@ -19,7 +19,8 @@ export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? 'http:/
 
 export interface PublicTerritoryView {
   readonly territoryName: string;
-  readonly boundary: Polygon;
+  /** Polygon for a one-part territory, MultiPolygon for a multi-part one (0012). */
+  readonly boundary: Polygon | MultiPolygon;
   /**
    * Server-derived since coverage sessions (db/migrations/0007): subtracting
    * a covered area can split it into a MultiPolygon, and a fully covered
@@ -107,7 +108,7 @@ function parseView(raw: unknown): PublicTerritoryView | null {
   const coveredArea = record.coveredArea ?? null;
 
   if (typeof territoryName !== 'string' || territoryName.trim() === '') return null;
-  if (!isPolygon(boundary)) return null;
+  if (!isPolygon(boundary) && !isMultiPolygon(boundary)) return null;
   if (remainingArea !== null && !isAreaGeometry(remainingArea)) return null;
   if (remainingAreaStatus !== 'recorded' && remainingAreaStatus !== 'unknown') return null;
   if (route !== null && !isLineString(route)) return null;

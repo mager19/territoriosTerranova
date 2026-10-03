@@ -9,7 +9,7 @@
  * column that could drift from history.
  */
 
-import type { Polygon } from '@territorios/geo';
+import type { TerritoryGeometry } from '@territorios/geo';
 import type { PoolClient } from 'pg';
 
 import { getTerritoryAuditHistory as queryTerritoryAuditHistory, recordAuditEvent, type AuditEvent } from './audit.js';
@@ -39,7 +39,7 @@ export interface Territory {
  * `geometry` is `null` when the territory has no revisions yet.
  */
 export interface TerritoryListItem extends Territory {
-  readonly geometry: Polygon | null;
+  readonly geometry: TerritoryGeometry | null;
   readonly operationalState: 'no_record' | 'in_progress' | 'paused' | 'cycle_completed' | 'reopened';
 }
 
@@ -47,7 +47,7 @@ export interface TerritoryRevision {
   readonly id: number;
   readonly territoryId: number;
   readonly revisionNumber: number;
-  readonly geometry: Polygon;
+  readonly geometry: TerritoryGeometry;
   readonly author: string;
   readonly createdAt: string;
 }
@@ -73,7 +73,7 @@ interface TerritoryRow {
 }
 
 interface TerritoryListItemRow extends TerritoryRow {
-  readonly geometry: Polygon | null;
+  readonly geometry: TerritoryGeometry | null;
   readonly operational_state: TerritoryListItem['operationalState'];
 }
 
@@ -81,7 +81,7 @@ interface RevisionRow {
   readonly id: string;
   readonly territory_id: string;
   readonly revision_number: number;
-  readonly geometry: Polygon;
+  readonly geometry: TerritoryGeometry;
   readonly author: string;
   readonly created_at: string;
 }
@@ -117,15 +117,15 @@ async function insertRevision(
   client: PoolClient,
   territoryId: number,
   revisionNumber: number,
-  geometry: Polygon,
+  geometry: TerritoryGeometry,
   author: string
 ): Promise<RevisionRow> {
   try {
     const { rows } = await client.query<RevisionRow>(
       `INSERT INTO territory_revisions (territory_id, revision_number, geom, author)
-       VALUES ($1, $2, ST_SetSRID(ST_GeomFromGeoJSON($3), 4326), $4)
+       VALUES ($1, $2, ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($3), 4326)), $4)
        RETURNING id, territory_id, revision_number,
-                 ST_AsGeoJSON(geom)::json AS geometry, author, created_at`,
+                 ST_AsGeoJSON(territory_geometry_unwrap(geom))::json AS geometry, author, created_at`,
       [territoryId, revisionNumber, JSON.stringify(geometry), author]
     );
     const row = rows[0];
@@ -214,7 +214,7 @@ export async function listTerritories(pool: TransactionalPool): Promise<readonly
                COALESCE(operation.action::text, 'no_record') AS operational_state
        FROM territories t
        LEFT JOIN LATERAL (
-         SELECT ST_AsGeoJSON(r.geom)::json AS geometry
+         SELECT ST_AsGeoJSON(territory_geometry_unwrap(r.geom))::json AS geometry
          FROM territory_revisions r
          WHERE r.territory_id = t.id
          ORDER BY r.revision_number DESC
@@ -252,7 +252,7 @@ export async function getTerritoryWithRevisions(
     }
 
     const { rows: revisionRows } = await client.query<RevisionRow>(
-      `SELECT id, territory_id, revision_number, ST_AsGeoJSON(geom)::json AS geometry, author, created_at
+      `SELECT id, territory_id, revision_number, ST_AsGeoJSON(territory_geometry_unwrap(geom))::json AS geometry, author, created_at
        FROM territory_revisions
        WHERE territory_id = $1
        ORDER BY revision_number ASC`,

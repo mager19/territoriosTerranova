@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { Polygon } from '@territorios/geo';
+import type { MultiPolygon, Polygon } from '@territorios/geo';
 
 import {
   createTerritoryLabelElement,
   hasDrawableArea,
   LAYER_COLORS,
   legendItems,
-  territoryLabelPoint
+  territoryLabelPoint,
+  territoryStartPoint
 } from './layers.js';
 
 /** Ray-casting point-in-ring, independent of the code under test. */
@@ -92,6 +93,28 @@ describe('territoryLabelPoint', () => {
     expect(insideRing([-75.571, 6.358], ring)).toBe(false);
 
     expect(insideRing(territoryLabelPoint(lShape), ring)).toBe(true);
+  });
+});
+
+describe('territoryLabelPoint (multi-part territories)', () => {
+  it('puts the single label inside the LARGEST part, whatever the part order', () => {
+    const small: Polygon = {
+      type: 'Polygon',
+      coordinates: [[[-75.58, 6.35], [-75.579, 6.35], [-75.579, 6.351], [-75.58, 6.351], [-75.58, 6.35]]]
+    };
+    const multi: MultiPolygon = { type: 'MultiPolygon', coordinates: [small.coordinates, SQUARE.coordinates] };
+
+    const point = territoryLabelPoint(multi);
+
+    expect(insideRing(point, SQUARE.coordinates[0]!)).toBe(true);
+    expect(insideRing(point, small.coordinates[0]!)).toBe(false);
+  });
+});
+
+describe('territoryStartPoint', () => {
+  it('is the label point of the largest part, as a lat/lon destination for directions', () => {
+    const [lon, lat] = territoryLabelPoint(SQUARE);
+    expect(territoryStartPoint(SQUARE)).toEqual({ lat, lon });
   });
 });
 

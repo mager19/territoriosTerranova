@@ -40,6 +40,14 @@ Draw a polygon vertex by vertex over the basemap, with undo and close. The draft
 renders live as a GeoJSON fill and line layer. Saving posts WGS84 GeoJSON to the
 A3 API and shows the resulting revision.
 
+**Multi-part territories, 2026-10-03:** once the active part is closed, "Agregar
+otra parte" starts a new part; finished parts stay visible and are snap targets.
+Clicking inside a finished part makes it the active part — the one "Editar
+vértices", undo, close and "Quitar esta parte" act on (a part can be removed
+while at least one remains). The status text shows the part count. Saving sends a
+Polygon for one part and a MultiPolygon for several. The session recorder, list
+thumbnails and territory preview render every part.
+
 Optionally load AMVA barrio boundaries as a **drafting reference underlay** —
 visually distinct from the drawn territory, and clearly labelled as reference.
 
