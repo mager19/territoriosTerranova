@@ -97,17 +97,80 @@ against `layer: 15` with an `OBJECTID`-only field allowlist. `Manzanas` carries 
 names or codes, so that allowlist yields unlabelled polygons. `Barrios` (layer 9)
 is the layer with usable identifying attributes.
 
-## Basemap — carried over from the archived attempt
+## Basemap
 
-The archived prototype's MapLibre configuration was verified as working and is
-worth reusing:
+Selection lives in `basemap.ts` in each app (`apps/admin/src/features/territory-editor/`
+and `apps/public/src/`), a pure, unit-tested function of `VITE_MAPTILER_KEY`.
+
+| `VITE_MAPTILER_KEY` | Basemap |
+| --- | --- |
+| Set (non-empty) | MapTiler Streets v2 (vector): `https://api.maptiler.com/maps/streets-v2/style.json?key=<KEY>` |
+| Unset or empty | OSM raster fallback, byte-for-byte the pre-MapTiler style (below) |
+
+Configuration: both Vite apps set `envDir` to the repository root, so one
+root `.env.local` (git-ignored) serves admin and public. Only `VITE_`-prefixed
+variables reach client code; `VITE_API_BASE_URL` and `VITE_PUBLIC_APP_BASE_URL`
+are read from the same root files. The key is shipped to browsers by design
+(MapTiler keys are public client keys) and must be domain-restricted in the
+MapTiler dashboard before launch. Only the style and its tiles/glyphs/sprites
+are fetched from MapTiler — no MapTiler geocoding or search is used.
+
+### OSM raster fallback — carried over from the archived attempt
 
 - Center: `[-75.5636, 6.3373]` (Bello), zoom 13
 - Raster source: `https://tile.openstreetmap.org/{z}/{x}/{y}.png`, tileSize 256, maxzoom 19
 - Attribution: `© OpenStreetMap contributors`
 
-OSM's public tile server is rate-limited and not approved for production traffic.
-It is fine for development; a production tile decision is still open.
+OSM's public tile server is rate-limited and not approved for production
+traffic. It remains the development fallback and the rollback path.
+
+### Attribution
+
+- MapTiler active: "© MapTiler © OpenStreetMap contributors", linked to
+  `https://www.maptiler.com/copyright/` and `https://www.openstreetmap.org/copyright`,
+  plus the MapTiler logo (`https://api.maptiler.com/resources/logo.svg`, linking
+  to `https://www.maptiler.com`) as the free plan requires. Admin: a MapLibre
+  control in the map's bottom-left corner, and the explicit attribution string is
+  set on the style's tiled sources so MapLibre's attribution control shows it.
+  Public: the page's own attribution line under the map (MapLibre's control is
+  disabled there).
+- OSM fallback: unchanged, plain "© OpenStreetMap contributors".
+
+### Pedestrian-path reinforcement
+
+In Navarra and Niquía many walkable streets are OSM footways and steps, which
+Streets v2 draws as faint grey dashed hairlines — easy to miss when planning a
+door-to-door route. After the style is fetched, MapLibre's `transformStyle`
+hook recolors line layers in the `transportation` source-layer whose filter
+names a pedestrian value (`path`, `pedestrian`, `path_pedestrian`, `footway`,
+`steps`), names no road/rail class, and does not negate it. Casing/outline
+layers and label (`symbol`) layers are left alone. Against the live style
+(2026-09-26) this selects exactly `Path`, `Path minor`, and `Footway tunnel`.
+They become `#6b4f36` (mid-dark brown), width ramping 1 px at z15 to 3 px at
+z19; the original dash pattern and opacity are kept. A style with no matching
+layer (including the OSM fallback) passes through unchanged.
+
+### MapTiler free plan — limits and open items
+
+- Free plan (as recorded by the product owner, 2026-09-26; not independently
+  verified here): 5,000 map sessions per month; the service pauses (maps stop
+  loading) when exceeded. No runtime fallback to OSM
+  on a paused or rejected key is implemented yet; rollback is by config.
+- Free plan terms are for non-commercial use. **Written confirmation from
+  MapTiler that this use qualifies is still pending and required before launch.**
+- **Key restriction must be verified before launch.** The public view sets
+  `<meta name="referrer" content="no-referrer">`, so MapTiler cannot rely on the
+  `Referer` header; restriction must work from the `Origin` header that CORS
+  fetches send. Verify in a real browser, on the production domain, with a
+  domain-restricted key. If Origin-based restriction fails, the fallback plan is
+  a `strict-origin` referrer policy for the public view — a product decision
+  that has not been made or applied.
+
+### Rollback
+
+- Config only: unset or empty `VITE_MAPTILER_KEY` and rebuild → OSM raster.
+- Code: git tag `pre-maptiler` (main at `6f69dde`) is the last state before
+  MapTiler.
 
 ## Standing rules
 

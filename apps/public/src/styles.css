@@ -274,3 +274,16 @@ p.attribution {
   color: var(--color-steel);
   margin: 12px var(--gutter) 0;
 }
+
+p.attribution a {
+  color: inherit;
+}
+
+/* MapTiler free-plan logo, only rendered when MapTiler is the basemap. */
+.maptiler-logo {
+  margin-right: 8px;
+}
+
+.maptiler-logo img {
+  vertical-align: middle;
+}

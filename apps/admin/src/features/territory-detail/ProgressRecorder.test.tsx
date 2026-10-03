@@ -63,6 +63,7 @@ vi.mock('maplibre-gl', () => ({
     getCanvas() {
       return { style: { cursor: '' } };
     }
+    setStyle(): void {}
   },
   NavigationControl: class {}
 }));

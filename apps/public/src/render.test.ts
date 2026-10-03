@@ -156,6 +156,48 @@ describe('renderStatus — latest session note', () => {
   });
 });
 
+describe('mountPage attribution', () => {
+  it('keeps the plain OSM attribution by default (fallback basemap)', () => {
+    const root = document.createElement('div');
+
+    mountPage(root);
+
+    const attribution = root.querySelector('p.attribution');
+    expect(attribution?.textContent).toBe('© OpenStreetMap contributors');
+    expect(attribution?.querySelector('a')).toBeNull();
+    expect(attribution?.querySelector('img')).toBeNull();
+  });
+
+  it('credits MapTiler and OSM with copyright links and the MapTiler logo when MapTiler is the basemap', () => {
+    const root = document.createElement('div');
+
+    mountPage(root, 'maptiler');
+
+    const attribution = root.querySelector('p.attribution');
+    expect(attribution?.textContent).toBe('© MapTiler © OpenStreetMap contributors');
+    const links = Array.from(attribution?.querySelectorAll('a') ?? []).map((a) => [a.textContent, a.getAttribute('href')]);
+    expect(links).toEqual([
+      ['', 'https://www.maptiler.com'],
+      ['© MapTiler', 'https://www.maptiler.com/copyright/'],
+      ['© OpenStreetMap contributors', 'https://www.openstreetmap.org/copyright']
+    ]);
+    const logo = attribution?.querySelector('a.maptiler-logo img');
+    expect(logo?.getAttribute('src')).toBe('https://api.maptiler.com/resources/logo.svg');
+    expect(logo?.getAttribute('alt')).toBe('MapTiler logo');
+  });
+
+  it('opens attribution links in a new tab without an opener', () => {
+    const root = document.createElement('div');
+
+    mountPage(root, 'maptiler');
+
+    for (const link of Array.from(root.querySelectorAll('p.attribution a'))) {
+      expect(link.getAttribute('target')).toBe('_blank');
+      expect(link.getAttribute('rel')).toBe('noopener');
+    }
+  });
+});
+
 describe('renderStatus', () => {
   it('shows the territory name and reveals the map on a resolved territory', () => {
     const root = document.createElement('div');

@@ -1,3 +1,4 @@
+import type { BasemapKind } from './basemap.js';
 import { extractToken } from './token.js';
 import { fetchPublicTerritory, type PublicTerritoryResult } from './public-api.js';
 import { mountPage, renderStatus, type PageElements } from './render.js';
@@ -5,6 +6,8 @@ import { mountPage, renderStatus, type PageElements } from './render.js';
 export interface RunAppDeps {
   readonly locationHash: string;
   readonly fetchImpl?: typeof fetch;
+  /** Which basemap main.ts selected — drives the attribution line. Defaults to the OSM fallback. */
+  readonly basemap?: BasemapKind;
   /**
    * Invoked only for a resolved ('ok') territory — keeps every
    * MapLibre/WebGL touch out of the unit-tested path, the same separation
@@ -18,7 +21,7 @@ export interface RunAppDeps {
 }
 
 export async function runApp(root: HTMLElement, deps: RunAppDeps): Promise<void> {
-  const elements = mountPage(root);
+  const elements = mountPage(root, deps.basemap);
   renderStatus(elements, { status: 'loading' });
 
   const token = extractToken(deps.locationHash);
